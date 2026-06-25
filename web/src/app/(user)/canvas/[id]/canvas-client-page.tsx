@@ -20,6 +20,10 @@ import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
+import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType } from "../utils/canvas-multi-view";
+import { buildMangaCharacterPromptNodes } from "../utils/manga-character-card-import";
+import { buildScene360PromptNodes } from "../utils/manga-scene-360-import";
+import { buildMangaScenePromptNodes } from "../utils/manga-storyboard-scene-import";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -228,6 +232,9 @@ function InfiniteCanvasPage() {
     const localAgentEnabled = useCanvasAgentStore((state) => state.enabled);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
+    const mangaCardInputRef = useRef<HTMLInputElement>(null);
+    const mangaStoryboardInputRef = useRef<HTMLInputElement>(null);
+    const scene360InputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
     const historyRef = useRef<{ past: CanvasHistoryEntry[]; future: CanvasHistoryEntry[] }>({ past: [], future: [] });
@@ -801,6 +808,109 @@ function InfiniteCanvasPage() {
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
+    );
+
+    const handleMangaCardImportRequest = useCallback(() => {
+        mangaCardInputRef.current?.click();
+    }, []);
+
+    const handleMangaStoryboardImportRequest = useCallback(() => {
+        mangaStoryboardInputRef.current?.click();
+    }, []);
+
+    const handleScene360ImportRequest = useCallback(() => {
+        scene360InputRef.current?.click();
+    }, []);
+
+    const handleMangaCardInputChange = useCallback(
+        async (event: ReactChangeEvent<HTMLInputElement>) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const { characters, nodes: importedNodes } = buildMangaCharacterPromptNodes({
+                    text,
+                    center: getCanvasCenter(),
+                    model: effectiveConfig.imageModel || effectiveConfig.model,
+                    quality: effectiveConfig.quality,
+                });
+                if (!importedNodes.length) {
+                    message.warning("未识别到可导入的角色卡提示词");
+                    return;
+                }
+                setNodes((prev) => [...prev, ...importedNodes]);
+                setSelectedNodeIds(new Set(importedNodes.map((node) => node.id)));
+                setSelectedConnectionId(null);
+                setDialogNodeId(importedNodes[0]?.id || null);
+                message.success(`已导入 ${characters.length} 个角色，生成 ${importedNodes.length} 个生图节点`);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "角色卡导入失败");
+            }
+        },
+        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, getCanvasCenter, message],
+    );
+
+    const handleMangaStoryboardInputChange = useCallback(
+        async (event: ReactChangeEvent<HTMLInputElement>) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const { scenes, nodes: importedNodes, connections: importedConnections } = buildMangaScenePromptNodes({
+                    text,
+                    fileName: file.name,
+                    center: getCanvasCenter(),
+                    model: effectiveConfig.imageModel || effectiveConfig.model,
+                    quality: effectiveConfig.quality,
+                });
+                if (!importedNodes.length) {
+                    message.warning("未识别到可导入的分镜场景提示词");
+                    return;
+                }
+                setNodes((prev) => [...prev, ...importedNodes]);
+                setConnections((prev) => [...prev, ...importedConnections]);
+                setSelectedNodeIds(new Set(importedNodes.map((node) => node.id)));
+                setSelectedConnectionId(null);
+                setDialogNodeId(importedNodes[0]?.id || null);
+                message.success(`已导入 ${scenes.length} 个场景，生成 ${importedNodes.length} 个场景图节点`);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "分镜导入失败");
+            }
+        },
+        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, getCanvasCenter, message],
+    );
+
+    const handleScene360InputChange = useCallback(
+        async (event: ReactChangeEvent<HTMLInputElement>) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const { scenes, nodes: importedNodes, connections: importedConnections } = buildScene360PromptNodes({
+                    text,
+                    fileName: file.name,
+                    center: getCanvasCenter(),
+                    model: effectiveConfig.imageModel || effectiveConfig.model,
+                    quality: effectiveConfig.quality,
+                });
+                if (!importedNodes.length) {
+                    message.warning("未识别到可导入的 Scene360 场景锁定 JSON");
+                    return;
+                }
+                setNodes((prev) => [...prev, ...importedNodes]);
+                setConnections((prev) => [...prev, ...importedConnections]);
+                setSelectedNodeIds(new Set(importedNodes.map((node) => node.id)));
+                setSelectedConnectionId(null);
+                setDialogNodeId(importedNodes[0]?.id || null);
+                message.success(`已导入 ${scenes.length} 个360场景，生成 ${importedNodes.length} 个节点`);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "Scene360 导入失败");
+            }
+        },
+        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, getCanvasCenter, message],
     );
 
     const deleteNodes = useCallback(
@@ -1982,7 +2092,6 @@ function InfiniteCanvasPage() {
 
             try {
                 if (mode === "image") {
-                    const count = getGenerationCount(generationConfig.count);
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
@@ -1992,7 +2101,11 @@ function InfiniteCanvasPage() {
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+                    const useMultiViewGrid = generationType === "generation" && !sourceNode?.metadata?.sceneViewRole && !sourceNode?.metadata?.disableAutoMultiView;
+                    const requestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : effectivePrompt;
+                    const requestConfig = useMultiViewGrid ? { ...generationConfig, count: "1", size: "16:9" } : generationConfig;
+                    const count = useMultiViewGrid ? 1 : getGenerationCount(generationConfig.count);
+                    const generationMetadata = buildImageGenerationMetadata(generationType, requestConfig, count, referenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -2013,7 +2126,11 @@ function InfiniteCanvasPage() {
                         width: isEmptyImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
                         height: isEmptyImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
                         metadata: {
-                            prompt: effectivePrompt,
+                            prompt: requestPrompt,
+                            sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined,
+                            multiViewRole: useMultiViewGrid ? "grid" : undefined,
+                            sceneViewRole: sourceNode?.metadata?.sceneViewRole,
+                            sceneGroupId: sourceNode?.metadata?.sceneGroupId,
                             status: NODE_STATUS_LOADING,
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
@@ -2032,7 +2149,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                        metadata: { prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -2042,7 +2159,7 @@ function InfiniteCanvasPage() {
                                 ? isConfigNode
                                     ? {
                                           ...node,
-                                          metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_LOADING, errorDetails: undefined },
+                                          metadata: { ...node.metadata, prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, errorDetails: undefined },
                                       }
                                     : isEmptyImageNode
                                       ? {
@@ -2077,6 +2194,53 @@ function InfiniteCanvasPage() {
                     setDialogNodeId(nodeId);
 
                     const controller = runController;
+                    if (useMultiViewGrid) {
+                        startGenerationRequest(rootId, nodeId, nodeId, controller);
+                        try {
+                            const image = await requestGeneration(requestConfig, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                            const uploaded = await uploadImage(image.dataUrl);
+                            const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                            const rootCenter = { x: rootNode.position.x + rootNode.width / 2, y: rootNode.position.y + rootNode.height / 2 };
+                            const renderedRootNode = {
+                                ...rootNode,
+                                position: { x: rootCenter.x - imageSize.width / 2, y: rootCenter.y - imageSize.height / 2 },
+                                width: imageSize.width,
+                                height: imageSize.height,
+                                metadata: { ...rootNode.metadata, ...imageMetadata(uploaded), status: NODE_STATUS_SUCCESS, errorDetails: undefined },
+                            };
+                            const viewNodes: CanvasNodeData[] = await Promise.all(
+                                MULTI_VIEW_NODE_SPECS.map(async (spec) => ({
+                                    id: nanoid(),
+                                    type: CanvasNodeType.Image,
+                                    title: `${renderedRootNode.title}_${spec.label}`,
+                                    position: {
+                                        x: renderedRootNode.position.x + renderedRootNode.width + 72 + spec.x,
+                                        y: renderedRootNode.position.y + spec.y,
+                                    },
+                                    width: spec.width,
+                                    height: spec.height,
+                                    metadata: {
+                                        ...imageMetadata(uploaded),
+                                        content: await cropDataUrl(uploaded.url, spec.crop),
+                                        prompt: effectivePrompt,
+                                        sourcePrompt: effectivePrompt,
+                                        status: NODE_STATUS_SUCCESS,
+                                        multiViewRole: spec.key as MultiViewNodeType,
+                                        multiViewSourceNodeId: renderedRootNode.id,
+                                        primaryImageId: renderedRootNode.id,
+                                        naturalWidth: spec.width,
+                                        naturalHeight: spec.height,
+                                    },
+                                })),
+                            );
+                            setNodes((prev) => [...prev.map((node) => (node.id === rootId ? renderedRootNode : node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)), ...viewNodes]);
+                            setConnections((prev) => [...prev, ...viewNodes.map((viewNode) => ({ id: nanoid(), fromNodeId: renderedRootNode.id, toNodeId: viewNode.id }))]);
+                        } finally {
+                            finishGenerationRequest(rootId, controller);
+                        }
+                        return;
+                    }
+
                     targetIds.forEach((targetId) => startGenerationRequest(targetId, nodeId, nodeId, controller));
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
@@ -2085,8 +2249,8 @@ function InfiniteCanvasPage() {
                         targetIds.map(async (targetId) => {
                             try {
                                 const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
+                                    ? await requestEdit({ ...requestConfig, count: "1" }, requestPrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
+                                    : await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
@@ -2100,7 +2264,7 @@ function InfiniteCanvasPage() {
                                                 position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
                                                 width: imageSize.width,
                                                 height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), primaryImageId: targetId },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, primaryImageId: targetId },
                                             };
                                         if (node.id === targetId)
                                             return {
@@ -2108,7 +2272,7 @@ function InfiniteCanvasPage() {
                                                 position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
                                                 width: imageSize.width,
                                                 height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded) },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId },
                                             };
                                         return node;
                                     });
@@ -2702,6 +2866,9 @@ function InfiniteCanvasPage() {
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
+                    onImportMangaCard={handleMangaCardImportRequest}
+                    onImportMangaStoryboard={handleMangaStoryboardImportRequest}
+                    onImportScene360={handleScene360ImportRequest}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
@@ -2740,6 +2907,9 @@ function InfiniteCanvasPage() {
                 ) : null}
 
                 <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
+                <input ref={mangaCardInputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleMangaCardInputChange} />
+                <input ref={mangaStoryboardInputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleMangaStoryboardInputChange} />
+                <input ref={scene360InputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleScene360InputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 

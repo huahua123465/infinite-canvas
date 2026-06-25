@@ -56,6 +56,13 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    sourcePrompt?: string;
+    disableAutoMultiView?: boolean;
+    multiViewRole?: "grid" | "front" | "top" | "left" | "right";
+    multiViewSourceNodeId?: string;
+    sceneViewRole?: "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
+    sceneGroupId?: string;
+    requiredSceneViewRoles?: Array<"front" | "top">;
 };
 
 export type CanvasNodeData = {
