@@ -41,6 +41,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
     const [promptExpanded, setPromptExpanded] = useState(false);
+    const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
 
     useEffect(() => {
@@ -75,8 +76,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 onSubmit={submit}
                 onFocus={() => setPromptExpanded(true)}
                 onBlur={() => setPromptExpanded(false)}
-                className={`thin-scrollbar w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150 ${promptExpanded ? "h-64" : "h-24"}`}
-                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
+                onWheel={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="thin-scrollbar w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
+                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 
@@ -173,6 +176,11 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: bool
     if (mode === "audio") return "描述要生成的音频内容";
     if (mode === "image") return hasImageContent ? "请输入你想要把这张图修改成什么" : "描述要生成的图片内容";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
+}
+
+function estimatePromptEditorHeight(prompt: string) {
+    const visualLines = (prompt || "").split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 42)), 0);
+    return Math.min(560, Math.max(260, visualLines * 22 + 36));
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
