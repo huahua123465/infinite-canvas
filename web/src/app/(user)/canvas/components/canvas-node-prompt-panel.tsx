@@ -76,7 +76,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 onSubmit={submit}
                 onFocus={() => setPromptExpanded(true)}
                 onBlur={() => setPromptExpanded(false)}
-                onWheel={(event) => event.stopPropagation()}
+                onWheel={(event) => {
+                    event.stopPropagation();
+                    if (!promptExpanded) return;
+                    const target = event.currentTarget;
+                    if (target.scrollHeight <= target.clientHeight) return;
+                    event.preventDefault();
+                    target.scrollTop += event.deltaY;
+                }}
                 onPointerDown={(event) => event.stopPropagation()}
                 className="thin-scrollbar w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
