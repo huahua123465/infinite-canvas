@@ -304,6 +304,7 @@ function InfiniteCanvasPage() {
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [promptAssistantNodeId, setPromptAssistantNodeId] = useState<string | null>(null);
     const [promptAssistantLoading, setPromptAssistantLoading] = useState(false);
+    const [promptAssistantModel, setPromptAssistantModel] = useState("");
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -1658,9 +1659,10 @@ function InfiniteCanvasPage() {
 
     const openPromptAssistant = useCallback((node: CanvasNodeData) => {
         setPromptAssistantNodeId(node.id);
+        setPromptAssistantModel((current) => current || effectiveConfig.textModel || effectiveConfig.model);
         setToolbarNodeId(null);
         setDialogNodeId((current) => (current === node.id ? current : current));
-    }, []);
+    }, [effectiveConfig.model, effectiveConfig.textModel]);
 
     const applyPromptAssistantResult = useCallback(
         (node: CanvasNodeData, prompt: string, mode: "replace" | "append" | "text") => {
@@ -1685,8 +1687,8 @@ function InfiniteCanvasPage() {
     );
 
     const rewritePromptWithAi = useCallback(
-        async (node: CanvasNodeData, prompt: string, requirement: string) => {
-            const model = effectiveConfig.textModel || effectiveConfig.model;
+        async (node: CanvasNodeData, prompt: string, requirement: string, selectedModel?: string) => {
+            const model = selectedModel || promptAssistantModel || effectiveConfig.textModel || effectiveConfig.model;
             const requestConfig = { ...effectiveConfig, model };
             if (!isAiConfigReady(requestConfig, model)) {
                 openConfigDialog(true);
@@ -1736,7 +1738,7 @@ function InfiniteCanvasPage() {
                 setPromptAssistantLoading(false);
             }
         },
-        [effectiveConfig, isAiConfigReady, openConfigDialog],
+        [effectiveConfig, isAiConfigReady, openConfigDialog, promptAssistantModel],
     );
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
@@ -2949,7 +2951,11 @@ function InfiniteCanvasPage() {
                     node={promptAssistantNode}
                     open={Boolean(promptAssistantNode)}
                     loading={promptAssistantLoading}
+                    config={effectiveConfig}
+                    selectedModel={promptAssistantModel || effectiveConfig.textModel || effectiveConfig.model}
                     onClose={() => setPromptAssistantNodeId(null)}
+                    onModelChange={setPromptAssistantModel}
+                    onMissingConfig={() => openConfigDialog(true)}
                     onApply={applyPromptAssistantResult}
                     onAiRewrite={rewritePromptWithAi}
                 />

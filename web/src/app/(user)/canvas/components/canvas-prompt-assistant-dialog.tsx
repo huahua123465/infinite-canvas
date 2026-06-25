@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { App, Button, Input, Modal, Tag } from "antd";
 import { FilePlus2, WandSparkles } from "lucide-react";
 
+import { ModelPicker } from "@/components/model-picker";
+import { type AiConfig } from "@/stores/use-config-store";
 import { PROMPT_ASSISTANT_PRESETS, applyPromptPreset, appendPrompt, type PromptAssistantPresetId } from "../utils/prompt-assistant";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 
@@ -13,12 +15,16 @@ type CanvasPromptAssistantDialogProps = {
     node: CanvasNodeData | null;
     open: boolean;
     loading?: boolean;
+    config: AiConfig;
+    selectedModel: string;
     onClose: () => void;
+    onModelChange: (model: string) => void;
+    onMissingConfig: () => void;
     onApply: (node: CanvasNodeData, prompt: string, mode: "replace" | "append" | "text") => void;
-    onAiRewrite: (node: CanvasNodeData, prompt: string, requirement: string) => Promise<string>;
+    onAiRewrite: (node: CanvasNodeData, prompt: string, requirement: string, model: string) => Promise<string>;
 };
 
-export function CanvasPromptAssistantDialog({ node, open, loading = false, onClose, onApply, onAiRewrite }: CanvasPromptAssistantDialogProps) {
+export function CanvasPromptAssistantDialog({ node, open, loading = false, config, selectedModel, onClose, onModelChange, onMissingConfig, onApply, onAiRewrite }: CanvasPromptAssistantDialogProps) {
     const { message } = App.useApp();
     const sourcePrompt = useMemo(() => readNodePrompt(node), [node]);
     const [draftPrompt, setDraftPrompt] = useState("");
@@ -40,7 +46,7 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, onClo
     const rewriteWithAi = async () => {
         try {
             setAiLoading(true);
-            const result = await onAiRewrite(node, draftPrompt || sourcePrompt, requirement);
+            const result = await onAiRewrite(node, draftPrompt || sourcePrompt, requirement, selectedModel);
             setDraftPrompt(result);
             message.success("AI 已优化提示词");
         } catch (error) {
@@ -95,9 +101,12 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, onClo
                 <section>
                     <div className="mb-2 text-sm font-medium">自定义修改要求</div>
                     <TextArea value={requirement} onChange={(event) => setRequirement(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} placeholder="例如：保留脸型五官，换现代穿搭，发型改成自然披发，不要古装。" />
-                    <Button className="mt-2" type="default" icon={<WandSparkles className="size-4" />} loading={aiLoading} onClick={rewriteWithAi}>
-                        AI智能优化
-                    </Button>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <ModelPicker config={config} value={selectedModel} onChange={onModelChange} capability="text" placeholder="选择文本模型" onMissingConfig={onMissingConfig} />
+                        <Button type="default" icon={<WandSparkles className="size-4" />} loading={aiLoading} onClick={rewriteWithAi}>
+                            AI智能优化
+                        </Button>
+                    </div>
                     <div className="mt-1 text-xs text-stone-500">需要先在右上角配置里设置文本模型和 API Key；快捷模板不需要模型。</div>
                 </section>
 
