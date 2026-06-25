@@ -6,12 +6,12 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -24,6 +24,7 @@ import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType }
 import { buildMangaCharacterPromptNodes } from "../utils/manga-character-card-import";
 import { buildScene360PromptNodes } from "../utils/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "../utils/manga-storyboard-scene-import";
+import { buildPromptAssistantInstruction } from "../utils/prompt-assistant";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -39,6 +40,7 @@ import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "../component
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
+import { CanvasPromptAssistantDialog, mergePromptForNode, promptPatchForNode, readNodePrompt } from "../components/canvas-prompt-assistant-dialog";
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
@@ -300,6 +302,8 @@ function InfiniteCanvasPage() {
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
+    const [promptAssistantNodeId, setPromptAssistantNodeId] = useState<string | null>(null);
+    const [promptAssistantLoading, setPromptAssistantLoading] = useState(false);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -685,6 +689,7 @@ function InfiniteCanvasPage() {
     const superResolveNode = superResolveNodeId ? nodeById.get(superResolveNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
+    const promptAssistantNode = promptAssistantNodeId ? nodeById.get(promptAssistantNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
     const batchChildCountById = useMemo(() => {
@@ -1650,6 +1655,89 @@ function InfiniteCanvasPage() {
     const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
+
+    const openPromptAssistant = useCallback((node: CanvasNodeData) => {
+        setPromptAssistantNodeId(node.id);
+        setToolbarNodeId(null);
+        setDialogNodeId((current) => (current === node.id ? current : current));
+    }, []);
+
+    const applyPromptAssistantResult = useCallback(
+        (node: CanvasNodeData, prompt: string, mode: "replace" | "append" | "text") => {
+            const text = prompt.trim();
+            if (!text) return;
+            if (mode === "text") {
+                const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
+                const textNode = createCanvasNode(CanvasNodeType.Text, { x: node.position.x + node.width + 96 + spec.width / 2, y: node.position.y + spec.height / 2 }, { content: text, prompt: text, status: NODE_STATUS_SUCCESS, fontSize: 14 });
+                setNodes((prev) => [...prev, textNode]);
+                setSelectedNodeIds(new Set([textNode.id]));
+                setSelectedConnectionId(null);
+                setDialogNodeId(textNode.id);
+                message.success("已新建提示词文本节点");
+                return;
+            }
+            const nextPrompt = mergePromptForNode(node, text, mode);
+            setNodes((prev) => prev.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, promptPatchForNode(item, nextPrompt)) : item)));
+            setDialogNodeId(node.id);
+            message.success(mode === "append" ? "已追加到当前提示词" : "已替换当前提示词");
+        },
+        [message],
+    );
+
+    const rewritePromptWithAi = useCallback(
+        async (node: CanvasNodeData, prompt: string, requirement: string) => {
+            const model = effectiveConfig.textModel || effectiveConfig.model;
+            const requestConfig = { ...effectiveConfig, model };
+            if (!isAiConfigReady(requestConfig, model)) {
+                openConfigDialog(true);
+                throw new Error("请先在右上角配置里设置文本模型、API Base 和 API Key");
+            }
+            const instruction = buildPromptAssistantInstruction(prompt || readNodePrompt(node), requirement);
+            const textMessages: AiTextMessage[] = [
+                {
+                    role: "user" as const,
+                    content: instruction,
+                },
+            ];
+            let messages = textMessages;
+            if (node.type === CanvasNodeType.Image && node.metadata?.content) {
+                try {
+                    const dataUrl = await imageToDataUrl({ url: node.metadata.content, storageKey: node.metadata.storageKey });
+                    if (dataUrl) {
+                        messages = [{
+                            role: "user",
+                            content: [
+                                { type: "text" as const, text: instruction },
+                                { type: "image_url" as const, image_url: { url: dataUrl } },
+                            ],
+                        }];
+                    }
+                } catch {
+                    // If image hydration fails, still rewrite from the prompt text.
+                }
+            }
+            setPromptAssistantLoading(true);
+            try {
+                let output = "";
+                const run = (input: AiTextMessage[]) =>
+                    requestImageQuestion(requestConfig, input, (text) => {
+                        output = text;
+                    });
+                let result: string;
+                try {
+                    result = await run(messages);
+                } catch (error) {
+                    if (messages === textMessages) throw error;
+                    output = "";
+                    result = await run(textMessages);
+                }
+                return (result || output).trim();
+            } finally {
+                setPromptAssistantLoading(false);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, openConfigDialog],
+    );
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
@@ -2765,6 +2853,7 @@ function InfiniteCanvasPage() {
                                         onConfigChange={handleConfigNodeChange}
                                         onGenerate={handleGenerateNode}
                                         onStop={confirmStopGeneration}
+                                        onPromptAssistant={openPromptAssistant}
                                         onImageSettingsOpenChange={(open) => {
                                             setNodeImageSettingsOpen(open);
                                             if (open) setToolbarNodeId(null);
@@ -2849,10 +2938,20 @@ function InfiniteCanvasPage() {
                     onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={(node) => setPreviewNodeId(node.id)}
+                    onPromptAssistant={openPromptAssistant}
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
+                />
+
+                <CanvasPromptAssistantDialog
+                    node={promptAssistantNode}
+                    open={Boolean(promptAssistantNode)}
+                    loading={promptAssistantLoading}
+                    onClose={() => setPromptAssistantNodeId(null)}
+                    onApply={applyPromptAssistantResult}
+                    onAiRewrite={rewritePromptWithAi}
                 />
 
                 <CanvasToolbar
