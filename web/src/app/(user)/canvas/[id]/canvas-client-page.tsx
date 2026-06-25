@@ -1670,7 +1670,7 @@ function InfiniteCanvasPage() {
             if (!text) return;
             if (mode === "text") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
-                const textNode = createCanvasNode(CanvasNodeType.Text, { x: node.position.x + node.width + 96 + spec.width / 2, y: node.position.y + spec.height / 2 }, { content: text, prompt: text, status: NODE_STATUS_SUCCESS, fontSize: 14 });
+                const textNode = createCanvasNode(CanvasNodeType.Text, { x: node.position.x + node.width / 2, y: node.position.y + node.height + 88 + spec.height / 2 }, { content: text, prompt: text, status: NODE_STATUS_SUCCESS, fontSize: 14 });
                 setNodes((prev) => [...prev, textNode]);
                 setSelectedNodeIds(new Set([textNode.id]));
                 setSelectedConnectionId(null);
