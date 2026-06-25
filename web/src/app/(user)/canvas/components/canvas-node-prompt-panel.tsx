@@ -40,10 +40,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
+    const [promptExpanded, setPromptExpanded] = useState(false);
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
+        setPromptExpanded(false);
     }, [hasTextContent, node.id, node.metadata?.prompt]);
 
     const updatePrompt = (value: string) => {
@@ -71,7 +73,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 references={mentionReferences}
                 onChange={updatePrompt}
                 onSubmit={submit}
-                className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
+                onFocus={() => setPromptExpanded(true)}
+                onBlur={() => setPromptExpanded(false)}
+                className={`thin-scrollbar w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150 ${promptExpanded ? "h-64" : "h-24"}`}
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
