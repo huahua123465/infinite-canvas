@@ -48,7 +48,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
         setPromptExpanded(false);
-    }, [hasTextContent, node.id, node.metadata?.prompt]);
+    }, [hasTextContent, node.id]);
+
+    useEffect(() => {
+        const nextPrompt = hasTextContent ? "" : node.metadata?.prompt || "";
+        setPrompt((current) => (current === nextPrompt ? current : nextPrompt));
+    }, [hasTextContent, node.metadata?.prompt]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
