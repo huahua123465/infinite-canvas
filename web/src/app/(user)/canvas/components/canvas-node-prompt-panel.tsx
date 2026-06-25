@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Sparkles, Square } from "lucide-react";
 import { Button } from "antd";
 
@@ -39,6 +39,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
+    const panelRef = useRef<HTMLDivElement | null>(null);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
     const [promptExpanded, setPromptExpanded] = useState(false);
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
@@ -61,8 +62,17 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt("");
     };
 
+    const collapsePromptEditorIfFocusLeft = () => {
+        window.setTimeout(() => {
+            const activeElement = document.activeElement;
+            if (activeElement && panelRef.current?.contains(activeElement)) return;
+            setPromptExpanded(false);
+        }, 0);
+    };
+
     return (
         <div
+            ref={panelRef}
             className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
             style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
@@ -75,7 +85,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 onChange={updatePrompt}
                 onSubmit={submit}
                 onFocus={() => setPromptExpanded(true)}
-                onBlur={() => setPromptExpanded(false)}
+                onBlur={collapsePromptEditorIfFocusLeft}
                 onWheel={(event) => {
                     event.stopPropagation();
                     if (!promptExpanded) return;
@@ -85,8 +95,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     target.scrollTop += event.deltaY;
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
-                className="thin-scrollbar w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
-                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
+                className="thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
+                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 

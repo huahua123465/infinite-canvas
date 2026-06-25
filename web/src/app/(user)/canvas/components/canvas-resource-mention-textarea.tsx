@@ -30,6 +30,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [hasSelection, setHasSelection] = useState(false);
+    const [isFocused, setIsFocused] = useState(false);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
@@ -85,11 +86,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
     };
 
-    const showOverlay = Boolean(activeLabels.length && !hasSelection);
+    const showOverlay = Boolean(activeLabels.length && !hasSelection && !isFocused);
     const mergedStyle = {
         ...(style || {}),
         color: showOverlay ? "transparent" : style?.color,
-        caretColor: style?.color || theme.node.text,
+        caretColor: style?.caretColor || style?.color || theme.node.text,
         ...(showOverlay ? { background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
     const menu = mention && candidates.length && textareaRef.current ? <MentionMenu textarea={textareaRef.current} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null;
@@ -132,6 +133,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     updateSelectionState();
                     props.onPointerUp?.(event);
                 }}
+                onFocus={(event) => {
+                    setIsFocused(true);
+                    props.onFocus?.(event);
+                }}
                 onKeyDown={(event) => {
                     if (mention && candidates.length) {
                         if (event.key === "ArrowDown") {
@@ -167,6 +172,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     props.onScroll?.(event);
                 }}
                 onBlur={(event) => {
+                    setIsFocused(false);
                     setHasSelection(false);
                     window.setTimeout(closeMention, 120);
                     props.onBlur?.(event);
