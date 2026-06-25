@@ -1741,10 +1741,21 @@ function InfiniteCanvasPage() {
         [effectiveConfig, isAiConfigReady, openConfigDialog, promptAssistantModel],
     );
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
-        if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
-    }, []);
+    const downloadNodeImage = useCallback(
+        (node: CanvasNodeData) => {
+            if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) return;
+            if (!node.metadata?.content) return message.error(node.type === CanvasNodeType.Video ? "没有可下载的视频" : node.type === CanvasNodeType.Audio ? "没有可下载的音频" : "没有可下载的图片");
+
+            const fileName = `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`;
+            try {
+                saveAs(node.metadata.content, fileName);
+                message.success({ content: `已开始下载：${fileName}`, key: `download-${node.id}` });
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "下载失败");
+            }
+        },
+        [message],
+    );
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
