@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -32,6 +32,17 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
+
+    const resetContainerScroll = useCallback(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        if (container.scrollLeft !== 0) container.scrollLeft = 0;
+        if (container.scrollTop !== 0) container.scrollTop = 0;
+    }, [containerRef]);
+
+    useLayoutEffect(() => {
+        resetContainerScroll();
+    });
 
     useEffect(() => {
         scaleRef.current = viewport.k;
@@ -67,6 +78,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
 
+        resetContainerScroll();
         const delta = -event.deltaY;
         const factor = Math.pow(1.1, delta / 100);
         const newScale = Math.min(Math.max(viewport.k * factor, 0.05), 5);
@@ -162,17 +174,26 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         const container = containerRef.current;
         if (!container) return;
 
-        const preventWheelScroll = (event: WheelEvent) => event.preventDefault();
+        const preventWheelScroll = (event: WheelEvent) => {
+            event.preventDefault();
+            resetContainerScroll();
+        };
+        const preventContainerScroll = () => resetContainerScroll();
         container.addEventListener("wheel", preventWheelScroll, { passive: false });
-        return () => container.removeEventListener("wheel", preventWheelScroll);
-    }, [containerRef]);
+        container.addEventListener("scroll", preventContainerScroll, { passive: true });
+        return () => {
+            container.removeEventListener("wheel", preventWheelScroll);
+            container.removeEventListener("scroll", preventContainerScroll);
+        };
+    }, [containerRef, resetContainerScroll]);
 
     return (
         <div
             ref={containerRef}
-            className="relative h-full w-full cursor-grab select-none overflow-hidden"
+            className="relative h-full w-full cursor-grab select-none overflow-hidden overscroll-none"
             style={{ background: theme.canvas.background }}
             onPointerDown={handlePointerDown}
+            onScroll={resetContainerScroll}
             onWheel={handleWheel}
             onContextMenu={onContextMenu}
             onDragOver={(event) => event.preventDefault()}
