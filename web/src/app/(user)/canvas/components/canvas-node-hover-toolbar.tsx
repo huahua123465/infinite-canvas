@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
@@ -82,8 +82,37 @@ export function CanvasNodeHoverToolbar({
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(true);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
+    const toolbarRef = useRef<HTMLDivElement | null>(null);
+    const [windowSize, setWindowSize] = useState(() => ({
+        width: typeof window === "undefined" ? 1200 : window.innerWidth,
+        height: typeof window === "undefined" ? 800 : window.innerHeight,
+    }));
+    const [toolbarSize, setToolbarSize] = useState({ width: 0, height: 48 });
     const { message } = App.useApp();
     const copyText = useCopyText();
+
+    useEffect(() => {
+        const updateWindowSize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+        updateWindowSize();
+        window.addEventListener("resize", updateWindowSize);
+        return () => window.removeEventListener("resize", updateWindowSize);
+    }, []);
+
+    useLayoutEffect(() => {
+        const toolbar = toolbarRef.current;
+        if (!toolbar) return;
+        const updateToolbarSize = () => {
+            const rect = toolbar.getBoundingClientRect();
+            setToolbarSize((current) => {
+                const next = { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
+                return current.width === next.width && current.height === next.height ? current : next;
+            });
+        };
+        updateToolbarSize();
+        const resizeObserver = new ResizeObserver(updateToolbarSize);
+        resizeObserver.observe(toolbar);
+        return () => resizeObserver.disconnect();
+    }, [node?.id, viewport.k, showImageToolLabels, quickImageToolIds, imageToolSettingsOpen]);
 
     useEffect(() => {
         try {
@@ -104,8 +133,11 @@ export function CanvasNodeHoverToolbar({
 
     if (!node) return null;
 
-    const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    const nodeScreenLeft = viewport.x + node.position.x * viewport.k;
+    const nodeScreenTop = viewport.y + node.position.y * viewport.k;
+    const nodeScreenWidth = node.width * viewport.k;
+    const nodeScreenHeight = node.height * viewport.k;
+    const nodeScreenCenterX = nodeScreenLeft + nodeScreenWidth / 2;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -156,6 +188,14 @@ export function CanvasNodeHoverToolbar({
     ];
     const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
+    const viewportPadding = 12;
+    const toolbarGap = 14;
+    const toolbarMaxWidth = Math.max(260, windowSize.width - viewportPadding * 2);
+    const effectiveToolbarWidth = Math.min(toolbarSize.width || toolbarMaxWidth, toolbarMaxWidth);
+    const toolbarLeft = clamp(nodeScreenCenterX - effectiveToolbarWidth / 2, viewportPadding, Math.max(viewportPadding, windowSize.width - effectiveToolbarWidth - viewportPadding));
+    const toolbarHeight = toolbarSize.height || 48;
+    const canShowAbove = nodeScreenTop - toolbarGap - toolbarHeight >= viewportPadding;
+    const toolbarTop = canShowAbove ? nodeScreenTop - toolbarGap - toolbarHeight : clamp(nodeScreenTop + nodeScreenHeight + toolbarGap, viewportPadding, Math.max(viewportPadding, windowSize.height - toolbarHeight - viewportPadding));
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
@@ -182,8 +222,9 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                style={{ left, top }}
+                ref={toolbarRef}
+                className="absolute z-[70] flex min-h-12 flex-wrap items-center overflow-visible rounded-[18px] border border-black/10 bg-white py-1 text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                style={{ left: toolbarLeft, top: toolbarTop, maxWidth: toolbarMaxWidth }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -294,6 +335,11 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
             </button>
         </Tooltip>
     );
+}
+
+function clamp(value: number, min: number, max: number) {
+    if (max < min) return min;
+    return Math.min(Math.max(value, min), max);
 }
 
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {
