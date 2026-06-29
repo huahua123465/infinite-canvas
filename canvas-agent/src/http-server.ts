@@ -57,7 +57,10 @@ export function startHttpServer() {
     app.get("/agent/codex/threads/:threadId", route(async (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.query.canvasId || ""));
         const threadId = routeParam(req.params.threadId);
-        res.json({ ok: true, workspace, ...(await readCodexThread(emit, threadId, workspace.workspacePath)) });
+        const result = await readCodexThread(emit, threadId, workspace.workspacePath);
+        const missing = (result.thread as Record<string, unknown>).status === "missing";
+        const nextWorkspace = missing && workspace.activeThreadId === threadId ? updateCanvasWorkspace(config, workspace.canvasId, { activeThreadId: undefined }) : workspace;
+        res.json({ ok: true, workspace: nextWorkspace, ...result });
     }));
     app.post("/agent/codex/threads/:threadId/resume", route(async (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.body?.canvasId || ""));

@@ -75,7 +75,13 @@ export async function listCodexThreads(emit: AgentEmit, options: { cwd: string; 
 }
 
 export async function readCodexThread(emit: AgentEmit, threadId: string, cwd?: string) {
-    const thread = await loadCodexThread(emit, threadId, cwd, true);
+    let thread: unknown;
+    try {
+        thread = await loadCodexThread(emit, threadId, cwd, true);
+    } catch (error) {
+        if (!isRecoverableThreadError(error)) throw error;
+        return { thread: { id: threadId, cwd: cwd || "", status: "missing" }, messages: [] };
+    }
     return { thread: summarizeCodexThread(thread), messages: threadMessages(thread) };
 }
 
@@ -98,18 +104,27 @@ export function runClaudeTurn(prompt: string, emit: AgentEmit) {
 
 async function ensureCodexThread(app: CodexAppClient, options: CodexRunOptions) {
     if (options.threadId) {
-        const result = await app.readThread(options.threadId, false);
-        assertThreadWorkspace(field(result, "thread") || {}, options.cwd);
-        const thread = await app.resumeThread(options.threadId, options.cwd);
-        assertThreadWorkspace(thread, options.cwd);
-        codexThreadId = String(field(thread, "id") || options.threadId);
-        return codexThreadId;
+        try {
+            const result = await readLoadedThread(app, options.threadId, options.cwd, false);
+            assertThreadWorkspace(field(result, "thread") || {}, options.cwd);
+            const thread = await app.resumeThread(options.threadId, options.cwd);
+            assertThreadWorkspace(thread, options.cwd);
+            codexThreadId = String(field(thread, "id") || options.threadId);
+            return codexThreadId;
+        } catch (error) {
+            if (!isRecoverableThreadError(error)) throw error;
+            codexThreadId = "";
+        }
     }
     if (!codexThreadId) {
         const thread = await app.startThread(options.cwd);
         codexThreadId = String(field(thread, "id") || "");
     }
     return codexThreadId;
+}
+
+function isRecoverableThreadError(error: unknown) {
+    return /thread not loaded|no rollout found|does not belong to the current canvas workspace/i.test(errorMessage(error));
 }
 
 class CodexAppClient {
@@ -125,7 +140,8 @@ class CodexAppClient {
     private constructor(private child: ChildProcess, private emit: AgentEmit) {}
 
     static async start(emit: AgentEmit) {
-        const child = spawn(process.execPath, [codexBin(), "app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        const command = codexCommand();
+        const child = spawn(command.command, [...command.args, "app-server", "--stdio"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
         const client = new CodexAppClient(child, emit);
         child.stdout?.on("data", (chunk) => client.read(chunk.toString()));
         child.stderr?.on("data", (chunk) => emit("agent_log", { text: chunk.toString() }));
@@ -299,10 +315,25 @@ function normalizeCodexNotification(method: string, params: Json): AgentEvent | 
 
 async function loadCodexThread(emit: AgentEmit, threadId: string, cwd: string | undefined, includeTurns: boolean) {
     codexApp ||= await CodexAppClient.start(emit);
-    const result = await codexApp.readThread(threadId, includeTurns);
+    const result = await readLoadedThread(codexApp, threadId, cwd, includeTurns);
     const thread = field(result, "thread") || {};
     assertThreadWorkspace(thread, cwd);
     return thread;
+}
+
+async function readLoadedThread(app: CodexAppClient, threadId: string, cwd: string | undefined, includeTurns: boolean) {
+    try {
+        return await app.readThread(threadId, includeTurns);
+    } catch (error) {
+        if (!/thread not loaded/i.test(errorMessage(error))) throw error;
+        try {
+            await app.resumeThread(threadId, cwd);
+        } catch (resumeError) {
+            if (!isRecoverableThreadError(resumeError)) throw resumeError;
+            throw resumeError;
+        }
+        return await app.readThread(threadId, includeTurns);
+    }
 }
 
 function assertThreadWorkspace(thread: unknown, cwd?: string) {
@@ -454,8 +485,33 @@ function imageExt(type = "") {
     return "jpg";
 }
 
-function codexBin() {
-    return path.join(path.dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js");
+function codexCommand() {
+    const explicit = process.env.CODEX_BIN?.trim();
+    if (explicit) return executableCommand(explicit);
+    const desktop = desktopCodexBin();
+    if (desktop) return executableCommand(desktop);
+    return { command: process.execPath, args: [path.join(path.dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js")] };
+}
+
+function executableCommand(file: string) {
+    return file.endsWith(".js") ? { command: process.execPath, args: [file] } : { command: file, args: [] };
+}
+
+function desktopCodexBin() {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (!localAppData) return "";
+    const binRoot = path.join(localAppData, "OpenAI", "Codex", "bin");
+    try {
+        const fsSync = require("node:fs") as typeof import("node:fs");
+        const versions = fsSync
+            .readdirSync(binRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => path.join(binRoot, entry.name, process.platform === "win32" ? "codex.exe" : "codex"))
+            .filter((file) => fsSync.existsSync(file));
+        return versions.sort().at(-1) || "";
+    } catch {
+        return "";
+    }
 }
 
 function pipeJsonLines(child: ReturnType<typeof spawn>, emit: AgentEmit, agent: string) {
