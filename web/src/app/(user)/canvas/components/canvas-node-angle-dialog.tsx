@@ -25,7 +25,8 @@ export function CanvasNodeAngleDialog({ dataUrl, open, onClose, onConfirm }: { d
         if (open) setParams(defaultParams);
     }, [dataUrl, open]);
 
-    const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) => setParams((current) => ({ ...current, [key]: value }));
+    const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) =>
+        setParams((current) => (Object.is(current[key], value) ? current : { ...current, [key]: value }));
 
     return (
         <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={860} centered destroyOnHidden>
