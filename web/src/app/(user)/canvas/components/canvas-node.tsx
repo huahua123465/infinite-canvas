@@ -455,6 +455,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
     const fileInputRef = useRef<HTMLInputElement>(null);
     const importDialogRef = useRef<HTMLDivElement>(null);
     const [importOpen, setImportOpen] = useState(false);
+    const [importingScreenshot, setImportingScreenshot] = useState(false);
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
     const saveRows = (rows: string[][]) => onContentChange(node.id, storyboardRowsToMarkdown(rows), [STORYBOARD_COLUMNS, ...renumberStoryboardRows(rows)]);
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
@@ -465,11 +466,17 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
     const deleteRow = (rowIndex: number) => saveRows(bodyRows.filter((_, index) => index !== rowIndex));
     const importScreenshot = (file?: File) => {
         if (!file) return;
+        setImportingScreenshot(true);
         onStoryboardScreenshotImport?.(node, file);
         setImportOpen(false);
     };
     const handlePaste = (event: React.ClipboardEvent) => {
-        const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
+        const file =
+            Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/")) ||
+            Array.from(event.clipboardData.items)
+                .filter((item) => item.type.startsWith("image/"))
+                .map((item) => item.getAsFile())
+                .find((item): item is File => Boolean(item));
         if (!file) return;
         event.preventDefault();
         importScreenshot(file);
@@ -481,6 +488,11 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
     useEffect(() => {
         if (importOpen) importDialogRef.current?.focus();
     }, [importOpen]);
+    useEffect(() => {
+        if (!importingScreenshot) return;
+        const timer = window.setTimeout(() => setImportingScreenshot(false), 2500);
+        return () => window.clearTimeout(timer);
+    }, [importingScreenshot]);
 
     return (
         <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]" onPaste={handlePaste}>
@@ -581,14 +593,14 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 </table>
             </div>
             {importOpen ? (
-                <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
+                <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55 outline-none" tabIndex={0} data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
                     <div className="w-[420px] rounded-xl border border-[#3a3a3a] bg-[#181818] p-4 shadow-2xl">
                         <div className="mb-3 flex items-center justify-between">
                             <div className="text-sm font-semibold">导入分镜截图</div>
                             <button type="button" className="text-sm text-[#9c9c9c]" onClick={() => setImportOpen(false)}>×</button>
                         </div>
                         <div ref={importDialogRef} tabIndex={0} className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd] outline-none focus:border-[#2f80ff]">
-                            <div>截图后在这里按 Ctrl+V，或选择图片文件，会自动识别并追加</div>
+                            <div>{importingScreenshot ? "已收到截图，正在识别并追加..." : "截图后在这里按 Ctrl+V，或选择图片文件，会自动识别并追加"}</div>
                             <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1]" onClick={() => fileInputRef.current?.click()}>选择图片</button>
                         </div>
                         <div className="mt-4 flex justify-end gap-2">
