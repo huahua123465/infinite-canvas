@@ -638,8 +638,8 @@ function InfiniteCanvasPage() {
             const newNode = createCanvasNode(nodeType, pending.position, metadata);
             if (type === "storyboard") {
                 newNode.title = "分镜脚本";
-                newNode.width = 900;
-                newNode.height = 520;
+                newNode.width = 1440;
+                newNode.height = 720;
             }
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {

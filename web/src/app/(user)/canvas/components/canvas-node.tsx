@@ -445,7 +445,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 }
 
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
-const STORYBOARD_COL_WIDTHS = [72, 78, 340, 86, 240, 300, 210, 220, 280];
+const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 
 function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRendererProps, "node" | "onContentChange">) {
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
@@ -456,17 +456,17 @@ function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRende
     };
 
     return (
-        <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]" data-canvas-no-zoom>
-            <div className="flex h-14 items-center border-b border-[#303030] bg-[#0e0e0e] px-5">
+        <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]">
+            <div className="flex h-12 cursor-move items-center border-b border-[#303030] bg-[#0e0e0e] px-5">
                 <div className="text-sm font-semibold">分镜脚本</div>
-                <div className="ml-auto text-xs text-[#9c9c9c]">{bodyRows.length}/9 镜头</div>
+                <div className="ml-auto text-xs text-[#9c9c9c]">{bodyRows.length}/9 镜头 · 拖这里移动</div>
             </div>
-            <div className="thin-scrollbar h-[calc(100%-56px)] overflow-auto">
-                <table className="min-w-[1830px] border-collapse text-left text-xs">
-                    <thead className="sticky top-0 z-10 bg-[#1f1f1f] text-[#9c9c9c]">
+            <div className="thin-scrollbar h-[calc(100%-48px)] overflow-auto" data-canvas-no-zoom>
+                <table className="min-w-[1720px] border-collapse text-left text-[11px]">
+                    <thead className="sticky top-0 z-20 bg-[#1f1f1f] text-[#9c9c9c]">
                         <tr>
                             {STORYBOARD_COLUMNS.map((column, index) => (
-                                <th key={column} className="border-b border-r border-[#343434] px-3 py-3 font-medium" style={{ width: STORYBOARD_COL_WIDTHS[index] }}>
+                                <th key={column} className={`${index === 0 ? "sticky left-0 z-30 bg-[#1f1f1f]" : ""} border-b border-r border-[#343434] px-2 py-2 font-medium`} style={{ width: STORYBOARD_COL_WIDTHS[index] }}>
                                     {column}
                                 </th>
                             ))}
@@ -477,10 +477,10 @@ function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRende
                         {bodyRows.map((row, rowIndex) => (
                             <tr key={rowIndex} className={rowIndex === 0 ? "bg-[#2b2b2b]" : "bg-[#151515]"}>
                                 {STORYBOARD_COLUMNS.map((_, colIndex) => (
-                                    <td key={colIndex} className="border-b border-r border-[#303030] align-top">
+                                    <td key={colIndex} className={`${colIndex === 0 ? rowIndex === 0 ? "sticky left-0 z-10 bg-[#2b2b2b]" : "sticky left-0 z-10 bg-[#151515]" : ""} border-b border-r border-[#303030] align-top`}>
                                         <textarea
-                                            className={`block w-full resize-none bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`}
-                                            style={{ minHeight: 66, color: colIndex === 8 ? "#a0a0a0" : "#f1f1f1" }}
+                                            className={`block w-full resize-none bg-transparent px-2 py-2 leading-[18px] outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`}
+                                            style={{ minHeight: 76, color: colIndex === 8 ? "#a0a0a0" : "#f1f1f1" }}
                                             value={row[colIndex] || ""}
                                             onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
                                             onMouseDown={(event) => event.stopPropagation()}
