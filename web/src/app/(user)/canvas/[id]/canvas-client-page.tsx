@@ -128,6 +128,13 @@ const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连�
 7. 运镜写固定机位、推镜、跟拍、摇镜、手持轻晃等。
 8. 最终提示词用于后续视频/图片生成，要把人物、场景、动作、情绪、镜头、光影写完整。
 9. 不要编造与剧本冲突的新剧情。`;
+const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本表格，并只输出 Markdown 表格。
+
+表格列必须严格为：
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+
+要求：只提取截图中能看清的行；看不清的单元格留空；不要解释，不要标题。`;
+const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -1633,6 +1640,39 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content, ...(storyboardRows ? { storyboardRows } : {}) } } : node)));
     }, []);
 
+    const importStoryboardScreenshot = useCallback(
+        async (node: CanvasNodeData, file: File) => {
+            const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            try {
+                message.loading({ content: "正在识别截图", key: `storyboard-${node.id}` });
+                const dataUrl = await fileToDataUrl(file);
+                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: [{ type: "text", text: STORYBOARD_SCREENSHOT_IMPORT_PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }], () => {});
+                const parsedRows = parseStoryboardTable(answer);
+                const importedRows = parsedRows[0]?.join("|").includes("镜号") ? parsedRows.slice(1) : parsedRows;
+                if (!importedRows.length) {
+                    message.warning({ content: "没有识别到可导入的分镜表格", key: `storyboard-${node.id}` });
+                    return;
+                }
+                setNodes((prev) =>
+                    prev.map((item) => {
+                        if (item.id !== node.id) return item;
+                        const currentRows = parseStoryboardRows(item.metadata?.storyboardRows);
+                        const storyboardRows = [STORYBOARD_COLUMNS, ...renumberStoryboardRowsForCanvas([...currentRows, ...importedRows])];
+                        return { ...item, metadata: { ...item.metadata, storyboardRows, content: storyboardRowsToMarkdownForCanvas(storyboardRows.slice(1)) } };
+                    }),
+                );
+                message.success({ content: `已追加 ${importedRows.length} 行分镜`, key: `storyboard-${node.id}` });
+            } catch (error) {
+                message.error({ content: error instanceof Error ? error.message : "截图识别失败", key: `storyboard-${node.id}` });
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+    );
+
     const toggleBatchExpanded = useCallback((nodeId: string) => {
         const isExpanded = Boolean(nodesRef.current.find((node) => node.id === nodeId)?.metadata?.imageBatchExpanded);
         if (isExpanded) {
@@ -2985,6 +3025,7 @@ function InfiniteCanvasPage() {
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
                             onContentChange={handleNodeContentChange}
+                            onStoryboardScreenshotImport={importStoryboardScreenshot}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={(node) => void handleRetryNode(node)}
@@ -3621,6 +3662,28 @@ function parseStoryboardTable(content: string) {
         .filter((line) => line.startsWith("|") && line.endsWith("|"))
         .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
     return rows.filter((row) => row.length >= 9 && !row.every((cell) => /^-+$/.test(cell))).slice(0, 16);
+}
+
+function parseStoryboardRows(rows?: string[][]) {
+    const source = rows?.length ? rows : [];
+    return source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
+}
+
+function renumberStoryboardRowsForCanvas(rows: string[][]) {
+    return rows.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => (colIndex === 0 ? String(index + 1).padStart(2, "0") : row[colIndex] || "")));
+}
+
+function storyboardRowsToMarkdownForCanvas(rows: string[][]) {
+    return [`| ${STORYBOARD_COLUMNS.join(" | ")} |`, `| ${STORYBOARD_COLUMNS.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${STORYBOARD_COLUMNS.map((_, index) => (row[index] || "").replace(/\n/g, " ")).join(" | ")} |`)].join("\n");
+}
+
+function fileToDataUrl(file: File) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("读取截图失败"));
+        reader.readAsDataURL(file);
+    });
 }
 
 function buildAngleLabel(params: CanvasImageAngleParams) {

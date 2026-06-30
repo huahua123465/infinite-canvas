@@ -41,6 +41,7 @@ type CanvasNodeProps = {
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
+    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
@@ -61,6 +62,7 @@ type NodeContentRendererProps = {
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
+    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
@@ -96,6 +98,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onConnectStart,
     onResize,
     onContentChange,
+    onStoryboardScreenshotImport,
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
@@ -307,6 +310,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         renderNodeContent={renderNodeContent}
                         mentionReferences={mentionReferences}
                         onContentChange={onContentChange}
+                        onStoryboardScreenshotImport={onStoryboardScreenshotImport}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onGenerateImage={onGenerateImage}
@@ -447,18 +451,47 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 
-function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRendererProps, "node" | "onContentChange">) {
+function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
+    const saveRows = (rows: string[][]) => onContentChange(node.id, storyboardRowsToMarkdown(rows), [STORYBOARD_COLUMNS, ...renumberStoryboardRows(rows)]);
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
         const nextRows = bodyRows.map((row) => [...row]);
         nextRows[rowIndex][colIndex] = value;
-        onContentChange(node.id, storyboardRowsToMarkdown(nextRows), [STORYBOARD_COLUMNS, ...nextRows]);
+        saveRows(nextRows);
+    };
+    const deleteRow = (rowIndex: number) => saveRows(bodyRows.filter((_, index) => index !== rowIndex));
+    const importScreenshot = (file?: File) => {
+        if (!file) return;
+        onStoryboardScreenshotImport?.(node, file);
     };
 
     return (
         <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]">
             <div className="flex h-12 cursor-move items-center border-b border-[#303030] bg-[#0e0e0e] px-5">
                 <div className="text-sm font-semibold">分镜脚本</div>
+                <button
+                    type="button"
+                    className="ml-4 rounded-md border border-[#3a3a3a] bg-[#202020] px-3 py-1 text-xs text-[#f1f1f1] hover:bg-[#2b2b2b]"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        fileInputRef.current?.click();
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    data-canvas-no-zoom
+                >
+                    添加脚本
+                </button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                        importScreenshot(event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                    }}
+                />
                 <div className="ml-auto text-xs text-[#9c9c9c]">{bodyRows.length}/9 镜头 · 拖这里移动</div>
             </div>
             <div className="thin-scrollbar h-[calc(100%-48px)] overflow-auto" data-canvas-no-zoom>
@@ -489,7 +522,19 @@ function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRende
                                         />
                                     </td>
                                 ))}
-                                <td className="border-b border-[#303030] px-3 py-3 text-center text-[#9c9c9c]">...</td>
+                                <td className="border-b border-[#303030] px-3 py-3 text-center">
+                                    <button
+                                        type="button"
+                                        className="rounded border border-[#3a3a3a] px-2 py-1 text-[11px] text-[#ff8c8c] hover:bg-[#2a1a1a]"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            deleteRow(rowIndex);
+                                        }}
+                                        onMouseDown={(event) => event.stopPropagation()}
+                                    >
+                                        删除
+                                    </button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -502,7 +547,11 @@ function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRende
 function normalizeStoryboardRows(rows?: string[][]) {
     const source = rows?.length ? rows : [STORYBOARD_COLUMNS, ...Array.from({ length: 9 }, (_, index) => [`${index + 1}`, "5s", "", "", "", "", "", "", ""])];
     const body = source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
-    return body.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, 15);
+    return renumberStoryboardRows(body.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, 30));
+}
+
+function renumberStoryboardRows(rows: string[][]) {
+    return rows.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => (colIndex === 0 ? String(index + 1).padStart(2, "0") : row[colIndex] || "")));
 }
 
 function storyboardRowsToMarkdown(rows: string[][]) {
