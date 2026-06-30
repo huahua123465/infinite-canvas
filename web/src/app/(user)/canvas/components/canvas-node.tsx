@@ -453,8 +453,8 @@ const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 
 function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const importDialogRef = useRef<HTMLDivElement>(null);
     const [importOpen, setImportOpen] = useState(false);
-    const [pendingFile, setPendingFile] = useState<File | null>(null);
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
     const saveRows = (rows: string[][]) => onContentChange(node.id, storyboardRowsToMarkdown(rows), [STORYBOARD_COLUMNS, ...renumberStoryboardRows(rows)]);
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
@@ -467,18 +467,20 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
         if (!file) return;
         onStoryboardScreenshotImport?.(node, file);
         setImportOpen(false);
-        setPendingFile(null);
     };
     const handlePaste = (event: React.ClipboardEvent) => {
         const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
         if (!file) return;
         event.preventDefault();
-        setPendingFile(file);
+        importScreenshot(file);
     };
     const openImportDialog = (event: React.MouseEvent) => {
         event.stopPropagation();
         setImportOpen(true);
     };
+    useEffect(() => {
+        if (importOpen) importDialogRef.current?.focus();
+    }, [importOpen]);
 
     return (
         <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]" onPaste={handlePaste}>
@@ -508,7 +510,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                     accept="image/*"
                     className="hidden"
                     onChange={(event) => {
-                        setPendingFile(event.target.files?.[0] || null);
+                        importScreenshot(event.target.files?.[0]);
                         event.currentTarget.value = "";
                     }}
                 />
@@ -579,19 +581,18 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 </table>
             </div>
             {importOpen ? (
-                <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
+                <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
                     <div className="w-[420px] rounded-xl border border-[#3a3a3a] bg-[#181818] p-4 shadow-2xl">
                         <div className="mb-3 flex items-center justify-between">
                             <div className="text-sm font-semibold">导入分镜截图</div>
                             <button type="button" className="text-sm text-[#9c9c9c]" onClick={() => setImportOpen(false)}>×</button>
                         </div>
-                        <div className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd]">
-                            <div>{pendingFile ? pendingFile.name : "截图后在这里按 Ctrl+V，或选择图片文件"}</div>
+                        <div ref={importDialogRef} tabIndex={0} className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd] outline-none focus:border-[#2f80ff]">
+                            <div>截图后在这里按 Ctrl+V，或选择图片文件，会自动识别并追加</div>
                             <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1]" onClick={() => fileInputRef.current?.click()}>选择图片</button>
                         </div>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className="rounded-md border border-[#3a3a3a] px-3 py-1 text-xs" onClick={() => setImportOpen(false)}>取消</button>
-                            <button type="button" className="rounded-md bg-[#2f80ff] px-3 py-1 text-xs text-white disabled:opacity-45" disabled={!pendingFile} onClick={() => importScreenshot(pendingFile || undefined)}>识别并追加</button>
                         </div>
                     </div>
                 </div>
