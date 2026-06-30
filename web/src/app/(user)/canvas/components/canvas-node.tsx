@@ -453,6 +453,8 @@ const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 
 function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [importOpen, setImportOpen] = useState(false);
+    const [pendingFile, setPendingFile] = useState<File | null>(null);
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
     const saveRows = (rows: string[][]) => onContentChange(node.id, storyboardRowsToMarkdown(rows), [STORYBOARD_COLUMNS, ...renumberStoryboardRows(rows)]);
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
@@ -464,26 +466,18 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
     const importScreenshot = (file?: File) => {
         if (!file) return;
         onStoryboardScreenshotImport?.(node, file);
-    };
-    const importClipboardScreenshot = async () => {
-        try {
-            const items = await navigator.clipboard?.read?.();
-            const imageItem = items?.find((item) => item.types.some((type) => type.startsWith("image/")));
-            const imageType = imageItem?.types.find((type) => type.startsWith("image/"));
-            if (!imageItem || !imageType) {
-                window.alert("剪贴板里没有截图");
-                return;
-            }
-            importScreenshot(new File([await imageItem.getType(imageType)], "clipboard-storyboard.png", { type: imageType }));
-        } catch {
-            window.alert("浏览器没有剪贴板图片权限，请用 Ctrl+V 或文件选择导入");
-        }
+        setImportOpen(false);
+        setPendingFile(null);
     };
     const handlePaste = (event: React.ClipboardEvent) => {
         const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
         if (!file) return;
         event.preventDefault();
-        importScreenshot(file);
+        setPendingFile(file);
+    };
+    const openImportDialog = (event: React.MouseEvent) => {
+        event.stopPropagation();
+        setImportOpen(true);
     };
 
     return (
@@ -493,10 +487,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 <button
                     type="button"
                     className="ml-4 rounded-md border border-[#3a3a3a] bg-[#202020] px-3 py-1 text-xs text-[#f1f1f1] hover:bg-[#2b2b2b]"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        fileInputRef.current?.click();
-                    }}
+                    onClick={openImportDialog}
                     onMouseDown={(event) => event.stopPropagation()}
                     data-canvas-no-zoom
                 >
@@ -505,10 +496,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 <button
                     type="button"
                     className="ml-2 rounded-md border border-[#3a3a3a] bg-[#202020] px-3 py-1 text-xs text-[#f1f1f1] hover:bg-[#2b2b2b]"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        void importClipboardScreenshot();
-                    }}
+                    onClick={openImportDialog}
                     onMouseDown={(event) => event.stopPropagation()}
                     data-canvas-no-zoom
                 >
@@ -520,7 +508,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                     accept="image/*"
                     className="hidden"
                     onChange={(event) => {
-                        importScreenshot(event.target.files?.[0]);
+                        setPendingFile(event.target.files?.[0] || null);
                         event.currentTarget.value = "";
                     }}
                 />
@@ -529,10 +517,12 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
             <div
                 className="thin-scrollbar h-[calc(100%-48px)] overflow-auto"
                 data-canvas-no-zoom
-                onWheel={(event) => {
+                data-storyboard-scroll
+                onWheelCapture={(event) => {
+                    event.preventDefault();
                     event.stopPropagation();
-                    if (!event.shiftKey) return;
-                    event.currentTarget.scrollLeft += event.deltaY;
+                    if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) event.currentTarget.scrollLeft += event.deltaY || event.deltaX;
+                    else event.currentTarget.scrollTop += event.deltaY;
                 }}
             >
                 <table className="min-w-[1720px] border-collapse text-left text-[11px]">
@@ -557,6 +547,14 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                                             value={row[colIndex] || ""}
                                             onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
                                             onPaste={handlePaste}
+                                            onWheel={(event) => {
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                const scroller = event.currentTarget.closest<HTMLElement>("[data-storyboard-scroll]");
+                                                if (!scroller) return;
+                                                if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) scroller.scrollLeft += event.deltaY || event.deltaX;
+                                                else scroller.scrollTop += event.deltaY;
+                                            }}
                                             onMouseDown={(event) => event.stopPropagation()}
                                             onPointerDown={(event) => event.stopPropagation()}
                                         />
@@ -580,6 +578,24 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                     </tbody>
                 </table>
             </div>
+            {importOpen ? (
+                <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
+                    <div className="w-[420px] rounded-xl border border-[#3a3a3a] bg-[#181818] p-4 shadow-2xl">
+                        <div className="mb-3 flex items-center justify-between">
+                            <div className="text-sm font-semibold">导入分镜截图</div>
+                            <button type="button" className="text-sm text-[#9c9c9c]" onClick={() => setImportOpen(false)}>×</button>
+                        </div>
+                        <div className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd]">
+                            <div>{pendingFile ? pendingFile.name : "截图后在这里按 Ctrl+V，或选择图片文件"}</div>
+                            <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1]" onClick={() => fileInputRef.current?.click()}>选择图片</button>
+                        </div>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button type="button" className="rounded-md border border-[#3a3a3a] px-3 py-1 text-xs" onClick={() => setImportOpen(false)}>取消</button>
+                            <button type="button" className="rounded-md bg-[#2f80ff] px-3 py-1 text-xs text-white disabled:opacity-45" disabled={!pendingFile} onClick={() => importScreenshot(pendingFile || undefined)}>识别并追加</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }
