@@ -465,9 +465,29 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
         if (!file) return;
         onStoryboardScreenshotImport?.(node, file);
     };
+    const importClipboardScreenshot = async () => {
+        try {
+            const items = await navigator.clipboard?.read?.();
+            const imageItem = items?.find((item) => item.types.some((type) => type.startsWith("image/")));
+            const imageType = imageItem?.types.find((type) => type.startsWith("image/"));
+            if (!imageItem || !imageType) {
+                window.alert("剪贴板里没有截图");
+                return;
+            }
+            importScreenshot(new File([await imageItem.getType(imageType)], "clipboard-storyboard.png", { type: imageType }));
+        } catch {
+            window.alert("浏览器没有剪贴板图片权限，请用 Ctrl+V 或文件选择导入");
+        }
+    };
+    const handlePaste = (event: React.ClipboardEvent) => {
+        const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
+        if (!file) return;
+        event.preventDefault();
+        importScreenshot(file);
+    };
 
     return (
-        <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]">
+        <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]" onPaste={handlePaste}>
             <div className="flex h-12 cursor-move items-center border-b border-[#303030] bg-[#0e0e0e] px-5">
                 <div className="text-sm font-semibold">分镜脚本</div>
                 <button
@@ -481,6 +501,18 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                     data-canvas-no-zoom
                 >
                     添加脚本
+                </button>
+                <button
+                    type="button"
+                    className="ml-2 rounded-md border border-[#3a3a3a] bg-[#202020] px-3 py-1 text-xs text-[#f1f1f1] hover:bg-[#2b2b2b]"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        void importClipboardScreenshot();
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    data-canvas-no-zoom
+                >
+                    粘贴截图
                 </button>
                 <input
                     ref={fileInputRef}
@@ -524,6 +556,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                                             style={{ minHeight: 76, color: colIndex === 8 ? "#a0a0a0" : "#f1f1f1" }}
                                             value={row[colIndex] || ""}
                                             onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
+                                            onPaste={handlePaste}
                                             onMouseDown={(event) => event.stopPropagation()}
                                             onPointerDown={(event) => event.stopPropagation()}
                                         />
