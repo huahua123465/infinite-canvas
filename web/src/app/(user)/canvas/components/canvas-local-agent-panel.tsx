@@ -18,6 +18,7 @@ const PANEL_MOTION_SECONDS = 0.5;
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
 const DEFAULT_AGENT_URL = "http://127.0.0.1:17371";
+const TOOL_RESULT_RETRY_DELAY_MS = 600;
 const AGENT_CONNECT_STEPS = [
     { title: "安装 Codex 插件", text: "在 Codex app 安装 Infinite Canvas 插件后，首次使用插件会自动启动本地 Agent。" },
     { title: "打开画布连接", text: "回到这里点击连接，网页会自动读取本机 Agent 配置。" },
@@ -56,6 +57,7 @@ export function CanvasLocalAgentPanel({ snapshot, canUndoOps, collapsed, embedde
     const autoConnectRef = useRef(false);
     const connectedRef = useRef(false);
     const errorLoggedRef = useRef(false);
+    const lastPostedSnapshotSignatureRef = useRef("");
     const attachmentUrlsRef = useRef(new Set<string>());
     const clientIdRef = useRef(typeof crypto === "undefined" ? `${Date.now()}` : crypto.randomUUID());
     const endpoint = useMemo(() => url.trim().replace(/\/$/, ""), [url]);
@@ -129,7 +131,7 @@ export function CanvasLocalAgentPanel({ snapshot, canUndoOps, collapsed, embedde
         source.addEventListener("agent_error", (event) => {
             const message = parseEventData<{ message?: unknown }>(event)?.message;
             setAgentState({ activity: "出错", waiting: false });
-            addMessage({ role: "error", title: "错误", text: normalizeText(message) });
+            addMessage({ role: "error", title: "错误", text: normalizeAgentErrorText(message) });
             addEventLog("错误", message, message);
         });
         source.addEventListener("agent_done", () => {
@@ -164,7 +166,7 @@ export function CanvasLocalAgentPanel({ snapshot, canUndoOps, collapsed, embedde
 
     useEffect(() => {
         if (!connected) return;
-        const timer = setTimeout(() => void postState(endpoint, token, clientIdRef.current, snapshot), 300);
+        const timer = setTimeout(() => void postState(endpoint, token, clientIdRef.current, snapshot, lastPostedSnapshotSignatureRef), 300);
         return () => clearTimeout(timer);
     }, [connected, endpoint, snapshot, token]);
 
@@ -773,14 +775,56 @@ function AgentHistoryView({ theme, threads, activeThreadId, workspacePath, loadi
     );
 }
 
-async function postState(endpoint: string, token: string, clientId: string, snapshot: CanvasAgentSnapshot) {
+async function postState(endpoint: string, token: string, clientId: string, snapshot: CanvasAgentSnapshot, lastSignatureRef?: { current: string }) {
     try {
-        await fetch(`${endpoint}/canvas/state?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(snapshot) });
+        const payload = compactAgentSnapshotForPost(snapshot);
+        const signature = agentSnapshotPostSignature(payload);
+        if (lastSignatureRef && lastSignatureRef.current === signature) return;
+        if (lastSignatureRef) lastSignatureRef.current = signature;
+        await fetch(`${endpoint}/canvas/state?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: signature });
     } catch {}
 }
 
+function compactAgentSnapshotForPost(snapshot: CanvasAgentSnapshot): CanvasAgentSnapshot {
+    return {
+        ...snapshot,
+        viewport: { ...snapshot.viewport, x: Math.round(snapshot.viewport.x), y: Math.round(snapshot.viewport.y), k: Number(snapshot.viewport.k.toFixed(3)) },
+        nodes: snapshot.nodes.map((node) => ({
+            ...node,
+            metadata: compactAgentNodeMetadata(node.metadata),
+        })),
+    };
+}
+
+function compactAgentNodeMetadata(metadata: CanvasAgentSnapshot["nodes"][number]["metadata"]) {
+    if (!metadata) return metadata;
+    const content = typeof metadata.content === "string" ? metadata.content : "";
+    const isDataUrl = content.startsWith("data:");
+    return {
+        ...metadata,
+        content: isDataUrl ? undefined : content.length > 2000 ? `${content.slice(0, 2000)}...` : metadata.content,
+        hasContent: Boolean(content) || undefined,
+        contentBytes: content ? content.length : undefined,
+    };
+}
+
+function agentSnapshotPostSignature(snapshot: CanvasAgentSnapshot) {
+    return JSON.stringify({ projectId: snapshot.projectId, title: snapshot.title, nodes: snapshot.nodes, connections: snapshot.connections, selectedNodeIds: snapshot.selectedNodeIds });
+}
+
 async function postToolResult(endpoint: string, token: string, clientId: string, body: { requestId: string; result?: unknown; error?: string }) {
-    await fetch(`${endpoint}/canvas/result?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const url = `${endpoint}/canvas/result?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`;
+    const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+    try {
+        await fetchAgentOk(url, init);
+    } catch (firstError) {
+        await sleep(TOOL_RESULT_RETRY_DELAY_MS);
+        try {
+            await fetchAgentOk(url, init);
+        } catch (secondError) {
+            throw new Error(`工具结果回传失败：${readableAgentError(secondError)}。已自动重连并重试 1 次，仍未成功。`);
+        }
+    }
 }
 
 function agentMessageToChatMessage(item: AgentChatItem) {
@@ -793,7 +837,7 @@ function agentAttachmentToChatAttachment(item: AgentAttachment): CanvasAgentChat
 
 function formatAgentEvent(event: AgentEventPayload): Omit<AgentChatItem, "id"> | null {
     const item = event.item;
-    if (event.type === "item.completed" && item?.type === "error") return { role: "error", title: "错误", text: normalizeText(item.message), detail: item };
+    if (event.type === "item.completed" && item?.type === "error") return { role: "error", title: "错误", text: normalizeAgentErrorText(item.message), detail: item };
     if ((event.type === "item.updated" || event.type === "item.completed") && item?.type === "agent_message") return { role: "assistant", title: "Codex", text: stringText(item.text), meta: usageText(event), streamId: item.id };
     if (event.type === "item.completed" && isMcpToolItem(item) && isReadTool(String(item?.tool || ""))) return { role: "tool", title: `${toolName(String(item?.tool || ""))}完成`, text: item?.error?.message || toolSummary(item), detail: toolDetail(item) };
     const text = eventText(event);
@@ -946,6 +990,10 @@ function normalizeText(value: unknown) {
     return JSON.stringify(value, null, 2);
 }
 
+function normalizeAgentErrorText(value: unknown) {
+    return readableAgentError(normalizeText(value));
+}
+
 function stringText(value: unknown) {
     return typeof value === "string" ? value : "";
 }
@@ -984,11 +1032,36 @@ function formatBytes(bytes: number) {
     return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.ceil(bytes / 1024)}KB`;
 }
 
+async function fetchAgentOk(url: string, init?: RequestInit) {
+    try {
+        const res = await fetch(url, init);
+        if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string; msg?: string };
+            throw new Error(data.error || data.msg || `HTTP ${res.status}`);
+        }
+        return res;
+    } catch (error) {
+        throw new Error(readableAgentError(error));
+    }
+}
+
+function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readableAgentError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/Failed to fetch|Load failed|NetworkError|fetch failed/i.test(message)) return "无法连接本地 Agent，请确认插件页面仍在连接状态，或刷新页面后重试";
+    if (/HTTP 401|invalid token/i.test(message)) return "本地 Agent token 已失效，请从 Codex 插件重新打开画布";
+    if (/HTTP 403|origin not allowed/i.test(message)) return "本地 Agent 拒绝了当前网页来源，请刷新插件入口重新授权连接";
+    if (/HTTP 404|not found/i.test(message)) return "本地 Agent 接口不存在，可能前端和 Agent 版本不一致，请重启插件";
+    return message || "本地 Agent 请求失败";
+}
+
 async function fetchAgentJson<T>(endpoint: string, token: string, path: string, init?: RequestInit) {
     const url = `${endpoint}${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-    const res = await fetch(url, init);
+    const res = await fetchAgentOk(url, init);
     const data = (await res.json().catch(() => ({}))) as T & { error?: string; msg?: string };
-    if (!res.ok) throw new Error(data.error || data.msg || "本地 Agent 请求失败");
     return data;
 }
 

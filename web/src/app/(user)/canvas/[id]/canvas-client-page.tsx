@@ -26,6 +26,7 @@ import { buildScene360PromptNodes } from "../utils/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "../utils/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction } from "../utils/prompt-assistant";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
+import { buildImagePresetPatch, type CanvasImagePresetId } from "../utils/canvas-image-presets";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
@@ -81,6 +82,8 @@ type PendingConnectionCreate = {
     position: Position;
 };
 
+type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | "storyboard";
+
 type ConnectionDropTarget = {
     nodeId: string | null;
     isNearNode: boolean;
@@ -108,6 +111,23 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连接的剧本拆成可拍摄、可生成视频的分镜脚本。
+
+只输出 Markdown 表格，不要解释，不要标题。
+
+表格列必须严格为：
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+
+要求：
+1. 按剧情推进拆成 9 到 15 个镜头，情绪递进清楚。
+2. 每个镜头时长用 5s、8s、10s、12s 这类格式。
+3. 画面描述要具体到人物动作、环境、表情和关键物件。
+4. 景别填写远景/全景/中景/近景/特写/空镜等。
+5. 对白旁白优先提炼原文里的第一人称旁白，可适当压缩。
+6. 音效写环境声、动作声、音乐情绪。
+7. 运镜写固定机位、推镜、跟拍、摇镜、手持轻晃等。
+8. 最终提示词用于后续视频/图片生成，要把人物、场景、动作、情绪、镜头、光影写完整。
+9. 不要编造与剧本冲突的新剧情。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -180,7 +200,7 @@ function CanvasRefreshShell() {
     );
 }
 
-function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio) => void; onClose: () => void }) {
+function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: ConnectionCreateKind) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div
@@ -199,6 +219,7 @@ function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: Pending
                 </button>
             </div>
             <div className="grid gap-1">
+                <ConnectionCreateOption theme={theme} icon={<BookOpen className="size-5" />} title="分镜脚本" description="按表格拆镜头、提示词" onClick={() => onCreate("storyboard")} />
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
@@ -606,21 +627,37 @@ function InfiniteCanvasPage() {
     );
 
     const createConnectedNode = useCallback(
-        (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
-            const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
-            const newNode = createCanvasNode(type, pending.position, metadata);
+        (type: ConnectionCreateKind, pending: PendingConnectionCreate) => {
+            const nodeType = type === "storyboard" ? CanvasNodeType.Text : type;
+            const metadata =
+                type === "storyboard"
+                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12 }
+                    : type === CanvasNodeType.Config
+                      ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
+                      : undefined;
+            const newNode = createCanvasNode(nodeType, pending.position, metadata);
+            if (type === "storyboard") {
+                newNode.title = "分镜脚本";
+                newNode.width = 900;
+                newNode.height = 520;
+            }
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
                 message.warning("配置节点之间不能连接");
                 return;
             }
-            setNodes((prev) => [...prev, newNode]);
-            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            const nextNodes = [...nodesRef.current, newNode];
+            const nextConnections = [...connectionsRef.current, { id: nanoid(), ...connection }];
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== "storyboard") setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
+            if (type === "storyboard") queueMicrotask(() => void generateNodeRef.current?.(newNode.id, "text", STORYBOARD_SCRIPT_PRESET));
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, setConnecting],
     );
@@ -692,7 +729,7 @@ function InfiniteCanvasPage() {
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const promptAssistantNode = promptAssistantNodeId ? nodeById.get(promptAssistantNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
-    const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
+    const activeNodeId = hasMultipleSelectedNodes ? null : toolbarNodeId || hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
         nodes.forEach((node) => {
@@ -1194,7 +1231,6 @@ function InfiniteCanvasPage() {
         event.stopPropagation();
         setContextMenu(null);
         setHoveredNodeId(null);
-        setToolbarNodeId(null);
         setSelectedConnectionId(null);
 
         const currentSelected = selectedNodeIdsRef.current;
@@ -1213,6 +1249,7 @@ function InfiniteCanvasPage() {
         }
 
         setSelectedNodeIds(nextSelected);
+        setToolbarNodeId(nextSelected.size === 1 && nextSelected.has(nodeId) ? nodeId : null);
         const dragIds = new Set(nextSelected);
         currentNodes.forEach((node) => {
             if (nextSelected.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
@@ -1467,20 +1504,29 @@ function InfiniteCanvasPage() {
     const pasteSystemClipboard = useCallback(async () => {
         if (!navigator.clipboard) return;
 
-        const items = await navigator.clipboard.read();
-        const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
-        if (imageItem) {
-            const imageType = imageItem.types.find((type) => type.startsWith("image/"));
-            if (!imageType) return;
-            const blob = await imageItem.getType(imageType);
-            const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
-            message.success("已从剪切板添加图片");
-            return;
+        try {
+            const items = await navigator.clipboard.read();
+            const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
+            if (imageItem) {
+                const imageType = imageItem.types.find((type) => type.startsWith("image/"));
+                if (!imageType) return;
+                const blob = await imageItem.getType(imageType);
+                const file = new File([blob], "clipboard-image.png", { type: imageType });
+                void createImageFileNode(file, getCanvasCenter());
+                message.success("已从剪切板添加图片");
+                return;
+            }
+        } catch (error) {
+            if (!isClipboardPermissionError(error)) throw error;
         }
 
-        const text = await navigator.clipboard.readText();
-        if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
+        try {
+            const text = await navigator.clipboard.readText();
+            if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
+        } catch (error) {
+            if (isClipboardPermissionError(error)) message.warning("浏览器拒绝读取剪切板，请使用拖拽/上传或先授权剪切板权限");
+            else throw error;
+        }
     }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message]);
 
     useEffect(() => {
@@ -1840,6 +1886,39 @@ function InfiniteCanvasPage() {
             setContextMenu(null);
         },
         [effectiveConfig.model, effectiveConfig.textModel, message],
+    );
+
+    const createImagePresetConfigNode = useCallback(
+        (node: CanvasNodeData, preset: CanvasImagePresetId) => {
+            if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
+                message.warning("图片节点为空，无法创建预设");
+                return;
+            }
+            const gap = 96;
+            const configSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Config];
+            const centerY = node.position.y + node.height / 2;
+            const configNode = {
+                ...createCanvasNode(
+                    CanvasNodeType.Config,
+                    { x: node.position.x + node.width + gap + configSpec.width / 2, y: centerY },
+                    {
+                        generationMode: "image",
+                        model: effectiveConfig.imageModel || effectiveConfig.model || defaultConfig.model,
+                        quality: effectiveConfig.quality,
+                        ...buildImagePresetPatch(preset, node.metadata, [{ nodeId: node.id, type: "image", title: node.title, image: { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey } }]),
+                    },
+                ),
+                title: "九宫格预设",
+            };
+            setNodes((prev) => [...prev, configNode]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: configNode.id }]);
+            setSelectedNodeIds(new Set([configNode.id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(configNode.id);
+            setContextMenu(null);
+            message.success("已创建预设配置节点");
+        },
+        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, message],
     );
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
@@ -2202,7 +2281,7 @@ function InfiniteCanvasPage() {
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const useMultiViewGrid = generationType === "generation" && !sourceNode?.metadata?.sceneViewRole && !sourceNode?.metadata?.disableAutoMultiView;
+                    const useMultiViewGrid = generationType === "generation" && shouldUseMultiViewGrid(effectivePrompt, sourceNode?.metadata);
                     const requestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : effectivePrompt;
                     const requestConfig = useMultiViewGrid ? { ...generationConfig, count: "1", size: "16:9" } : generationConfig;
                     const count = useMultiViewGrid ? 1 : getGenerationCount(generationConfig.count);
@@ -2346,12 +2425,19 @@ function InfiniteCanvasPage() {
                     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
                     let hasSuccess = false;
                     let hasFailure = false;
+                    let lastErrorDetails = "";
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                const image = referenceImages.length
-                                    ? await requestEdit({ ...requestConfig, count: "1" }, requestPrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                    : await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                                let image;
+                                try {
+                                    image = referenceImages.length
+                                        ? await requestEdit({ ...requestConfig, count: "1" }, requestPrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
+                                        : await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                                } catch (error) {
+                                    if (!referenceImages.length || sourceNode?.metadata?.imagePreset !== "character_sheet" || isGenerationCanceled(error)) throw error;
+                                    image = await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                                }
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
@@ -2385,6 +2471,7 @@ function InfiniteCanvasPage() {
                                 if (isGenerationCanceled(error)) return false;
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 hasFailure = true;
+                                lastErrorDetails = errorDetails;
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                             } finally {
                                 finishGenerationRequest(targetId, controller);
@@ -2397,15 +2484,15 @@ function InfiniteCanvasPage() {
                         setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
                         return;
                     }
-                    if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+                    if (hasFailure) message.error(hasSuccess ? "部分图片生成失败" : lastErrorDetails || "全部图片生成失败");
                     setNodes((prev) =>
                         prev.map((node) =>
                             node.id === nodeId && isConfigNode
-                                ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
+                                ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : lastErrorDetails || "全部图片生成失败" } }
                                 : node.id === nodeId && isEmptyImageNode
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
+                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : lastErrorDetails || "全部图片生成失败" } }
                                   : node.id === rootId && !hasSuccess
-                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
+                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: lastErrorDetails || "全部图片生成失败" } }
                                     : node,
                         ),
                     );
@@ -2892,11 +2979,9 @@ function InfiniteCanvasPage() {
                             onHoverStart={(nodeId) => {
                                 if (nodeDraggingRef.current) return;
                                 setHoveredNodeId(nodeId);
-                                keepNodeToolbar(nodeId);
                             }}
                             onHoverEnd={(nodeId) => {
                                 setHoveredNodeId((current) => (current === nodeId ? null : current));
-                                hideNodeToolbar();
                             }}
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
@@ -2944,6 +3029,7 @@ function InfiniteCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onOpenPreset={(node, preset) => createImagePresetConfigNode(node, preset)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -3473,6 +3559,10 @@ function isGenerationCanceled(error: unknown) {
     return error instanceof Error && (error.message === "请求已取消" || error.name === "AbortError");
 }
 
+function isClipboardPermissionError(error: unknown) {
+    return error instanceof DOMException ? error.name === "NotAllowedError" || error.name === "SecurityError" : /clipboard|permission|notallowed|denied/i.test(String(error));
+}
+
 function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     const queue = connections.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId);
     const visited = new Set<string>();
@@ -3517,6 +3607,12 @@ function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNode
     if (!rootId) return false;
     const root = nodes.find((item) => item.id === rootId);
     return Boolean(root && !root.metadata?.imageBatchExpanded);
+}
+
+function shouldUseMultiViewGrid(prompt: string, metadata?: CanvasNodeData["metadata"]) {
+    if (metadata?.disableAutoMultiView || metadata?.sceneViewRole) return false;
+    if (metadata?.enableMultiViewGrid) return true;
+    return /\b(?:2x2|split screen|multi[-\s]?view|four views?|4\s*(?:views?|angles?))\b|四宫格|四视图|多视图|分屏|拼图/i.test(prompt);
 }
 
 function buildAngleLabel(params: CanvasImageAngleParams) {

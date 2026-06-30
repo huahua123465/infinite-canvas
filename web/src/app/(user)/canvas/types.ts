@@ -57,6 +57,8 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     sourcePrompt?: string;
+    imagePreset?: "multi_view_grid" | "character_sheet" | "scene_sheet" | "character_three_view";
+    enableMultiViewGrid?: boolean;
     disableAutoMultiView?: boolean;
     multiViewRole?: "grid" | "front" | "top" | "left" | "right";
     multiViewSourceNodeId?: string;

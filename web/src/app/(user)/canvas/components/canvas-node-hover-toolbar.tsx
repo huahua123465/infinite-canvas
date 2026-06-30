@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { App, Modal, Segmented, Tooltip } from "antd";
+import { App, Button, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -11,6 +11,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { canvasImagePresetOptions, type CanvasImagePresetId } from "../utils/canvas-image-presets";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -26,6 +27,7 @@ type CanvasNodeHoverToolbarProps = {
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
+    onOpenPreset: (node: CanvasNodeData, preset: CanvasImagePresetId) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
@@ -64,6 +66,7 @@ export function CanvasNodeHoverToolbar({
     onUpload,
     onDownload,
     onSaveAsset,
+    onOpenPreset,
     onMaskEdit,
     onCrop,
     onSplit,
@@ -82,6 +85,7 @@ export function CanvasNodeHoverToolbar({
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(true);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
+    const [presetPickerOpen, setPresetPickerOpen] = useState(false);
     const toolbarRef = useRef<HTMLDivElement | null>(null);
     const [windowSize, setWindowSize] = useState(() => ({
         width: typeof window === "undefined" ? 1200 : window.innerWidth,
@@ -129,6 +133,7 @@ export function CanvasNodeHoverToolbar({
 
     useEffect(() => {
         setImageToolSettingsOpen(false);
+        setPresetPickerOpen(false);
     }, [node?.id]);
 
     if (!node) return null;
@@ -157,7 +162,24 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, "提示词已复制");
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onPromptAssistant, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, {
+        onOpenPreset: () => {
+            onKeep(node.id);
+            setPresetPickerOpen(true);
+        },
+        onUpload,
+        onToggleFreeResize,
+        onMaskEdit,
+        onCrop,
+        onSplit,
+        onUpscale,
+        onSuperResolve,
+        onAngle,
+        onViewImage,
+        onCopyPrompt: copyImagePrompt,
+        onPromptAssistant,
+        onReversePrompt,
+    });
 
     function openImageToolSettings() {
         onKeep(node.id);
@@ -202,6 +224,12 @@ export function CanvasNodeHoverToolbar({
         onLeave();
     };
 
+    const applyPreset = (preset: CanvasImagePresetId) => {
+        onOpenPreset(node, preset);
+        setPresetPickerOpen(false);
+        onLeave();
+    };
+
     const setDraftImageToolVisible = (id: ImageQuickToolId, visible: boolean) => {
         setDraftImageToolIds((current) => {
             const selected = new Set(current);
@@ -227,7 +255,7 @@ export function CanvasNodeHoverToolbar({
                 style={{ left: toolbarLeft, top: toolbarTop, maxWidth: toolbarMaxWidth }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
-                    if (!imageToolSettingsOpen) onLeave();
+                    if (!imageToolSettingsOpen && !presetPickerOpen) onLeave();
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -248,6 +276,17 @@ export function CanvasNodeHoverToolbar({
                     onCancel={closeImageToolSettings}
                     onSave={saveImageToolSettings}
                 />
+            ) : null}
+            {hasImage ? (
+                <Modal title="九宫格预设" open={presetPickerOpen} onCancel={() => setPresetPickerOpen(false)} footer={null} centered width={420}>
+                    <div className="grid gap-2">
+                        {canvasImagePresetOptions.map((preset) => (
+                            <Button key={preset.value} className="!h-11 !justify-start" onClick={() => applyPreset(preset.value)}>
+                                {preset.label}
+                            </Button>
+                        ))}
+                    </div>
+                </Modal>
             ) : null}
         </>
     );
