@@ -134,6 +134,12 @@ const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本�
 | 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
 
 要求：只提取截图中能看清的行；看不清的单元格留空；不要解释，不要标题。`;
+const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚本 Markdown 表格。
+
+表格列必须严格为：
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+
+要求：如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜；只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
@@ -1648,9 +1654,9 @@ function InfiniteCanvasPage() {
                 return false;
             }
             try {
-                message.loading({ content: "正在识别截图", key: `storyboard-${node.id}` });
-                const dataUrl = await fileToDataUrl(file);
-                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: [{ type: "text", text: STORYBOARD_SCREENSHOT_IMPORT_PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }], () => {});
+                message.loading({ content: "正在识别文件", key: `storyboard-${node.id}` });
+                const isTextFile = isStoryboardTextFile(file);
+                const answer = isTextFile ? await storyboardAnswerFromTextFile(generationConfig, file) : await storyboardAnswerFromImageFile(generationConfig, file);
                 const parsedRows = parseStoryboardTable(answer);
                 const importedRows = parsedRows[0]?.join("|").includes("镜号") ? parsedRows.slice(1) : parsedRows;
                 if (!importedRows.length) {
@@ -3686,6 +3692,31 @@ function fileToDataUrl(file: File) {
         reader.onerror = () => reject(reader.error || new Error("读取截图失败"));
         reader.readAsDataURL(file);
     });
+}
+
+function readTextFile(file: File) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("读取文本失败"));
+        reader.readAsText(file, "utf-8");
+    });
+}
+
+function isStoryboardTextFile(file: File) {
+    return /^text\//.test(file.type) || /\.(txt|md|markdown|csv)$/i.test(file.name);
+}
+
+async function storyboardAnswerFromImageFile(config: AiConfig, file: File) {
+    const dataUrl = await fileToDataUrl(file);
+    return requestImageQuestion(config, [{ role: "user", content: [{ type: "text", text: STORYBOARD_SCREENSHOT_IMPORT_PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }], () => {});
+}
+
+async function storyboardAnswerFromTextFile(config: AiConfig, file: File) {
+    const text = await readTextFile(file);
+    const parsed = parseStoryboardTable(text);
+    if (parsed.length > 1) return text;
+    return requestImageQuestion(config, [{ role: "user", content: `${STORYBOARD_TEXT_IMPORT_PROMPT}\n\n${text}` }], () => {});
 }
 
 function buildAngleLabel(params: CanvasImageAngleParams) {

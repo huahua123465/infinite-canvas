@@ -472,7 +472,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
         const ok = await onStoryboardScreenshotImport?.(node, file);
         setImportingScreenshot(false);
         if (ok) setImportOpen(false);
-        else setImportError("没有追加成功，请确认图片清晰、模型支持看图，或换一张截图。");
+        else setImportError("没有追加成功。图片请确认清晰且模型支持看图；文本请确认包含分镜内容。");
     };
     const handlePaste = (event: React.ClipboardEvent) => {
         const file =
@@ -518,7 +518,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
                     className="hidden"
                     onChange={(event) => {
                         void importScreenshot(event.target.files?.[0]);
@@ -599,9 +599,9 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                             <button type="button" className="text-sm text-[#9c9c9c]" onClick={() => setImportOpen(false)}>×</button>
                         </div>
                         <div ref={importDialogRef} tabIndex={0} className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd] outline-none focus:border-[#2f80ff]">
-                            <div>{importingScreenshot ? "已收到截图，正在识别并追加..." : "截图后在这里按 Ctrl+V，或选择图片文件，会自动识别并追加"}</div>
+                            <div>{importingScreenshot ? "已收到文件，正在识别并追加..." : "截图后在这里按 Ctrl+V，或选择图片/TXT/MD/CSV 文件，会自动识别并追加"}</div>
                             {importError ? <div className="mt-3 text-[#ff8c8c]">{importError}</div> : null}
-                            <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1] disabled:opacity-45" disabled={importingScreenshot} onClick={() => fileInputRef.current?.click()}>选择图片</button>
+                            <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1] disabled:opacity-45" disabled={importingScreenshot} onClick={() => fileInputRef.current?.click()}>选择图片/文本</button>
                         </div>
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className="rounded-md border border-[#3a3a3a] px-3 py-1 text-xs" onClick={() => setImportOpen(false)}>取消</button>
