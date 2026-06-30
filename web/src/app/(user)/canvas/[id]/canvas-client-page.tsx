@@ -1645,7 +1645,7 @@ function InfiniteCanvasPage() {
             const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
-                return;
+                return false;
             }
             try {
                 message.loading({ content: "正在识别截图", key: `storyboard-${node.id}` });
@@ -1655,7 +1655,7 @@ function InfiniteCanvasPage() {
                 const importedRows = parsedRows[0]?.join("|").includes("镜号") ? parsedRows.slice(1) : parsedRows;
                 if (!importedRows.length) {
                     message.warning({ content: "没有识别到可导入的分镜表格", key: `storyboard-${node.id}` });
-                    return;
+                    return false;
                 }
                 setNodes((prev) =>
                     prev.map((item) => {
@@ -1666,8 +1666,10 @@ function InfiniteCanvasPage() {
                     }),
                 );
                 message.success({ content: `已追加 ${importedRows.length} 行分镜`, key: `storyboard-${node.id}` });
+                return true;
             } catch (error) {
                 message.error({ content: error instanceof Error ? error.message : "截图识别失败", key: `storyboard-${node.id}` });
+                return false;
             }
         },
         [effectiveConfig, isAiConfigReady, message, openConfigDialog],
