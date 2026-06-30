@@ -494,7 +494,15 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                 />
                 <div className="ml-auto text-xs text-[#9c9c9c]">{bodyRows.length}/9 镜头 · 拖这里移动</div>
             </div>
-            <div className="thin-scrollbar h-[calc(100%-48px)] overflow-auto" data-canvas-no-zoom>
+            <div
+                className="thin-scrollbar h-[calc(100%-48px)] overflow-auto"
+                data-canvas-no-zoom
+                onWheel={(event) => {
+                    event.stopPropagation();
+                    if (!event.shiftKey) return;
+                    event.currentTarget.scrollLeft += event.deltaY;
+                }}
+            >
                 <table className="min-w-[1720px] border-collapse text-left text-[11px]">
                     <thead className="sticky top-0 z-20 bg-[#1f1f1f] text-[#9c9c9c]">
                         <tr>
@@ -518,7 +526,6 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
                                             onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
                                             onMouseDown={(event) => event.stopPropagation()}
                                             onPointerDown={(event) => event.stopPropagation()}
-                                            onWheel={(event) => event.stopPropagation()}
                                         />
                                     </td>
                                 ))}
