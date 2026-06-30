@@ -631,7 +631,7 @@ function InfiniteCanvasPage() {
             const nodeType = type === "storyboard" ? CanvasNodeType.Text : type;
             const metadata =
                 type === "storyboard"
-                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12 }
+                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [] }
                     : type === CanvasNodeType.Config
                       ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
                       : undefined;
@@ -1629,8 +1629,8 @@ function InfiniteCanvasPage() {
         );
     }, []);
 
-    const handleNodeContentChange = useCallback((nodeId: string, content: string) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content } } : node)));
+    const handleNodeContentChange = useCallback((nodeId: string, content: string, storyboardRows?: string[][]) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content, ...(storyboardRows ? { storyboardRows } : {}) } } : node)));
     }, []);
 
     const toggleBatchExpanded = useCallback((nodeId: string) => {
@@ -2596,15 +2596,14 @@ function InfiniteCanvasPage() {
                 if (controller.signal.aborted) return;
                 const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item.content]));
                 setNodes((prev) =>
-                    prev.map((node) =>
-                        childIds.includes(node.id)
-                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
-                            : node.id === nodeId && isConfigNode
-                              ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
-                              : node.id === nodeId && !editingTextNode
-                                ? { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
-                                : node,
-                    ),
+                    prev.map((node) => {
+                        const content = answerByNodeId.get(node.id) || streamed;
+                        const storyboardRows = node.metadata?.storyboardRows ? parseStoryboardTable(content) : undefined;
+                        if (childIds.includes(node.id)) return { ...node, metadata: { ...node.metadata, content, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) } };
+                        if (node.id === nodeId && isConfigNode) return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } };
+                        if (node.id === nodeId && !editingTextNode) return { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) } };
+                        return node;
+                    }),
                 );
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
@@ -3613,6 +3612,15 @@ function shouldUseMultiViewGrid(prompt: string, metadata?: CanvasNodeData["metad
     if (metadata?.disableAutoMultiView || metadata?.sceneViewRole) return false;
     if (metadata?.enableMultiViewGrid) return true;
     return /\b(?:2x2|split screen|multi[-\s]?view|four views?|4\s*(?:views?|angles?))\b|四宫格|四视图|多视图|分屏|拼图/i.test(prompt);
+}
+
+function parseStoryboardTable(content: string) {
+    const rows = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("|") && line.endsWith("|"))
+        .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
+    return rows.filter((row) => row.length >= 9 && !row.every((cell) => /^-+$/.test(cell))).slice(0, 16);
 }
 
 function buildAngleLabel(params: CanvasImageAngleParams) {

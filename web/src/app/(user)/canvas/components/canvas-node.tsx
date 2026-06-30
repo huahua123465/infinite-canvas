@@ -40,7 +40,7 @@ type CanvasNodeProps = {
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
-    onContentChange: (nodeId: string, content: string) => void;
+    onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
@@ -60,7 +60,7 @@ type NodeContentRendererProps = {
     batchOpening: boolean;
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
-    onContentChange: (nodeId: string, content: string) => void;
+    onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
@@ -391,6 +391,8 @@ function UnknownNodeContent({ theme }: Pick<NodeContentRendererProps, "theme">) 
 }
 
 function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, onGenerateImage }: NodeContentRendererProps) {
+    if (node.metadata?.storyboardRows) return <StoryboardTableContent node={node} onContentChange={onContentChange} />;
+
     const fontSize = node.metadata?.fontSize || 14;
     const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
 
@@ -440,6 +442,71 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
             )}
         </div>
     );
+}
+
+const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
+const STORYBOARD_COL_WIDTHS = [72, 78, 340, 86, 240, 300, 210, 220, 280];
+
+function StoryboardTableContent({ node, onContentChange }: Pick<NodeContentRendererProps, "node" | "onContentChange">) {
+    const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
+    const updateCell = (rowIndex: number, colIndex: number, value: string) => {
+        const nextRows = bodyRows.map((row) => [...row]);
+        nextRows[rowIndex][colIndex] = value;
+        onContentChange(node.id, storyboardRowsToMarkdown(nextRows), [STORYBOARD_COLUMNS, ...nextRows]);
+    };
+
+    return (
+        <div className="h-full w-full overflow-hidden rounded-[inherit] bg-[#141414] text-[#e7e2d6]" data-canvas-no-zoom>
+            <div className="flex h-14 items-center border-b border-[#303030] bg-[#0e0e0e] px-5">
+                <div className="text-sm font-semibold">分镜脚本</div>
+                <div className="ml-auto text-xs text-[#9c9c9c]">{bodyRows.length}/9 镜头</div>
+            </div>
+            <div className="thin-scrollbar h-[calc(100%-56px)] overflow-auto">
+                <table className="min-w-[1830px] border-collapse text-left text-xs">
+                    <thead className="sticky top-0 z-10 bg-[#1f1f1f] text-[#9c9c9c]">
+                        <tr>
+                            {STORYBOARD_COLUMNS.map((column, index) => (
+                                <th key={column} className="border-b border-r border-[#343434] px-3 py-3 font-medium" style={{ width: STORYBOARD_COL_WIDTHS[index] }}>
+                                    {column}
+                                </th>
+                            ))}
+                            <th className="w-20 border-b border-[#343434] px-3 py-3 font-medium">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {bodyRows.map((row, rowIndex) => (
+                            <tr key={rowIndex} className={rowIndex === 0 ? "bg-[#2b2b2b]" : "bg-[#151515]"}>
+                                {STORYBOARD_COLUMNS.map((_, colIndex) => (
+                                    <td key={colIndex} className="border-b border-r border-[#303030] align-top">
+                                        <textarea
+                                            className={`block w-full resize-none bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`}
+                                            style={{ minHeight: 66, color: colIndex === 8 ? "#a0a0a0" : "#f1f1f1" }}
+                                            value={row[colIndex] || ""}
+                                            onChange={(event) => updateCell(rowIndex, colIndex, event.target.value)}
+                                            onMouseDown={(event) => event.stopPropagation()}
+                                            onPointerDown={(event) => event.stopPropagation()}
+                                            onWheel={(event) => event.stopPropagation()}
+                                        />
+                                    </td>
+                                ))}
+                                <td className="border-b border-[#303030] px-3 py-3 text-center text-[#9c9c9c]">...</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+function normalizeStoryboardRows(rows?: string[][]) {
+    const source = rows?.length ? rows : [STORYBOARD_COLUMNS, ...Array.from({ length: 9 }, (_, index) => [`${index + 1}`, "5s", "", "", "", "", "", "", ""])];
+    const body = source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
+    return body.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, 15);
+}
+
+function storyboardRowsToMarkdown(rows: string[][]) {
+    return [`| ${STORYBOARD_COLUMNS.join(" | ")} |`, `| ${STORYBOARD_COLUMNS.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${STORYBOARD_COLUMNS.map((_, index) => (row[index] || "").replace(/\n/g, " ")).join(" | ")} |`)].join("\n");
 }
 
 function ResourceLabelBadge({ reference }: { reference: CanvasResourceReference }) {
