@@ -13,6 +13,7 @@ import type { CanvasResourceReference } from "../utils/canvas-resource-reference
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
+export type StoryboardImportPreview = { rows: string[][]; raw: string; model: string };
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
@@ -41,7 +42,7 @@ type CanvasNodeProps = {
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
-    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File) => Promise<boolean>;
+    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File, model?: string) => Promise<StoryboardImportPreview | null>;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
@@ -62,7 +63,7 @@ type NodeContentRendererProps = {
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
-    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File) => Promise<boolean>;
+    onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File, model?: string) => Promise<StoryboardImportPreview | null>;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
@@ -454,9 +455,12 @@ const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const importDialogRef = useRef<HTMLDivElement>(null);
+    const pasteTextRef = useRef<HTMLTextAreaElement>(null);
     const [importOpen, setImportOpen] = useState(false);
     const [importingScreenshot, setImportingScreenshot] = useState(false);
     const [importError, setImportError] = useState("");
+    const [importPreview, setImportPreview] = useState<StoryboardImportPreview | null>(null);
+    const [importModel, setImportModel] = useState("");
     const bodyRows = normalizeStoryboardRows(node.metadata?.storyboardRows);
     const saveRows = (rows: string[][]) => onContentChange(node.id, storyboardRowsToMarkdown(rows), [STORYBOARD_COLUMNS, ...renumberStoryboardRows(rows)]);
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
@@ -465,29 +469,56 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
         saveRows(nextRows);
     };
     const deleteRow = (rowIndex: number) => saveRows(bodyRows.filter((_, index) => index !== rowIndex));
+    const importText = (text: string) => {
+        const value = text.trim();
+        if (!value) return;
+        if (pasteTextRef.current) pasteTextRef.current.value = "";
+        void importScreenshot(new File([value], "clipboard-storyboard.txt", { type: "text/plain" }));
+    };
     const importScreenshot = async (file?: File) => {
         if (!file) return;
         setImportError("");
+        setImportPreview(null);
         setImportingScreenshot(true);
-        const ok = await onStoryboardScreenshotImport?.(node, file);
+        const preview = await onStoryboardScreenshotImport?.(node, file, importModel || undefined);
         setImportingScreenshot(false);
-        if (ok) setImportOpen(false);
-        else setImportError("没有追加成功。图片请确认清晰且模型支持看图；文本请确认包含分镜内容。");
+        if (preview) {
+            setImportPreview(preview);
+            setImportModel(preview.model);
+        }
+        if (!preview?.rows.length) {
+            setImportError("没有识别到可导入的分镜行。下面会显示模型原始返回，方便判断。");
+        }
     };
     const handlePaste = (event: React.ClipboardEvent) => {
+        if (!importOpen) return;
+        const target = event.target;
+        if ((target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && !target.dataset.storyboardPasteZone) return;
         const file =
             Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/")) ||
             Array.from(event.clipboardData.items)
                 .filter((item) => item.type.startsWith("image/"))
                 .map((item) => item.getAsFile())
                 .find((item): item is File => Boolean(item));
-        if (!file) return;
+        const text = event.clipboardData.getData("text/plain").trim();
+        if (!file && !text) return;
         event.preventDefault();
-        void importScreenshot(file);
+        if (file) void importScreenshot(file);
+        else importText(text);
     };
     const openImportDialog = (event: React.MouseEvent) => {
         event.stopPropagation();
+        setImportPreview(null);
+        setImportError("");
         setImportOpen(true);
+    };
+    const confirmImportPreview = () => {
+        if (!importPreview?.rows.length) return;
+        const nextRows = [...bodyRows, ...importPreview.rows];
+        saveRows(nextRows);
+        setImportOpen(false);
+        setImportPreview(null);
+        setImportError("");
     };
     useEffect(() => {
         if (importOpen) importDialogRef.current?.focus();
@@ -593,18 +624,54 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
             </div>
             {importOpen ? (
                 <div className="absolute inset-0 z-[80] grid place-items-center bg-black/55 outline-none" tabIndex={0} data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPaste={handlePaste}>
-                    <div className="w-[420px] rounded-xl border border-[#3a3a3a] bg-[#181818] p-4 shadow-2xl">
+                    <div className="w-[560px] rounded-xl border border-[#3a3a3a] bg-[#181818] p-4 shadow-2xl">
                         <div className="mb-3 flex items-center justify-between">
                             <div className="text-sm font-semibold">导入分镜截图</div>
                             <button type="button" className="text-sm text-[#9c9c9c]" onClick={() => setImportOpen(false)}>×</button>
                         </div>
                         <div ref={importDialogRef} tabIndex={0} className="rounded-lg border border-dashed border-[#4a4a4a] bg-[#101010] p-5 text-center text-xs text-[#bdbdbd] outline-none focus:border-[#2f80ff]">
-                            <div>{importingScreenshot ? "已收到文件，正在识别并追加..." : "截图后在这里按 Ctrl+V，或选择图片/TXT/MD/CSV 文件，会自动识别并追加"}</div>
+                            <div>{importingScreenshot ? "已收到文件，正在识别..." : "截图后在这里按 Ctrl+V，或选择图片/TXT/MD/CSV 文件，识别后先预览"}</div>
                             {importError ? <div className="mt-3 text-[#ff8c8c]">{importError}</div> : null}
+                            <label className="mt-3 block text-left text-[#9c9c9c]">
+                                当前识别模型
+                                <input className="mt-1 block w-full rounded border border-[#3a3a3a] bg-[#151515] px-2 py-1 text-[#f1f1f1] outline-none" value={importModel} onChange={(event) => setImportModel(event.target.value)} placeholder="留空使用当前文本模型" />
+                            </label>
+                            <textarea
+                                ref={pasteTextRef}
+                                data-storyboard-paste-zone
+                                className="mt-3 block h-20 w-full resize-none rounded border border-[#3a3a3a] bg-[#151515] px-2 py-2 text-left text-[#f1f1f1] outline-none placeholder:text-[#6f6f6f]"
+                                onMouseDown={(event) => event.stopPropagation()}
+                                placeholder="也可以把 CSV、Tab 表格、JSON、中文冒号列表粘贴到这里"
+                            />
+                            <button type="button" className="mt-2 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1] disabled:opacity-45" disabled={importingScreenshot} onClick={() => importText(pasteTextRef.current?.value || "")}>识别文本</button>
                             <button type="button" className="mt-3 rounded-md border border-[#3a3a3a] px-3 py-1 text-[#f1f1f1] disabled:opacity-45" disabled={importingScreenshot} onClick={() => fileInputRef.current?.click()}>选择图片/文本</button>
                         </div>
+                        {importPreview ? (
+                            <div className="mt-3 rounded-lg border border-[#343434] bg-[#101010] p-3 text-xs">
+                                <div className="mb-2 text-[#bdbdbd]">{importPreview.rows.length ? `识别到 ${importPreview.rows.length} 行，确认后追加` : "没有解析出行，请看原始返回"}</div>
+                                {importPreview.rows.length ? (
+                                    <div className="thin-scrollbar max-h-32 overflow-auto">
+                                        <table className="w-full border-collapse">
+                                            <tbody>
+                                                {importPreview.rows.slice(0, 5).map((row, index) => (
+                                                    <tr key={index}>
+                                                        <td className="border border-[#333] px-2 py-1 text-[#f1f1f1]">{row[0]}</td>
+                                                        <td className="border border-[#333] px-2 py-1 text-[#f1f1f1]">{row[2] || row[1]}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : null}
+                                <details className="mt-2 text-[#9c9c9c]">
+                                    <summary>模型原始返回前 300 字</summary>
+                                    <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2">{importPreview.raw.slice(0, 300)}</pre>
+                                </details>
+                            </div>
+                        ) : null}
                         <div className="mt-4 flex justify-end gap-2">
                             <button type="button" className="rounded-md border border-[#3a3a3a] px-3 py-1 text-xs" onClick={() => setImportOpen(false)}>取消</button>
+                            <button type="button" className="rounded-md bg-[#2f80ff] px-3 py-1 text-xs text-white disabled:opacity-45" disabled={!importPreview?.rows.length} onClick={confirmImportPreview}>确认追加</button>
                         </div>
                     </div>
                 </div>

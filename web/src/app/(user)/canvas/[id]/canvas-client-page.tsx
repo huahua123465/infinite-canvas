@@ -44,7 +44,7 @@ import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canva
 import { CanvasPromptAssistantDialog, mergePromptForNode, promptPatchForNode, readNodePrompt } from "../components/canvas-prompt-assistant-dialog";
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
-import { CanvasNode } from "../components/canvas-node";
+import { CanvasNode, type StoryboardImportPreview } from "../components/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "../components/asset-picker-modal";
@@ -1647,35 +1647,28 @@ function InfiniteCanvasPage() {
     }, []);
 
     const importStoryboardScreenshot = useCallback(
-        async (node: CanvasNodeData, file: File) => {
-            const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
+        async (node: CanvasNodeData, file: File, model?: string): Promise<StoryboardImportPreview | null> => {
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), ...(model?.trim() ? { model: model.trim() } : {}) };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
-                return false;
+                return null;
             }
             try {
                 message.loading({ content: "正在识别文件", key: `storyboard-${node.id}` });
                 const isTextFile = isStoryboardTextFile(file);
                 const answer = isTextFile ? await storyboardAnswerFromTextFile(generationConfig, file) : await storyboardAnswerFromImageFile(generationConfig, file);
-                const parsedRows = parseStoryboardTable(answer);
-                const importedRows = parsedRows[0]?.join("|").includes("镜号") ? parsedRows.slice(1) : parsedRows;
+                const parsedRows = parseStoryboardLoose(answer);
+                const importedRows = stripStoryboardHeader(parsedRows);
                 if (!importedRows.length) {
                     message.warning({ content: "没有识别到可导入的分镜表格", key: `storyboard-${node.id}` });
-                    return false;
+                    return { rows: [], raw: answer, model: generationConfig.model };
                 }
-                setNodes((prev) =>
-                    prev.map((item) => {
-                        if (item.id !== node.id) return item;
-                        const currentRows = parseStoryboardRows(item.metadata?.storyboardRows);
-                        const storyboardRows = [STORYBOARD_COLUMNS, ...renumberStoryboardRowsForCanvas([...currentRows, ...importedRows])];
-                        return { ...item, metadata: { ...item.metadata, storyboardRows, content: storyboardRowsToMarkdownForCanvas(storyboardRows.slice(1)) } };
-                    }),
-                );
-                message.success({ content: `已追加 ${importedRows.length} 行分镜`, key: `storyboard-${node.id}` });
-                return true;
+                message.success({ content: `已识别 ${importedRows.length} 行分镜`, key: `storyboard-${node.id}` });
+                return { rows: importedRows, raw: answer, model: generationConfig.model };
             } catch (error) {
-                message.error({ content: error instanceof Error ? error.message : "截图识别失败", key: `storyboard-${node.id}` });
-                return false;
+                const raw = error instanceof Error ? error.message : "截图识别失败";
+                message.error({ content: raw, key: `storyboard-${node.id}` });
+                return { rows: [], raw, model: generationConfig.model };
             }
         },
         [effectiveConfig, isAiConfigReady, message, openConfigDialog],
@@ -3667,9 +3660,140 @@ function parseStoryboardTable(content: string) {
     const rows = content
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter((line) => line.startsWith("|") && line.endsWith("|"))
-        .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
-    return rows.filter((row) => row.length >= 9 && !row.every((cell) => /^-+$/.test(cell))).slice(0, 16);
+        .filter((line) => line.includes("|"))
+        .map((line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim()));
+    return rows.filter((row) => row.length >= 9 && !isStoryboardDividerRow(row)).slice(0, 30);
+}
+
+function parseStoryboardLoose(content: string) {
+    const jsonRows = parseStoryboardJson(content);
+    if (jsonRows.length) return jsonRows;
+
+    const tableRows = parseStoryboardTable(content);
+    if (tableRows.length) return tableRows;
+
+    const delimitedRows = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => (line.includes("\t") ? line.split("\t") : parseCsvLine(line)).map((cell) => cell.trim()))
+        .filter((row) => row.length >= 3);
+    if (delimitedRows.some((row) => row.length >= 9)) return delimitedRows.map(normalizeStoryboardImportRow).slice(0, 30);
+
+    return parseStoryboardColonBlocks(content).slice(0, 30);
+}
+
+function stripStoryboardHeader(rows: string[][]) {
+    return rows.filter((row, index) => !isStoryboardDividerRow(row) && !(index === 0 && isStoryboardHeaderRow(row))).map(normalizeStoryboardImportRow).slice(0, 30);
+}
+
+function normalizeStoryboardImportRow(row: string[]) {
+    return STORYBOARD_COLUMNS.map((_, index) => row[index] || "");
+}
+
+function isStoryboardHeaderRow(row: string[]) {
+    const joined = row.join("|");
+    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("最终提示词");
+}
+
+function isStoryboardDividerRow(row: string[]) {
+    return row.every((cell) => /^:?-{2,}:?$/.test(cell.trim()));
+}
+
+function parseCsvLine(line: string) {
+    const cells: string[] = [];
+    let cell = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        const next = line[index + 1];
+        if (char === '"' && quoted && next === '"') {
+            cell += '"';
+            index += 1;
+        } else if (char === '"') {
+            quoted = !quoted;
+        } else if (char === "," && !quoted) {
+            cells.push(cell);
+            cell = "";
+        } else {
+            cell += char;
+        }
+    }
+    cells.push(cell);
+    return cells.length > 1 ? cells : [line];
+}
+
+function parseStoryboardJson(content: string) {
+    const start = content.search(/[\[{]/);
+    if (start < 0) return [];
+    const end = Math.max(content.lastIndexOf("]"), content.lastIndexOf("}"));
+    if (end <= start) return [];
+    try {
+        const data = JSON.parse(content.slice(start, end + 1));
+        const list = Array.isArray(data) ? data : data.rows || data.storyboard || data.storyboards || data.shots || data.items;
+        if (!Array.isArray(list)) return [];
+        return list
+            .map((item) => {
+                if (Array.isArray(item)) return item.map(String);
+                if (!item || typeof item !== "object") return [];
+                const record = item as Record<string, unknown>;
+                return STORYBOARD_COLUMNS.map((column) => String(record[column] ?? record[column.replace(/\s/g, "")] ?? ""));
+            })
+            .filter((row) => row.some(Boolean));
+    } catch {
+        return [];
+    }
+}
+
+function parseStoryboardColonBlocks(content: string) {
+    const keyToIndex: Record<string, number> = {
+        镜号: 0,
+        镜头: 0,
+        序号: 0,
+        时长: 1,
+        时间: 1,
+        画面描述: 2,
+        画面: 2,
+        内容: 2,
+        景别: 3,
+        光影氛围: 4,
+        光影: 4,
+        氛围: 4,
+        对白旁白: 5,
+        对白: 5,
+        旁白: 5,
+        台词: 5,
+        音效: 6,
+        声音: 6,
+        运镜: 7,
+        镜头运动: 7,
+        最终提示词: 8,
+        提示词: 8,
+        生图提示词: 8,
+    };
+    const rows: string[][] = [];
+    let current = normalizeStoryboardImportRow([]);
+    const push = () => {
+        if (current.some((cell, index) => index > 0 && cell.trim())) rows.push(current);
+        current = normalizeStoryboardImportRow([]);
+    };
+
+    content.split(/\r?\n/).forEach((rawLine) => {
+        const line = rawLine.trim().replace(/^[-*]\s*/, "");
+        if (!line) {
+            push();
+            return;
+        }
+        const match = line.match(/^([^:：]{1,12})[:：]\s*(.*)$/);
+        if (!match) return;
+        const key = match[1].replace(/[\\/]/g, "").trim();
+        const colIndex = keyToIndex[key];
+        if (colIndex === undefined) return;
+        if (colIndex === 0 && current.some((cell, index) => index > 0 && cell.trim())) push();
+        current[colIndex] = match[2].trim();
+    });
+    push();
+    return rows;
 }
 
 function parseStoryboardRows(rows?: string[][]) {
@@ -3704,7 +3828,7 @@ function readTextFile(file: File) {
 }
 
 function isStoryboardTextFile(file: File) {
-    return /^text\//.test(file.type) || /\.(txt|md|markdown|csv)$/i.test(file.name);
+    return /^text\//.test(file.type) || file.type === "application/json" || /\.(txt|md|markdown|csv|json)$/i.test(file.name);
 }
 
 async function storyboardAnswerFromImageFile(config: AiConfig, file: File) {
@@ -3714,8 +3838,8 @@ async function storyboardAnswerFromImageFile(config: AiConfig, file: File) {
 
 async function storyboardAnswerFromTextFile(config: AiConfig, file: File) {
     const text = await readTextFile(file);
-    const parsed = parseStoryboardTable(text);
-    if (parsed.length > 1) return text;
+    const parsed = parseStoryboardLoose(text);
+    if (stripStoryboardHeader(parsed).length) return text;
     return requestImageQuestion(config, [{ role: "user", content: `${STORYBOARD_TEXT_IMPORT_PROMPT}\n\n${text}` }], () => {});
 }
 
