@@ -64,6 +64,7 @@ import {
     type CanvasImageGenerationType,
     type CanvasNodeData,
     type CanvasNodeMetadata,
+    type StoryboardAsset,
     type ConnectionHandle,
     type ContextMenuState,
     type Position,
@@ -145,6 +146,27 @@ const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光�
 const STORYBOARD_FINAL_PROMPT_PROMPT = `You are a storyboard prompt specialist. Turn the single shot below into one Chinese prompt that can be used directly for AI image or video generation.
 Return only the prompt text. Do not add explanations or headings.
 The prompt must include subject, scene, action, emotion, shot size, lighting atmosphere, camera movement/lens language, and must stay consistent with the story.`;
+const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
+
+只输出 JSON，不要 Markdown，不要解释。
+
+JSON 格式必须为：
+{
+  "style": "全局视觉风格，一句话到两句话",
+  "assets": [
+    { "kind": "character", "name": "角色名", "description": "角色形象描述", "prompt": "可直接用于生成角色设定图的中文提示词" },
+    { "kind": "scene", "name": "场景名", "description": "场景描述", "prompt": "可直接用于生成场景设定图的中文提示词" },
+    { "kind": "prop", "name": "道具名", "description": "道具描述", "prompt": "可直接用于生成道具设定图的中文提示词" }
+  ]
+}
+
+要求：
+1. 只保留后续分镜最需要统一的角色、场景、道具，不要泛滥。
+2. 角色优先提炼姓名、年龄、体型、穿着、气质、情绪基调。
+3. 场景优先提炼时代、空间、光线、陈设、地域质感。
+4. 道具优先提炼剧情里反复出现或情绪关键的物件。
+5. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
+6. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -1649,6 +1671,139 @@ function InfiniteCanvasPage() {
         const normalized = renumberStoryboardRowsForCanvas(rows);
         handleNodeContentChange(nodeId, storyboardRowsToMarkdownForCanvas(normalized), [STORYBOARD_COLUMNS, ...normalized]);
     }, [handleNodeContentChange]);
+
+    const updateStoryboardAsset = useCallback((nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)) } } : node)));
+    }, []);
+
+    const prepareStoryboardAssets = useCallback(
+        async (node: CanvasNodeData) => {
+            const rows = parseStoryboardRows(node.metadata?.storyboardRows);
+            if (!rows.length) {
+                message.warning("请先生成或填写分镜表");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey("asset:prepare");
+            try {
+                const source = [
+                    node.metadata?.prompt || node.metadata?.content ? `原始剧本或补充要求：\n${node.metadata?.prompt || node.metadata?.content}` : "",
+                    `分镜表：\n${storyboardRowsToMarkdownForCanvas(rows)}`,
+                ]
+                    .filter(Boolean)
+                    .join("\n\n");
+                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_ASSET_PROMPT}\n\n${source}` }], () => {});
+                const parsed = parseStoryboardAssetAnswer(answer);
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === node.id
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      storyboardStep: "assets",
+                                      storyboardAssetStyle: parsed.style,
+                                      storyboardAssets: parsed.assets,
+                                  },
+                              }
+                            : item,
+                    ),
+                );
+                message.success("资产已识别");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "识别资产失败");
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+    );
+
+    const uploadStoryboardAssetImage = useCallback(
+        async (nodeId: string, assetId: string, file: File) => {
+            setStoryboardActionKey(`asset:${assetId}`);
+            try {
+                updateStoryboardAsset(nodeId, assetId, { status: NODE_STATUS_LOADING, errorDetails: undefined });
+                const uploaded = await uploadImage(file);
+                updateStoryboardAsset(nodeId, assetId, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
+                message.success("资产图已上传");
+            } catch (error) {
+                updateStoryboardAsset(nodeId, assetId, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "上传资产图失败" });
+                message.error(error instanceof Error ? error.message : "上传资产图失败");
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [message, updateStoryboardAsset],
+    );
+
+    const generateStoryboardAssetImage = useCallback(
+        async (node: CanvasNodeData, assetId: string) => {
+            const asset = node.metadata?.storyboardAssets?.find((item) => item.id === assetId);
+            const prompt = asset?.prompt?.trim() || asset?.description?.trim();
+            if (!asset || !prompt) {
+                message.warning("请先填写资产提示词");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey(`asset:${assetId}`);
+            updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_LOADING, errorDetails: undefined });
+            try {
+                const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                const uploaded = await uploadImage(image.dataUrl);
+                updateStoryboardAsset(node.id, assetId, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
+                message.success("资产图已生成");
+            } catch (error) {
+                updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
+                message.error(error instanceof Error ? error.message : "生成资产图失败");
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardAsset],
+    );
+
+    const batchGenerateStoryboardAssets = useCallback(
+        async (node: CanvasNodeData) => {
+            const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !asset.imageUrl && !asset.storageKey);
+            if (!assets.length) {
+                message.info("没有需要生成的资产图");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey("asset:all");
+            try {
+                for (const asset of assets) {
+                    const prompt = asset.prompt.trim() || asset.description.trim();
+                    if (!prompt) continue;
+                    updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
+                    try {
+                        const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                        const uploaded = await uploadImage(image.dataUrl);
+                        updateStoryboardAsset(node.id, asset.id, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
+                    } catch (error) {
+                        updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
+                    }
+                }
+                message.success("资产图批量生成完成");
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardAsset],
+    );
 
     const composeStoryboardFinalPrompt = useCallback(
         async (node: CanvasNodeData, rowIndex?: number) => {
@@ -3309,6 +3464,11 @@ function InfiniteCanvasPage() {
                     actionKey={storyboardActionKey}
                     onClose={() => setScriptNodeId(null)}
                     onRowsChange={handleNodeContentChange}
+                    onPrepareAssets={(node) => void prepareStoryboardAssets(node)}
+                    onUpdateAsset={updateStoryboardAsset}
+                    onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
+                    onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
+                    onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
                     onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
                     onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
@@ -3663,11 +3823,20 @@ async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
             const content = node.metadata?.content;
+            const storyboardAssets = node.metadata?.storyboardAssets?.length
+                ? await Promise.all(
+                      node.metadata.storyboardAssets.map(async (asset) => ({
+                          ...asset,
+                          imageUrl: await resolveImageUrl(asset.storageKey, asset.imageUrl),
+                      })),
+                  )
+                : undefined;
+            const metadata = storyboardAssets ? { ...node.metadata, storyboardAssets } : node.metadata;
             if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !content) return node;
-            if (node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveImageUrl(node.metadata.storageKey, content) } };
-            if (!content.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadImage(content)) } };
+            if (node.type !== CanvasNodeType.Image || !content) return metadata === node.metadata ? node : { ...node, metadata };
+            if (node.metadata?.storageKey) return { ...node, metadata: { ...metadata, content: await resolveImageUrl(node.metadata.storageKey, content) } };
+            if (!content.startsWith("data:image/")) return metadata === node.metadata ? node : { ...node, metadata };
+            return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(content)) } };
         }),
     );
 }
@@ -3959,6 +4128,40 @@ function parseStoryboardColonBlocks(content: string) {
 function parseStoryboardRows(rows?: string[][]) {
     const source = rows?.length ? rows : [];
     return source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
+}
+
+function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
+    const data = parseJsonObject(content) as { style?: unknown; assets?: unknown };
+    if (!data || typeof data !== "object" || !Array.isArray(data.assets)) throw new Error("模型没有返回可用的资产 JSON");
+    const assets = data.assets
+        .map((item, index) => normalizeStoryboardAsset(item, index))
+        .filter((asset): asset is StoryboardAsset => Boolean(asset))
+        .slice(0, 30);
+    if (!assets.length) throw new Error("没有识别到角色、场景或道具资产");
+    return { style: typeof data.style === "string" ? data.style.trim() : "", assets };
+}
+
+function normalizeStoryboardAsset(item: unknown, index: number): StoryboardAsset | null {
+    if (!item || typeof item !== "object") return null;
+    const record = item as Record<string, unknown>;
+    const kind = record.kind === "scene" || record.kind === "prop" || record.kind === "character" ? record.kind : null;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!kind || !name) return null;
+    const description = typeof record.description === "string" ? record.description.trim() : "";
+    const prompt = typeof record.prompt === "string" ? record.prompt.trim() : description;
+    return { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
+}
+
+function parseJsonObject(content: string) {
+    const trimmed = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        const start = trimmed.indexOf("{");
+        const end = trimmed.lastIndexOf("}");
+        if (start < 0 || end <= start) throw new Error("模型返回内容不是合法 JSON");
+        return JSON.parse(trimmed.slice(start, end + 1));
+    }
 }
 
 function renumberStoryboardRowsForCanvas(rows: string[][]) {

@@ -21,10 +21,27 @@ export enum CanvasNodeType {
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
+export type StoryboardAssetKind = "character" | "scene" | "prop";
+export type StoryboardStep = "shots" | "assets" | "prompts";
+
+export type StoryboardAsset = {
+    id: string;
+    kind: StoryboardAssetKind;
+    name: string;
+    description: string;
+    prompt: string;
+    imageUrl?: string;
+    storageKey?: string;
+    status?: CanvasNodeStatus;
+    errorDetails?: string;
+};
 
 export type CanvasNodeMetadata = {
     content?: string;
     storyboardRows?: string[][];
+    storyboardStep?: StoryboardStep;
+    storyboardAssetStyle?: string;
+    storyboardAssets?: StoryboardAsset[];
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
