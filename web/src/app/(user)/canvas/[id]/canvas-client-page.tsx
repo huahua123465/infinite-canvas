@@ -765,7 +765,9 @@ function InfiniteCanvasPage() {
         const viewRight = viewLeft + width / viewport.k + padding * 2;
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
-        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
+        return nodes
+            .filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom)
+            .sort((a, b) => (a.type === CanvasNodeType.Workspace ? -1 : 0) - (b.type === CanvasNodeType.Workspace ? -1 : 0));
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
@@ -1307,6 +1309,7 @@ function InfiniteCanvasPage() {
         const dragIds = new Set(nextSelected);
         currentNodes.forEach((node) => {
             if (nextSelected.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
+            if (nextSelected.has(node.id)) node.metadata?.workspaceChildNodeIds?.forEach((childId) => dragIds.add(childId));
         });
         dragRef.current = {
             isDraggingNode: true,
@@ -1354,6 +1357,8 @@ function InfiniteCanvasPage() {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             if (clickedNode?.type === CanvasNodeType.Text) {
                 setDialogNodeId((current) => (current === clickedNodeId ? current : null));
+            } else if (clickedNode?.type === CanvasNodeType.Workspace) {
+                setDialogNodeId(null);
             } else {
                 setDialogNodeId(clickedNodeId);
             }
@@ -1875,6 +1880,9 @@ function InfiniteCanvasPage() {
             const assetNodeIds = { ...(node.metadata?.storyboardAssetNodeIds || {}) };
             const mentionNodeIds = { ...(node.metadata?.storyboardAssetMentionNodeIds || {}) };
             const exportedNodes: CanvasNodeData[] = [];
+            const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-assets" && item.metadata.workspaceSourceNodeId === node.id);
+            const workspaceId = existingWorkspace?.id || nanoid();
+            const workspacePosition = existingWorkspace?.position || { x: node.position.x + node.width + 72, y: node.position.y - 40 };
             setStoryboardActionKey("asset:export");
             try {
                 for (let index = 0; index < nextAssets.length; index += 1) {
@@ -1897,7 +1905,7 @@ function InfiniteCanvasPage() {
                     assetNodeIds[asset.id] = existingId;
                     mentionNodeIds[`@${asset.name}`] = existingId;
                     const size = uploaded ? fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height) : imageConfig;
-                    const position = existingNode?.position || { x: node.position.x + node.width + 96 + (index % 3) * (imageConfig.width + 34), y: node.position.y + Math.floor(index / 3) * (imageConfig.height + 74) };
+                    const position = existingNode?.position || { x: workspacePosition.x + 36 + (index % 3) * (imageConfig.width + 34), y: workspacePosition.y + 86 + Math.floor(index / 3) * (imageConfig.height + 74) };
                     exportedNodes.push({
                         id: existingId,
                         type: CanvasNodeType.Image,
@@ -1924,23 +1932,21 @@ function InfiniteCanvasPage() {
                     message.warning("没有可导出的资产图");
                     return;
                 }
+                const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, node, exportedNodes, workspacePosition, "storyboard-assets");
                 setNodes((prev) => {
-                    const exportedById = new Map(exportedNodes.map((item) => [item.id, item]));
+                    const exportedById = new Map([workspaceNode, ...exportedNodes].map((item) => [item.id, item]));
                     const updated = prev.map((item) => {
                         if (item.id === node.id) return { ...item, metadata: { ...item.metadata, storyboardAssets: nextAssets, storyboardAssetNodeIds: assetNodeIds, storyboardAssetMentionNodeIds: mentionNodeIds } };
                         return exportedById.get(item.id) || item;
                     });
                     const existingIds = new Set(prev.map((item) => item.id));
-                    return [...updated, ...exportedNodes.filter((item) => !existingIds.has(item.id))];
+                    return [...updated, ...[workspaceNode, ...exportedNodes].filter((item) => !existingIds.has(item.id))];
                 });
                 setConnections((prev) => {
-                    const existing = new Set(prev.map((connection) => `${connection.fromNodeId}->${connection.toNodeId}`));
-                    const next = exportedNodes
-                        .filter((assetNode) => !existing.has(`${node.id}->${assetNode.id}`))
-                        .map((assetNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: assetNode.id }));
-                    return next.length ? [...prev, ...next] : prev;
+                    const next = [{ id: nanoid(), fromNodeId: node.id, toNodeId: workspaceNode.id }, ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: workspaceNode.id, toNodeId: assetNode.id })), ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: assetNode.id }))];
+                    return addUniqueConnections(prev, next);
                 });
-                message.success(`已导出 ${exportedNodes.length} 个资产节点`);
+                message.success(`已搭建资产工作区，包含 ${exportedNodes.length} 个资产节点`);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "导出资产失败");
             } finally {
@@ -4336,6 +4342,37 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
         if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
     }
     return Array.from(resolved.values()).slice(0, 7);
+}
+
+function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: string, sourceNode: CanvasNodeData, childNodes: CanvasNodeData[], position: Position, kind: "storyboard-assets" | "storyboard-videos"): CanvasNodeData {
+    const workspacePosition = existing?.position || position;
+    const bounds = childNodes.reduce(
+        (box, child) => ({
+            left: Math.min(box.left, child.position.x),
+            top: Math.min(box.top, child.position.y),
+            right: Math.max(box.right, child.position.x + child.width),
+            bottom: Math.max(box.bottom, child.position.y + child.height),
+        }),
+        { left: workspacePosition.x, top: workspacePosition.y, right: workspacePosition.x + NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].width, bottom: workspacePosition.y + NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].height },
+    );
+    const padding = 36;
+    const title = kind === "storyboard-assets" ? `资产工作区｜${sourceNode.title || "脚本节点"}` : `视频工作区｜${sourceNode.title || "脚本节点"}`;
+    return {
+        id,
+        type: CanvasNodeType.Workspace,
+        title,
+        position: workspacePosition,
+        width: Math.max(existing?.width || 0, bounds.right - workspacePosition.x + padding),
+        height: Math.max(existing?.height || 0, bounds.bottom - workspacePosition.y + padding),
+        metadata: {
+            ...existing?.metadata,
+            status: NODE_STATUS_IDLE,
+            workspaceKind: kind,
+            workspaceSourceNodeId: sourceNode.id,
+            workspaceChildNodeIds: childNodes.map((child) => child.id),
+            workspaceTitle: title,
+        },
+    };
 }
 
 function storyboardAssetMentionsForPrompt(detail?: StoryboardPromptDetail) {

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
+import { Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -116,6 +116,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
+    const isWorkspace = data.type === CanvasNodeType.Workspace;
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
@@ -267,9 +268,9 @@ export const CanvasNode = React.memo(function CanvasNode({
             <div
                 className="relative h-full w-full overflow-visible rounded-3xl border-2"
                 style={{
-                    background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                    background: isWorkspace ? "transparent" : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                     borderColor: hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
-                    boxShadow: isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
+                    boxShadow: isWorkspace ? `inset 0 0 0 1px ${theme.node.stroke}66` : isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
@@ -297,7 +298,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
                     style={
                         {
-                            background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                            background: isWorkspace ? "transparent" : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -332,7 +333,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
                 {resourceLabel ? <ResourceLabelBadge reference={resourceLabel} /> : null}
 
-                {!hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
+                {!isWorkspace && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
                 <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
                 <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
@@ -365,6 +366,7 @@ const nodeContentRenderers = {
     [CanvasNodeType.Video]: VideoNodeContent,
     [CanvasNodeType.Audio]: AudioNodeContent,
     [CanvasNodeType.Script]: ScriptNodeContent,
+    [CanvasNodeType.Workspace]: WorkspaceNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
 function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
@@ -836,6 +838,33 @@ function ScriptStep({ index, label, active, done }: { index: string; label: stri
         <div className={`flex flex-col items-center gap-1 ${active ? "opacity-100" : "opacity-45"}`}>
             <span className={`grid size-6 place-items-center rounded-full border text-[11px] font-semibold ${done ? "bg-white text-black" : ""}`}>{index}</span>
             <span className="whitespace-nowrap">{label}</span>
+        </div>
+    );
+}
+
+function WorkspaceNodeContent({ node, theme }: NodeContentRendererProps) {
+    const childCount = node.metadata?.workspaceChildNodeIds?.length || 0;
+    const isAssetWorkspace = node.metadata?.workspaceKind === "storyboard-assets";
+    return (
+        <div
+            className="pointer-events-none flex h-full w-full flex-col rounded-3xl border border-dashed px-5 py-4"
+            style={{
+                background: `${theme.node.panel}33`,
+                borderColor: `${theme.node.stroke}99`,
+                color: theme.node.text,
+                backdropFilter: "blur(1px)",
+            }}
+        >
+            <div className="flex items-center justify-between text-left">
+                <div className="flex min-w-0 items-center gap-2">
+                    <Boxes className="size-4 shrink-0 opacity-70" />
+                    <span className="truncate text-sm font-semibold">{node.metadata?.workspaceTitle || node.title || "工作区"}</span>
+                </div>
+                <span className="rounded-full border px-2 py-0.5 text-[11px] opacity-70" style={{ borderColor: theme.node.stroke }}>
+                    {isAssetWorkspace ? "资产工作区" : "视频工作区"} · {childCount}
+                </span>
+            </div>
+            <div className="mt-auto text-left text-[11px] opacity-55">拖动背景板可整体移动内部节点</div>
         </div>
     );
 }

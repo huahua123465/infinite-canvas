@@ -16,6 +16,7 @@ export enum CanvasNodeType {
     Video = "video",
     Audio = "audio",
     Script = "script",
+    Workspace = "workspace",
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
@@ -58,6 +59,10 @@ export type CanvasNodeMetadata = {
     storyboardAssetName?: string;
     storyboardRowIndex?: number;
     storyboardAssetMentions?: string[];
+    workspaceKind?: "storyboard-assets" | "storyboard-videos";
+    workspaceSourceNodeId?: string;
+    workspaceChildNodeIds?: string[];
+    workspaceTitle?: string;
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
