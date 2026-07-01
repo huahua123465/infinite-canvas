@@ -29,6 +29,7 @@ type CanvasScriptNodeDialogProps = {
     onUploadAssetImage: (nodeId: string, assetId: string, file: File) => void;
     onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void;
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
+    onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
     onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void;
     onPromptDetailChange: (nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => void;
     onModelChange: (nodeId: string, model: string) => void;
@@ -38,7 +39,7 @@ type CanvasScriptNodeDialogProps = {
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -161,7 +162,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             promptCount={promptCount}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
+                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
                     )}
                     {promptEditorRow && promptEditorRowIndex !== null ? (
                         <PromptComposeModal
@@ -231,7 +232,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onComposeFinalPrompt, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
+function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onGenerateShotsFromInputs, onComposeFinalPrompt, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
+    const generatingShots = actionKey === "shots:generate";
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -292,9 +294,15 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                 </table>
             </div>
             <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#121212] px-8">
-                <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={onAddRow}>
+                <div className="flex items-center gap-2">
+                    <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={onAddRow}>
                     添加镜头
-                </Button>
+                    </Button>
+                    <Button className="!h-10 !rounded-lg !px-6" disabled={actionKey !== null} icon={generatingShots ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onGenerateShotsFromInputs(node)}>
+                        从连接剧本生成镜头
+                    </Button>
+                    {!rows.some((row) => row.some((cell, index) => index > 1 && cell.trim())) ? <span className="text-xs text-[#8f8f8f]">把剧本文本节点连到脚本节点后，点击这里生成分镜表。</span> : null}
+                </div>
                 <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} onClick={onOpenAssets}>
                     下一步：准备资产
                 </Button>

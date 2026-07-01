@@ -55,6 +55,7 @@ export type StoryboardPromptDetail = {
 
 export type CanvasNodeMetadata = {
     content?: string;
+    storyboardSourceText?: string;
     storyboardRows?: string[][];
     storyboardStep?: StoryboardStep;
     storyboardAssetStyle?: string;

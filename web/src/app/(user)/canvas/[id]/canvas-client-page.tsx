@@ -1731,6 +1731,57 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, model } } : node)));
     }, []);
 
+    const generateStoryboardShotsFromInputs = useCallback(
+        async (node: CanvasNodeData) => {
+            const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const textInputs = buildNodeGenerationInputs(scriptNode.id, nodesRef.current, connectionsRef.current).filter((input) => input.type === "text" && input.text?.trim());
+            const sourceText = textInputs.map((input) => `【${input.title || "剧本文本"}】\n${input.text?.trim() || ""}`).join("\n\n").trim() || storyboardSourceTextForNode(scriptNode);
+            if (!sourceText) {
+                message.warning("请先把剧本文本节点连接到脚本节点");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey("shots:generate");
+            setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText } } : item)));
+            try {
+                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_TEXT_IMPORT_PROMPT}\n\n${sourceText}` }], () => {});
+                const rows = stripStoryboardHeader(parseStoryboardLoose(answer));
+                if (!rows.length) throw new Error("没有生成可用的分镜表");
+                const normalized = renumberStoryboardRowsForCanvas(rows);
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === scriptNode.id
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      content: storyboardRowsToMarkdownForCanvas(normalized),
+                                      storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
+                                      storyboardStep: "shots",
+                                      storyboardSourceText: sourceText,
+                                      status: NODE_STATUS_SUCCESS,
+                                      errorDetails: undefined,
+                                  },
+                              }
+                            : item,
+                    ),
+                );
+                message.success(`已生成 ${normalized.length} 个镜头`);
+            } catch (error) {
+                const errorDetails = error instanceof Error ? error.message : "生成镜头失败";
+                message.error(errorDetails);
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+    );
+
     const prepareStoryboardAssets = useCallback(
         async (node: CanvasNodeData) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
@@ -1747,7 +1798,7 @@ function InfiniteCanvasPage() {
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: undefined } } : item)));
             try {
                 const source = [
-                    node.metadata?.prompt || node.metadata?.content ? `原始剧本或补充要求：\n${node.metadata?.prompt || node.metadata?.content}` : "",
+                    storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
                     `分镜表：\n${storyboardRowsToMarkdownForCanvas(rows)}`,
                 ]
                     .filter(Boolean)
@@ -3658,6 +3709,7 @@ function InfiniteCanvasPage() {
                     onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
                     onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
+                    onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
                     onPromptDetailChange={updateStoryboardPromptDetail}
                     onModelChange={updateStoryboardModel}
@@ -4528,7 +4580,7 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
         .map((item, offset) => `${contextStart + offset === rowIndex ? "当前镜头" : "相邻镜头"}：${storyboardRowSummary(item)}`)
         .join("\n");
     return [
-        node.metadata?.prompt || node.metadata?.content ? `原始剧本或补充要求：\n${node.metadata?.prompt || node.metadata?.content}` : "",
+        storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
         node.metadata?.storyboardAssetStyle ? `全局风格：\n${node.metadata.storyboardAssetStyle}` : "",
         `当前镜头：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n")}`,
         contextRows ? `前后镜头上下文：\n${contextRows}` : "",
@@ -4556,6 +4608,15 @@ function parseStoryboardPromptDetailAnswer(content: string): StoryboardPromptDet
 function normalizeAssetMention(value: string) {
     const name = value.trim().replace(/^@+/, "");
     return name ? `@${name}` : "";
+}
+
+function storyboardSourceTextForNode(node: CanvasNodeData) {
+    const sourceText = node.metadata?.storyboardSourceText?.trim();
+    if (sourceText) return sourceText;
+    const prompt = node.metadata?.prompt?.trim();
+    if (prompt && prompt !== STORYBOARD_SCRIPT_PRESET) return prompt;
+    if (!node.metadata?.storyboardRows?.length) return node.metadata?.content?.trim() || "";
+    return "";
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
