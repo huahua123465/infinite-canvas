@@ -92,7 +92,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
             className="canvas-script-node-dialog"
             open={open && Boolean(node)}
             footer={null}
-            closeIcon={<X className="size-5" />}
+            closeIcon={editingAsset ? null : <X className="size-5" />}
             onCancel={onClose}
             width="100vw"
             centered
@@ -128,45 +128,47 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <ShotsTable node={node} rows={rows} actionKey={actionKey} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
                     )}
                     {editingAsset ? (
-                        <div className="absolute inset-y-0 right-0 z-40 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]">
-                            <div className="flex h-16 items-center justify-between border-b border-[#353535] px-5 pr-12">
-                                <div className="text-sm font-semibold">编辑{ASSET_KIND_LABEL[editingAsset.kind]}</div>
-                                <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
-                            </div>
-                            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
-                                <div className="mb-4 text-xs font-semibold text-[#f0f0f0]">{ASSET_KIND_LABEL[editingAsset.kind]}形象</div>
-                                <button className="relative mb-5 grid aspect-[4/3] w-full place-items-center overflow-hidden rounded-lg border border-dashed border-[#565656] bg-[#2d2d2d] text-xs text-[#979797]" onClick={() => uploadInputRef.current?.click()}>
-                                    {editingAsset.imageUrl ? <img src={editingAsset.imageUrl} alt={editingAsset.name} className="size-full object-cover" /> : editingAsset.status === "loading" ? <LoaderCircle className="size-7 animate-spin" /> : <span className="flex flex-col items-center gap-2"><Plus className="size-7" />生成或上传{ASSET_KIND_LABEL[editingAsset.kind]}图</span>}
-                                    <Dropdown
-                                        trigger={["click"]}
-                                        menu={{
-                                            items: [
-                                                { key: "generate", label: "生成图片", icon: <Sparkles className="size-3.5" /> },
-                                                { key: "upload", label: "上传图片", icon: <Upload className="size-3.5" /> },
-                                            ],
-                                            onClick: ({ key, domEvent }) => {
-                                                domEvent.stopPropagation();
-                                                if (key === "generate") onGenerateAssetImage(node, editingAsset.id);
-                                                if (key === "upload") uploadInputRef.current?.click();
-                                            },
-                                        }}
-                                    >
-                                        <span className="absolute right-3 top-3 grid size-8 place-items-center rounded bg-[#111] text-[#f1f1f1]" onClick={(event) => event.stopPropagation()}>
-                                            <Ellipsis className="size-4" />
-                                        </span>
-                                    </Dropdown>
-                                </button>
-                                <input ref={uploadInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => uploadEditingAsset(event.target.files?.[0])} />
-                                <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
-                                <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
-                                <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
-                                {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
-                            </div>
-                            <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
-                                <Button onClick={() => uploadInputRef.current?.click()}>上传图片</Button>
-                                <Button type="primary" icon={actionKey === `asset:${editingAsset.id}` ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
-                                    生成图片
-                                </Button>
+                        <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setEditingAssetId(null)}>
+                            <div className="absolute inset-y-0 right-0 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
+                                <div className="flex h-16 items-center justify-between border-b border-[#353535] px-5 pr-12">
+                                    <div className="text-sm font-semibold">编辑{ASSET_KIND_LABEL[editingAsset.kind]}</div>
+                                    <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
+                                </div>
+                                <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
+                                    <div className="mb-4 text-xs font-semibold text-[#f0f0f0]">{ASSET_KIND_LABEL[editingAsset.kind]}形象</div>
+                                    <button className="relative mb-5 grid aspect-[4/3] w-full place-items-center overflow-hidden rounded-lg border border-dashed border-[#565656] bg-[#2d2d2d] text-xs text-[#979797]" onClick={() => uploadInputRef.current?.click()}>
+                                        {editingAsset.imageUrl ? <img src={editingAsset.imageUrl} alt={editingAsset.name} className="size-full object-cover" /> : editingAsset.status === "loading" ? <LoaderCircle className="size-7 animate-spin" /> : <span className="flex flex-col items-center gap-2"><Plus className="size-7" />生成或上传{ASSET_KIND_LABEL[editingAsset.kind]}图</span>}
+                                        <Dropdown
+                                            trigger={["click"]}
+                                            menu={{
+                                                items: [
+                                                    { key: "generate", label: "生成图片", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "upload", label: "上传图片", icon: <Upload className="size-3.5" /> },
+                                                ],
+                                                onClick: ({ key, domEvent }) => {
+                                                    domEvent.stopPropagation();
+                                                    if (key === "generate") onGenerateAssetImage(node, editingAsset.id);
+                                                    if (key === "upload") uploadInputRef.current?.click();
+                                                },
+                                            }}
+                                        >
+                                            <span className="absolute right-3 top-3 grid size-8 place-items-center rounded bg-[#111] text-[#f1f1f1]" onClick={(event) => event.stopPropagation()}>
+                                                <Ellipsis className="size-4" />
+                                            </span>
+                                        </Dropdown>
+                                    </button>
+                                    <input ref={uploadInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => uploadEditingAsset(event.target.files?.[0])} />
+                                    <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
+                                    <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
+                                    <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
+                                    {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
+                                </div>
+                                <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
+                                    <Button onClick={() => uploadInputRef.current?.click()}>上传图片</Button>
+                                    <Button type="primary" icon={actionKey === `asset:${editingAsset.id}` ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
+                                        生成图片
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     ) : null}

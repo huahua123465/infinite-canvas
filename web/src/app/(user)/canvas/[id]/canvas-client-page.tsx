@@ -114,6 +114,7 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
 const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连接的剧本拆成可拍摄、可生成视频的分镜脚本。
 
 只输出 Markdown 表格，不要解释，不要标题。
@@ -1790,9 +1791,9 @@ function InfiniteCanvasPage() {
             }
             setStoryboardActionKey("asset:all");
             try {
-                for (const asset of assets) {
+                await runLimited(assets, STORYBOARD_ASSET_BATCH_CONCURRENCY, async (asset) => {
                     const prompt = asset.prompt.trim() || asset.description.trim();
-                    if (!prompt) continue;
+                    if (!prompt) return;
                     updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
                     try {
                         const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
@@ -1801,7 +1802,7 @@ function InfiniteCanvasPage() {
                     } catch (error) {
                         updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
                     }
-                }
+                });
                 message.success("资产图批量生成完成");
             } finally {
                 setStoryboardActionKey(null);
@@ -4131,6 +4132,17 @@ function parseStoryboardColonBlocks(content: string) {
 function parseStoryboardRows(rows?: string[][]) {
     const source = rows?.length ? rows : [];
     return source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
+}
+
+async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const item = items[nextIndex++];
+            await worker(item);
+        }
+    });
+    await Promise.all(workers);
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
