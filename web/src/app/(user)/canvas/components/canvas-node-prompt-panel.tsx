@@ -38,6 +38,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const mode = defaultMode(node.type);
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
+    const isScriptNode = node.type === CanvasNodeType.Script;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const panelRef = useRef<HTMLDivElement | null>(null);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -62,7 +63,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if ((!text && !isScriptNode) || isRunning) return;
         onGenerate(node.id, mode, text);
         setPrompt("");
     };
@@ -102,12 +103,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 onPointerDown={(event) => event.stopPropagation()}
                 className="thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
-                placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
+                placeholder={isScriptNode ? "把剧本文本节点连到左侧后，可留空直接生成分镜脚本；也可以输入额外要求" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
+                    {isScriptNode ? null : <CanvasPromptLibrary onSelect={updatePrompt} />}
                     {onPromptAssistant ? (
                         <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
                             AI改提示词
@@ -143,7 +144,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
+                    disabled={!isRunning && !prompt.trim() && !isScriptNode}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
                     aria-label={isRunning ? "停止生成" : "生成"}
                 >

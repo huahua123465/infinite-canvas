@@ -62,7 +62,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
         const kind = resourceKind(node);
         if (!kind) return [];
         const index = counts[kind]++;
-        const label = labelForKind(kind, index);
+        const label = node.type === CanvasNodeType.Script ? `脚本${index + 1}` : labelForKind(kind, index);
         return [
             {
                 id: node.id,
