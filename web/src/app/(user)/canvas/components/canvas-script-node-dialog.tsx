@@ -37,6 +37,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
+    const assetError = node?.metadata?.storyboardAssetError || "";
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const promptCount = rows.filter((row) => row[8]?.trim()).length;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
@@ -54,6 +55,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     useEffect(() => {
         if (editingAssetId && !assets.some((asset) => asset.id === editingAssetId)) setEditingAssetId(null);
     }, [assets, editingAssetId]);
+
+    useEffect(() => {
+        if (!node || view !== "assets" || assets.length || actionKey === "asset:prepare" || node.metadata?.storyboardAssetError) return;
+        onPrepareAssets(node);
+    }, [actionKey, assets.length, node, onPrepareAssets, view]);
 
     const groupedAssets = useMemo(() => Object.fromEntries(ASSET_SECTIONS.map(({ kind }) => [kind, assets.filter((asset) => asset.kind === kind)])) as Record<StoryboardAssetKind, StoryboardAsset[]>, [assets]);
 
@@ -113,6 +119,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             assets={assets}
                             groupedAssets={groupedAssets}
                             style={style}
+                            error={assetError}
                             readyAssets={readyAssets}
                             onPrepareAssets={onPrepareAssets}
                             onSelectAsset={setEditingAssetId}
@@ -244,15 +251,17 @@ function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow
     );
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void }) {
+function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void }) {
     const missingCount = assets.length - readyAssets;
+    const preparing = actionKey === "asset:prepare";
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-8 py-5">
                 <div className="mb-5 flex items-start gap-2 text-sm leading-7 text-[#d6d6d6]">
                     <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
-                    <span>{style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
+                    <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
                 </div>
+                {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
                 {ASSET_SECTIONS.map(({ kind, title }) => (
                     <section key={kind} className="mb-7">
                         <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
@@ -260,8 +269,8 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, readyAss
                             {groupedAssets[kind].map((asset) => (
                                 <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} />
                             ))}
-                            <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" onClick={() => onPrepareAssets(node)}>
-                                <span className="flex flex-col items-center gap-2 text-xs"><Plus className="size-6" />重新识别资产</span>
+                            <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
+                                <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
                             </button>
                         </div>
                     </section>
@@ -270,8 +279,8 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, readyAss
             <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#202020] px-8">
                 <div className="text-xs text-[#c6c6c6]">检测到 {groupedAssets.character.length} 个角色、{groupedAssets.scene.length} 个场景、{groupedAssets.prop.length} 个道具，其中 {Math.max(missingCount, 0)} 个没有设定图，您可以手动上传或 AI 批量生成</div>
                 <div className="flex items-center gap-2">
-                    <Button disabled={actionKey !== null} onClick={() => onPrepareAssets(node)}>
-                        重新识别
+                    <Button disabled={actionKey !== null} icon={preparing ? <LoaderCircle className="size-4 animate-spin" /> : undefined} onClick={() => onPrepareAssets(node)}>
+                        {assets.length ? "重新识别" : "开始识别"}
                     </Button>
                     <Button type="primary" className="!h-10 !rounded-lg !px-8" icon={actionKey === "asset:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={!assets.length || readyAssets === assets.length || actionKey !== null} onClick={() => onBatchGenerateAssets(node)}>
                         一键生成所有资产

@@ -65,6 +65,7 @@ import {
     type CanvasNodeData,
     type CanvasNodeMetadata,
     type StoryboardAsset,
+    type StoryboardAssetKind,
     type ConnectionHandle,
     type ContextMenuState,
     type Position,
@@ -1689,6 +1690,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey("asset:prepare");
+            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: undefined } } : item)));
             try {
                 const source = [
                     node.metadata?.prompt || node.metadata?.content ? `原始剧本或补充要求：\n${node.metadata?.prompt || node.metadata?.content}` : "",
@@ -1707,6 +1709,7 @@ function InfiniteCanvasPage() {
                                       ...item.metadata,
                                       storyboardStep: "assets",
                                       storyboardAssetStyle: parsed.style,
+                                      storyboardAssetError: undefined,
                                       storyboardAssets: parsed.assets,
                                   },
                               }
@@ -1715,7 +1718,9 @@ function InfiniteCanvasPage() {
                 );
                 message.success("资产已识别");
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "识别资产失败");
+                const errorMessage = error instanceof Error ? error.message : "识别资产失败";
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage } } : item)));
+                message.error(errorMessage);
             } finally {
                 setStoryboardActionKey(null);
             }
@@ -4131,25 +4136,61 @@ function parseStoryboardRows(rows?: string[][]) {
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
-    const data = parseJsonObject(content) as { style?: unknown; assets?: unknown };
-    if (!data || typeof data !== "object" || !Array.isArray(data.assets)) throw new Error("模型没有返回可用的资产 JSON");
-    const assets = data.assets
-        .map((item, index) => normalizeStoryboardAsset(item, index))
+    const data = parseJsonObject(content) as Record<string, unknown> | unknown[];
+    const records = collectStoryboardAssetRecords(data);
+    if (!records.length) throw new Error("模型没有返回可用的资产 JSON");
+    const assets = records
+        .map(({ item, kind }, index) => normalizeStoryboardAsset(item, index, kind))
         .filter((asset): asset is StoryboardAsset => Boolean(asset))
         .slice(0, 30);
     if (!assets.length) throw new Error("没有识别到角色、场景或道具资产");
-    return { style: typeof data.style === "string" ? data.style.trim() : "", assets };
+    return { style: !Array.isArray(data) && typeof data.style === "string" ? data.style.trim() : "", assets };
 }
 
-function normalizeStoryboardAsset(item: unknown, index: number): StoryboardAsset | null {
+function collectStoryboardAssetRecords(data: Record<string, unknown> | unknown[]) {
+    if (Array.isArray(data)) return data.map((item) => ({ item }));
+    if (!data || typeof data !== "object") return [];
+    const direct = Array.isArray(data.assets) ? data.assets.map((item) => ({ item })) : [];
+    const grouped = [
+        ...readAssetGroup(data, "characters", "character"),
+        ...readAssetGroup(data, "角色", "character"),
+        ...readAssetGroup(data, "scenes", "scene"),
+        ...readAssetGroup(data, "场景", "scene"),
+        ...readAssetGroup(data, "props", "prop"),
+        ...readAssetGroup(data, "道具", "prop"),
+    ];
+    return [...direct, ...grouped];
+}
+
+function readAssetGroup(data: Record<string, unknown>, key: string, kind: StoryboardAssetKind) {
+    const value = data[key];
+    return Array.isArray(value) ? value.map((item) => ({ item, kind })) : [];
+}
+
+function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: StoryboardAssetKind): StoryboardAsset | null {
     if (!item || typeof item !== "object") return null;
     const record = item as Record<string, unknown>;
-    const kind = record.kind === "scene" || record.kind === "prop" || record.kind === "character" ? record.kind : null;
-    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const kind = normalizeStoryboardAssetKind(record.kind) || fallbackKind || null;
+    const name = readStringField(record, ["name", "名称", "角色名", "场景名", "道具名", "title"]).trim();
     if (!kind || !name) return null;
-    const description = typeof record.description === "string" ? record.description.trim() : "";
-    const prompt = typeof record.prompt === "string" ? record.prompt.trim() : description;
+    const description = readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim();
+    const prompt = readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description;
     return { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
+}
+
+function normalizeStoryboardAssetKind(value: unknown): StoryboardAssetKind | null {
+    if (value === "scene" || value === "场景") return "scene";
+    if (value === "prop" || value === "props" || value === "道具") return "prop";
+    if (value === "character" || value === "characters" || value === "role" || value === "角色" || value === "人物") return "character";
+    return null;
+}
+
+function readStringField(record: Record<string, unknown>, keys: string[]) {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "string") return value;
+    }
+    return "";
 }
 
 function parseJsonObject(content: string) {
