@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
+import { ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -47,6 +47,7 @@ type CanvasNodeProps = {
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onOpenScript?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
@@ -68,6 +69,7 @@ type NodeContentRendererProps = {
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onOpenScript?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
 };
@@ -104,6 +106,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onSetBatchPrimary,
     onRetry,
     onGenerateImage,
+    onOpenScript,
     onViewImage,
     onContextMenu,
 }: CanvasNodeProps) {
@@ -280,6 +283,11 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewImage?.(data);
                         return;
                     }
+                    if (data.type === CanvasNodeType.Script) {
+                        event.stopPropagation();
+                        onOpenScript?.(data);
+                        return;
+                    }
                     if (data.type !== CanvasNodeType.Text) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
@@ -315,6 +323,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onGenerateImage={onGenerateImage}
+                        onOpenScript={onOpenScript}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
                     />
@@ -355,6 +364,7 @@ const nodeContentRenderers = {
     [CanvasNodeType.Config]: EmptyImageContent,
     [CanvasNodeType.Video]: VideoNodeContent,
     [CanvasNodeType.Audio]: AudioNodeContent,
+    [CanvasNodeType.Script]: ScriptNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
 function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
@@ -778,6 +788,54 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="truncate">{node.title || "音频"}</span>
             </div>
             <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+        </div>
+    );
+}
+
+function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererProps) {
+    const rows = normalizeStoryboardRows(node.metadata?.storyboardRows);
+    const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
+    const isReady = filledRows > 0;
+
+    return (
+        <div className="flex h-full w-full flex-col justify-between p-5 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
+            <div className="flex items-center gap-2 text-left text-sm font-medium opacity-80">
+                <FileText className="size-4" />
+                <span className="min-w-0 truncate">{node.title || "脚本节点"}</span>
+            </div>
+            <div className="flex flex-1 flex-col items-center justify-center gap-5">
+                <div className="flex size-12 items-center justify-center rounded-2xl border" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
+                    <FileText className="size-6 opacity-55" />
+                </div>
+                <div className="grid w-full max-w-[250px] grid-cols-[1fr_1fr_1fr] items-start gap-2 text-[11px]">
+                    <ScriptStep active done={isReady} index="1" label="确认镜头" />
+                    <ScriptStep active={isReady} index="2" label="准备资产" />
+                    <ScriptStep active={isReady} index="3" label="合成提示词" />
+                </div>
+                <div className="text-xs opacity-60">{filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头"}</div>
+            </div>
+            <button
+                type="button"
+                className="h-9 rounded-lg text-sm font-medium transition hover:scale-[1.01]"
+                style={{ background: theme.toolbar.activeBg, color: theme.toolbar.activeText }}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenScript?.(node);
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+            >
+                打开脚本节点 →
+            </button>
+        </div>
+    );
+}
+
+function ScriptStep({ index, label, active, done }: { index: string; label: string; active?: boolean; done?: boolean }) {
+    return (
+        <div className={`flex flex-col items-center gap-1 ${active ? "opacity-100" : "opacity-45"}`}>
+            <span className={`grid size-6 place-items-center rounded-full border text-[11px] font-semibold ${done ? "bg-white text-black" : ""}`}>{index}</span>
+            <span className="whitespace-nowrap">{label}</span>
         </div>
     );
 }

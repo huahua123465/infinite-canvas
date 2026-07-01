@@ -57,7 +57,7 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, confi
     };
 
     const canApply = Boolean(draftPrompt.trim()) && !loading && !aiLoading;
-    const nodeTypeLabel = node.type === CanvasNodeType.Config ? "生成配置" : node.type === CanvasNodeType.Image ? "图片节点" : node.type === CanvasNodeType.Text ? "文本节点" : "节点";
+    const nodeTypeLabel = node.type === CanvasNodeType.Config ? "生成配置" : node.type === CanvasNodeType.Image ? "图片节点" : node.type === CanvasNodeType.Script ? "脚本节点" : node.type === CanvasNodeType.Text ? "文本节点" : "节点";
 
     return (
         <Modal
@@ -121,12 +121,12 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, confi
 
 export function readNodePrompt(node: CanvasNodeData | null) {
     if (!node) return "";
-    return node.metadata?.composerContent || node.metadata?.prompt || (node.type === CanvasNodeType.Text ? node.metadata?.content : "") || "";
+    return node.metadata?.composerContent || node.metadata?.prompt || (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? node.metadata?.content : "") || "";
 }
 
 export function promptPatchForNode(node: CanvasNodeData, prompt: string) {
     if (node.type === CanvasNodeType.Config) return { composerContent: prompt, prompt };
-    if (node.type === CanvasNodeType.Text) return { content: prompt, prompt };
+    if (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) return { content: prompt, prompt };
     return { prompt, sourcePrompt: node.metadata?.sourcePrompt || prompt };
 }
 

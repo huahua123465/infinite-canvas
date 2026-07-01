@@ -42,6 +42,7 @@ import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "../compo
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
 import { CanvasPromptAssistantDialog, mergePromptForNode, promptPatchForNode, readNodePrompt } from "../components/canvas-prompt-assistant-dialog";
+import { CanvasScriptNodeDialog } from "../components/canvas-script-node-dialog";
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode, type StoryboardImportPreview } from "../components/canvas-node";
@@ -82,7 +83,7 @@ type PendingConnectionCreate = {
     position: Position;
 };
 
-type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | "storyboard";
+type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Script | "storyboard";
 
 type ConnectionDropTarget = {
     nodeId: string | null;
@@ -349,6 +350,7 @@ function InfiniteCanvasPage() {
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+    const [scriptNodeId, setScriptNodeId] = useState<string | null>(null);
     const [assistantCollapsed, setAssistantCollapsed] = useState(true);
     const [assistantMounted, setAssistantMounted] = useState(false);
     const [assistantClosing, setAssistantClosing] = useState(false);
@@ -641,18 +643,18 @@ function InfiniteCanvasPage() {
 
     const createConnectedNode = useCallback(
         (type: ConnectionCreateKind, pending: PendingConnectionCreate) => {
-            const nodeType = type === "storyboard" ? CanvasNodeType.Text : type;
+            const nodeType = type === "storyboard" ? CanvasNodeType.Script : type;
             const metadata =
                 type === "storyboard"
-                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [] }
+                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], model: effectiveConfig.textModel || effectiveConfig.model }
                     : type === CanvasNodeType.Config
                       ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
                       : undefined;
             const newNode = createCanvasNode(nodeType, pending.position, metadata);
             if (type === "storyboard") {
                 newNode.title = "分镜脚本";
-                newNode.width = 1440;
-                newNode.height = 720;
+                newNode.width = NODE_DEFAULT_SIZE[CanvasNodeType.Script].width;
+                newNode.height = NODE_DEFAULT_SIZE[CanvasNodeType.Script].height;
             }
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
@@ -672,7 +674,7 @@ function InfiniteCanvasPage() {
             setConnecting(null);
             if (type === "storyboard") queueMicrotask(() => void generateNodeRef.current?.(newNode.id, "text", STORYBOARD_SCRIPT_PRESET));
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, setConnecting],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, effectiveConfig.textModel, message, setConnecting],
     );
 
     const cancelPendingConnectionCreate = useCallback(() => {
@@ -741,6 +743,7 @@ function InfiniteCanvasPage() {
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const promptAssistantNode = promptAssistantNodeId ? nodeById.get(promptAssistantNodeId) || null : null;
+    const scriptNode = scriptNodeId ? nodeById.get(scriptNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const activeNodeId = hasMultipleSelectedNodes ? null : toolbarNodeId || hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
     const batchChildCountById = useMemo(() => {
@@ -855,7 +858,9 @@ function InfiniteCanvasPage() {
                           size: effectiveConfig.size,
                           count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
-                    : undefined;
+                    : type === CanvasNodeType.Script
+                      ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], model: effectiveConfig.textModel || effectiveConfig.model }
+                      : undefined;
             const newNode = createCanvasNode(type, targetPosition, configMetadata);
 
             setNodes((prev) => [...prev, newNode]);
@@ -1648,7 +1653,7 @@ function InfiniteCanvasPage() {
 
     const importStoryboardScreenshot = useCallback(
         async (node: CanvasNodeData, file: File, model?: string): Promise<StoryboardImportPreview | null> => {
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), ...(model?.trim() ? { model: model.trim() } : {}) };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(model?.trim() ? { model: model.trim() } : {}) };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return null;
@@ -2290,7 +2295,7 @@ function InfiniteCanvasPage() {
 
             setRunningNodeId(nodeId);
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
-            const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
+            const sourceTextContent = sourceNode?.type === CanvasNodeType.Text || sourceNode?.type === CanvasNodeType.Script ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             const generationContext = await hydrateNodeGenerationContext(
                 buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
@@ -2598,7 +2603,7 @@ function InfiniteCanvasPage() {
                 let streamed = "";
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const textCount = isConfigNode ? getGenerationCount(generationConfig.count) : 1;
-                const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
+                const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : sourceNode?.type === CanvasNodeType.Script ? CanvasNodeType.Script : CanvasNodeType.Text];
                 const textConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
                 const parentPosition = sourceNode?.position || { x: 0, y: 0 };
                 const childIds = isConfigNode || editingTextNode ? Array.from({ length: textCount }, () => nanoid()) : [];
@@ -2642,7 +2647,13 @@ function InfiniteCanvasPage() {
                         const storyboardRows = node.metadata?.storyboardRows ? parseStoryboardTable(content) : undefined;
                         if (childIds.includes(node.id)) return { ...node, metadata: { ...node.metadata, content, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) } };
                         if (node.id === nodeId && isConfigNode) return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } };
-                        if (node.id === nodeId && !editingTextNode) return { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) } };
+                        if (node.id === nodeId && !editingTextNode)
+                            return {
+                                ...node,
+                                type: node.type === CanvasNodeType.Script ? CanvasNodeType.Script : CanvasNodeType.Text,
+                                title: node.type === CanvasNodeType.Script ? node.title || "脚本节点" : prompt.slice(0, 32) || "Generated Text",
+                                metadata: { ...node.metadata, content, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) },
+                            };
                         return node;
                     }),
                 );
@@ -2679,7 +2690,7 @@ function InfiniteCanvasPage() {
                           size: savedImageMetadata.size || effectiveConfig.size,
                           count: "1",
                       }
-                    : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
+                    : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -2707,14 +2718,16 @@ function InfiniteCanvasPage() {
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
 
             try {
-                if (node.type === CanvasNodeType.Text) {
+                if (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) {
                     if (!context) return;
                     let streamed = "";
                     const answer = await requestImageQuestion(generationConfig, buildNodeResponseMessages({ ...context, prompt }), (text) => {
                         streamed = text;
-                        setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
+                        setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: node.type, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
                     }, { signal: controller.signal });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                    const content = answer || streamed;
+                    const storyboardRows = node.type === CanvasNodeType.Script ? parseStoryboardTable(content) : undefined;
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: node.type, metadata: { ...item.metadata, content, prompt, status: NODE_STATUS_SUCCESS, ...(storyboardRows ? { storyboardRows } : {}) } } : item)));
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
@@ -3031,6 +3044,7 @@ function InfiniteCanvasPage() {
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={(node) => void handleRetryNode(node)}
                             onGenerateImage={generateImageFromTextNode}
+                            onOpenScript={(node) => setScriptNodeId(node.id)}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onContextMenu={(event, id) => {
                                 event.preventDefault();
@@ -3108,6 +3122,7 @@ function InfiniteCanvasPage() {
                     onAddVideo={() => createNode(CanvasNodeType.Video)}
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
+                    onAddScript={() => createNode(CanvasNodeType.Script)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onImportMangaCard={handleMangaCardImportRequest}
                     onImportMangaStoryboard={handleMangaStoryboardImportRequest}
@@ -3155,6 +3170,8 @@ function InfiniteCanvasPage() {
                 <input ref={scene360InputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleScene360InputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
+
+                <CanvasScriptNodeDialog node={scriptNode} open={Boolean(scriptNode)} onClose={() => setScriptNodeId(null)} onRowsChange={handleNodeContentChange} />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 
