@@ -168,7 +168,9 @@ JSON 格式必须为：
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
 5. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
-6. 不要编造与剧本冲突的人物关系和物件。`;
+6. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
+7. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
+8. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -1750,7 +1752,7 @@ function InfiniteCanvasPage() {
     const generateStoryboardAssetImage = useCallback(
         async (node: CanvasNodeData, assetId: string) => {
             const asset = node.metadata?.storyboardAssets?.find((item) => item.id === assetId);
-            const prompt = asset?.prompt?.trim() || asset?.description?.trim();
+            const prompt = storyboardAssetImagePrompt(asset);
             if (!asset || !prompt) {
                 message.warning("请先填写资产提示词");
                 return;
@@ -1792,7 +1794,7 @@ function InfiniteCanvasPage() {
             setStoryboardActionKey("asset:all");
             try {
                 await runLimited(assets, STORYBOARD_ASSET_BATCH_CONCURRENCY, async (asset) => {
-                    const prompt = asset.prompt.trim() || asset.description.trim();
+                    const prompt = storyboardAssetImagePrompt(asset);
                     if (!prompt) return;
                     updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
                     try {
@@ -4143,6 +4145,19 @@ async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Pro
         }
     });
     await Promise.all(workers);
+}
+
+function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
+    if (!asset) return "";
+    const prompt = asset.prompt.trim() || asset.description.trim();
+    if (!prompt) return "";
+    if (asset.kind === "scene") {
+        return `${prompt}\n\n资产类型：纯场景空镜。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影、路人或任何活人；只呈现场景空间、环境陈设、道具位置、光线、材质和地域时代质感。`;
+    }
+    if (asset.kind === "prop") {
+        return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
+    }
+    return prompt;
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
