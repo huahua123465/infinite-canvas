@@ -2086,11 +2086,31 @@ function InfiniteCanvasPage() {
                 message.warning("请先合成最终提示词");
                 return;
             }
-            setStoryboardActionKey("video:all");
-            for (const index of indexes) await generateStoryboardVideo(node, index);
-            setStoryboardActionKey(null);
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
+            const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+            const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === node.id);
+            const workspaceId = existingWorkspace?.id || nanoid();
+            const workspacePosition = existingWorkspace?.position || { x: node.position.x + node.width + 72, y: node.position.y + node.height + 120 };
+            const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(node, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current));
+            const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length, 0);
+            const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, node, videoNodes, workspacePosition, "storyboard-videos");
+            setNodes((prev) => {
+                const draftById = new Map([workspaceNode, ...videoNodes].map((item) => [item.id, item]));
+                const updated = prev.map((item) => draftById.get(item.id) || item);
+                const existingIds = new Set(prev.map((item) => item.id));
+                return [...updated, ...[workspaceNode, ...videoNodes].filter((item) => !existingIds.has(item.id))];
+            });
+            setConnections((prev) =>
+                addUniqueConnections(prev, [
+                    { id: nanoid(), fromNodeId: node.id, toNodeId: workspaceNode.id },
+                    ...videoNodes.map((videoNode) => ({ id: nanoid(), fromNodeId: workspaceNode.id, toNodeId: videoNode.id })),
+                    ...videoNodes.flatMap((videoNode) => storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).map((assetNode) => ({ id: nanoid(), fromNodeId: assetNode.id, toNodeId: videoNode.id }))),
+                ]),
+            );
+            if (!linkedAssetCount) message.info("视频工作区已搭建；如需资产参考，请先确认资产工作区已生成");
+            message.success(`已搭建视频工作区，包含 ${videoNodes.length} 个待审核视频节点`);
         },
-        [generateStoryboardVideo, message],
+        [effectiveConfig, message],
     );
 
     const importStoryboardScreenshot = useCallback(
@@ -4342,6 +4362,42 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
         if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
     }
     return Array.from(resolved.values()).slice(0, 7);
+}
+
+function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[]): CanvasNodeData {
+    const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content);
+    const prompt = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "";
+    const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
+    const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
+    return {
+        id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
+        type: CanvasNodeType.Video,
+        title: `分镜视频 ${row?.[0] || rowIndex + 1}`,
+        position: existing?.position || { x: workspacePosition.x + 36 + (order % 3) * (spec.width + 34), y: workspacePosition.y + 86 + Math.floor(order / 3) * (spec.height + 74) },
+        width: existing?.width || spec.width,
+        height: existing?.height || spec.height,
+        metadata: {
+            ...existing?.metadata,
+            prompt,
+            status: NODE_STATUS_IDLE,
+            model: generationConfig.model,
+            size: generationConfig.size,
+            seconds: generationConfig.videoSeconds,
+            vquality: generationConfig.vquality,
+            generateAudio: generationConfig.videoGenerateAudio,
+            watermark: generationConfig.videoWatermark,
+            references: referenceUrls,
+            storyboardSourceNodeId: scriptNode.id,
+            storyboardRowIndex: rowIndex,
+            storyboardAssetMentions: assetReferences.map((item) => item.mention),
+        },
+    };
+}
+
+function storyboardVideoAssetReferenceNodes(videoNode: CanvasNodeData, nodes: CanvasNodeData[]) {
+    const sourceId = videoNode.metadata?.storyboardSourceNodeId;
+    const mentions = videoNode.metadata?.storyboardAssetMentions || [];
+    return nodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storyboardSourceNodeId === sourceId && node.metadata?.storyboardAssetName && mentions.includes(`@${node.metadata.storyboardAssetName}`));
 }
 
 function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: string, sourceNode: CanvasNodeData, childNodes: CanvasNodeData[], position: Position, kind: "storyboard-assets" | "storyboard-videos"): CanvasNodeData {

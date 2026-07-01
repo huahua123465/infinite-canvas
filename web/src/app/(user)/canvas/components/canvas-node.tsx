@@ -765,13 +765,32 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 }
 
 function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
-    if (!node.metadata?.content)
+    if (!node.metadata?.content) {
+        const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
+        if (isStoryboardVideo) {
+            return (
+                <div className="flex h-full w-full flex-col gap-3 p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold" style={{ borderColor: theme.node.stroke }}>
+                            第 {(node.metadata?.storyboardRowIndex || 0) + 1} 镜
+                        </span>
+                        <span className="text-[11px] opacity-55">待审核</span>
+                    </div>
+                    <div className="line-clamp-4 text-xs leading-5 opacity-80">{node.metadata?.prompt || "等待写入视频提示词"}</div>
+                    <div className="mt-auto flex items-center justify-between text-[11px] opacity-60">
+                        <span>{node.metadata?.storyboardAssetMentions?.length || 0} 个资产引用</span>
+                        <span>审核后单独生成</span>
+                    </div>
+                </div>
+            );
+        }
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
                 <Video className="size-7 opacity-35" />
                 <span className="text-sm">空视频节点</span>
             </div>
         );
+    }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
