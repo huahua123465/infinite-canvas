@@ -10,6 +10,7 @@ import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardPr
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
+type ScriptDialogView = "shots" | "assets" | "prompts";
 const ASSET_KIND_LABEL: Record<StoryboardAssetKind, string> = { character: "角色", scene: "场景", prop: "道具" };
 const ASSET_SECTIONS: Array<{ kind: StoryboardAssetKind; title: string }> = [
     { kind: "character", title: "角色" },
@@ -45,7 +46,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const promptCount = rows.filter((row, index) => promptDetails[String(index)]?.storyboardPrompt?.trim() || row[8]?.trim()).length;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
-    const [view, setView] = useState<"shots" | "assets">(node?.metadata?.storyboardStep === "assets" ? "assets" : "shots");
+    const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
     const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -55,7 +56,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
 
     useEffect(() => {
         if (!node) return;
-        setView(node.metadata?.storyboardStep === "assets" ? "assets" : "shots");
+        setView(node.metadata?.storyboardStep === "assets" ? "assets" : node.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     }, [node?.id, node?.metadata?.storyboardStep]);
 
     useEffect(() => {
@@ -97,7 +98,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
 
     const openPrompts = () => {
         if (!node || !rows.length) return;
-        setPromptEditorRowIndex(0);
+        setView("prompts");
     };
 
     const uploadEditingAsset = (file?: File) => {
@@ -125,7 +126,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     <div className="grid h-20 grid-cols-[1fr_1fr_1fr_auto] items-center gap-6 border-b border-[#303030] bg-[#070707] px-8">
                         <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
                         <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(assets.length - readyAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
-                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={promptEditorRowIndex !== null} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
+                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={view === "prompts"} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
                         <div className="text-sm font-semibold">{promptCount}/{rows.length} 完成后可批量生视频</div>
                     </div>
                     {view === "assets" ? (
@@ -141,6 +142,21 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onSelectAsset={setEditingAssetId}
                             onGenerateAssetImage={onGenerateAssetImage}
                             onBatchGenerateAssets={onBatchGenerateAssets}
+                        />
+                    ) : view === "prompts" ? (
+                        <PromptComposeView
+                            node={node}
+                            rows={rows}
+                            actionKey={actionKey}
+                            promptDetails={promptDetails}
+                            config={config}
+                            model={node.metadata?.model || config.textModel || config.model}
+                            onModelChange={(model) => onModelChange(node.id, model)}
+                            onOpenPrompt={setPromptEditorRowIndex}
+                            onComposeFinalPrompt={onComposeFinalPrompt}
+                            onGenerateImage={onGenerateImage}
+                            onGenerateVideo={onGenerateVideo}
+                            promptCount={promptCount}
                         />
                     ) : (
                         <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
@@ -283,6 +299,87 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                 <Button className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
                     批量合成提示词
                 </Button>
+            </div>
+        </>
+    );
+}
+
+function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; promptCount: number }) {
+    return (
+        <>
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
+                <table className="min-w-[1820px] border-collapse text-left text-[12px]">
+                    <thead className="sticky top-0 z-20 bg-[#1f1f1f] text-[#b5b5b5]">
+                        <tr>
+                            {COLUMNS.slice(0, 8).map((column, index) => (
+                                <th key={column} className={`${index === 0 ? "sticky left-0 z-30 bg-[#1f1f1f]" : ""} border-b border-r border-[#343434] px-3 py-3 font-medium`} style={{ width: COL_WIDTHS[index] }}>
+                                    {column}
+                                </th>
+                            ))}
+                            <th className="w-[310px] border-b border-r border-[#343434] px-3 py-3 font-medium">最终提示词</th>
+                            <th className="w-24 border-b border-[#343434] px-3 py-3 text-center font-medium">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row, rowIndex) => {
+                            const detail = promptDetails[String(rowIndex)];
+                            const hasPrompt = Boolean(detail?.storyboardPrompt?.trim());
+                            return (
+                                <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
+                                    {COLUMNS.slice(0, 8).map((_, colIndex) => (
+                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
+                                            <div className={`max-h-24 overflow-hidden px-3 py-3 leading-5 ${colIndex < 2 ? "text-center font-semibold" : "text-[#ececec]"}`}>{row[colIndex] || "-"}</div>
+                                        </td>
+                                    ))}
+                                    <td className="border-b border-r border-[#303030] align-top">
+                                        <button className="block min-h-24 w-full px-3 py-3 text-left leading-5 outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
+                                            {hasPrompt ? (
+                                                <>
+                                                    <span className="line-clamp-3 text-[#e7e7e7]">{detail?.storyboardPrompt}</span>
+                                                    {detail?.videoMotionPrompt ? <span className="mt-2 inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
+                                                </>
+                                            ) : (
+                                                <span className="text-[#858585]">待生成提示词</span>
+                                            )}
+                                        </button>
+                                    </td>
+                                    <td className="border-b border-[#303030] px-3 py-3 text-center">
+                                        <Dropdown
+                                            trigger={["click"]}
+                                            menu={{
+                                                items: [
+                                                    { key: "open", label: "打开合成提示词", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "compose", label: hasPrompt ? "重新合成此镜头" : "合成此镜头", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
+                                                    { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt },
+                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !detail?.videoMotionPrompt?.trim() },
+                                                ],
+                                                onClick: ({ key }) => {
+                                                    if (key === "open") onOpenPrompt(rowIndex);
+                                                    if (key === "compose") onComposeFinalPrompt(node, rowIndex);
+                                                    if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(detail, row[8] || ""));
+                                                    if (key === "image") onGenerateImage(node, rowIndex);
+                                                    if (key === "video") onGenerateVideo(node, rowIndex);
+                                                },
+                                            }}
+                                        >
+                                            <Button size="small" type="text" className="!text-[#d8d8d8]" disabled={actionKey === `prompt:${rowIndex}`} icon={actionKey === `prompt:${rowIndex}` ? <LoaderCircle className="size-4 animate-spin" /> : <Ellipsis className="size-4" />} />
+                                        </Dropdown>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+            <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#121212] px-8">
+                <div className="text-xs text-[#bcbcbc]">{promptCount}/{rows.length} 已合成，支持逐镜头单独重写，也可以批量重写全部镜头。</div>
+                <div className="flex items-center gap-2">
+                    <ModelPicker config={config} value={model} capability="text" className="!h-10 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
+                    <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
+                        批量合成提示词
+                    </Button>
+                </div>
             </div>
         </>
     );

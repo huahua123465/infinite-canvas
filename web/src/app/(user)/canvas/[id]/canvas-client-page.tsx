@@ -1860,8 +1860,7 @@ function InfiniteCanvasPage() {
     const composeStoryboardFinalPrompt = useCallback(
         async (node: CanvasNodeData, rowIndex?: number) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
-            const promptDetails = node.metadata?.storyboardPromptDetails || {};
-            const indexes = rowIndex === undefined ? rows.map((_, index) => index).filter((index) => !promptDetails[String(index)]?.storyboardPrompt?.trim()) : [rowIndex];
+            const indexes = rowIndex === undefined ? rows.map((_, index) => index) : [rowIndex];
             if (!indexes.length) return message.info("没有需要合成的最终提示词");
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
