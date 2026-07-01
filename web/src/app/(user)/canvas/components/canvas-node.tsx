@@ -769,6 +769,8 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
     if (!node.metadata?.content) {
         const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
         if (isStoryboardVideo) {
+            const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || node.metadata?.storyboardAssetMentionLinks?.filter((link) => link.status === "bound").length || node.metadata?.storyboardAssetMentions?.length || 0;
+            const missingCount = node.metadata?.storyboardAssetMentionLinks?.filter((link) => link.status === "missing").length || 0;
             return (
                 <div className="flex h-full w-full flex-col gap-3 p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center justify-between gap-2">
@@ -779,7 +781,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                     </div>
                     <div className="line-clamp-4 text-xs leading-5 opacity-80">{node.metadata?.prompt || "等待写入视频提示词"}</div>
                     <div className="mt-auto flex items-center justify-between text-[11px] opacity-60">
-                        <span>{node.metadata?.storyboardAssetMentions?.length || 0} 个资产引用</span>
+                        <span>{boundCount ? `已绑定 ${boundCount} 个资产` : "未绑定资产"}{missingCount ? `，${missingCount} 个未绑定` : ""}</span>
                         <span>审核后单独生成</span>
                     </div>
                 </div>

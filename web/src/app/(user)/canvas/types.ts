@@ -37,10 +37,20 @@ export type StoryboardAsset = {
     errorDetails?: string;
 };
 
+export type StoryboardAssetMentionLink = {
+    mention: string;
+    name: string;
+    status: "bound" | "missing";
+    assetId?: string;
+    nodeId?: string;
+    kind?: StoryboardAssetKind;
+};
+
 export type StoryboardPromptDetail = {
     storyboardPrompt: string;
     videoMotionPrompt: string;
     assetMentions?: string[];
+    assetMentionLinks?: StoryboardAssetMentionLink[];
 };
 
 export type CanvasNodeMetadata = {
@@ -59,6 +69,8 @@ export type CanvasNodeMetadata = {
     storyboardAssetName?: string;
     storyboardRowIndex?: number;
     storyboardAssetMentions?: string[];
+    storyboardAssetMentionLinks?: StoryboardAssetMentionLink[];
+    storyboardAssetReferenceNodeIds?: string[];
     workspaceKind?: "storyboard-assets" | "storyboard-videos";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];

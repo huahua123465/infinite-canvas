@@ -326,6 +326,8 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                         {rows.map((row, rowIndex) => {
                             const detail = promptDetails[String(rowIndex)];
                             const hasPrompt = Boolean(detail?.storyboardPrompt?.trim());
+                            const boundCount = detail?.assetMentionLinks?.filter((link) => link.status === "bound").length || 0;
+                            const missingCount = detail?.assetMentionLinks?.filter((link) => link.status === "missing").length || 0;
                             return (
                                 <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
                                     {COLUMNS.slice(0, 8).map((_, colIndex) => (
@@ -338,7 +340,11 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                                             {hasPrompt ? (
                                                 <>
                                                     <span className="line-clamp-3 text-[#e7e7e7]">{detail?.storyboardPrompt}</span>
-                                                    {detail?.videoMotionPrompt ? <span className="mt-2 inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
+                                                    <span className="mt-2 flex flex-wrap gap-1.5">
+                                                        {detail?.videoMotionPrompt ? <span className="inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
+                                                        {boundCount ? <span className="inline-flex rounded bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">已绑定 {boundCount} 个资产</span> : null}
+                                                        {missingCount ? <span className="inline-flex rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-100">未绑定 {missingCount} 个</span> : null}
+                                                    </span>
                                                 </>
                                             ) : (
                                                 <span className="text-[#858585]">待生成提示词</span>
@@ -400,6 +406,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
 
     const updateDraft = (patch: Partial<StoryboardPromptDetail>) => setDraft((current) => ({ ...current, ...patch }));
     const mentions = draft.assetMentions || [];
+    const mentionLinks = draft.assetMentionLinks || [];
 
     return (
         <Modal
@@ -430,9 +437,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                     </div>
                 </div>
                 <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-6 py-5">
-                    <div className="mb-4 flex flex-wrap gap-2">
-                        {mentions.length ? mentions.map((mention) => <span key={mention} className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-100">{mention}</span>) : <span className="rounded-full border border-[#444] bg-[#252525] px-3 py-1 text-xs text-[#9f9f9f]">重新合成后会自动 @ 人物、场景、道具</span>}
-                    </div>
+                    <AssetMentionStrip mentions={mentions} links={mentionLinks} />
                     <PromptBlock
                         title="分镜提示词"
                         hint="用于首帧图、分镜图和画面生成"
@@ -455,11 +460,29 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                     <div className="flex items-center gap-2">
                         <Button disabled={!draft.storyboardPrompt.trim()} icon={<ImageIcon className="size-4" />} onClick={onGenerateImage}>生成分镜图</Button>
                         <Button disabled={!draft.videoMotionPrompt.trim()} icon={<Video className="size-4" />} onClick={onGenerateVideo}>生成视频</Button>
-                        <Button type="primary" className="!h-10 !rounded-lg !px-7" onClick={() => onSave({ ...draft, assetMentions: mentions.map((item) => item.trim()).filter(Boolean) })}>保存</Button>
+                        <Button type="primary" className="!h-10 !rounded-lg !px-7" onClick={() => onSave({ ...draft, assetMentions: mentions.map((item) => item.trim()).filter(Boolean) })}>保存并绑定</Button>
                     </div>
                 </div>
             </div>
         </Modal>
+    );
+}
+
+function AssetMentionStrip({ mentions, links }: { mentions: string[]; links: NonNullable<StoryboardPromptDetail["assetMentionLinks"]> }) {
+    if (!mentions.length) return <div className="mb-4 rounded-lg border border-[#3a3a3a] bg-[#202020] px-4 py-3 text-xs text-[#9f9f9f]">重新合成后会自动 @ 人物、场景、道具；保存时会校验是否真的绑定到画布资产节点。</div>;
+    const linkByMention = new Map(links.map((link) => [link.mention, link]));
+    return (
+        <div className="mb-4 flex flex-wrap gap-2">
+            {mentions.map((mention) => {
+                const link = linkByMention.get(mention);
+                const bound = link?.status === "bound";
+                return (
+                    <span key={mention} title={bound ? `已绑定到资产节点：${link?.name || mention}` : "未绑定，请先批量生成资产或检查资产名称"} className={`rounded-full border px-3 py-1 text-xs font-semibold ${bound ? "border-cyan-400/35 bg-cyan-400/10 text-cyan-100" : "border-amber-400/35 bg-amber-400/10 text-amber-100"}`}>
+                        {mention} {bound ? "已绑定" : "未绑定"}
+                    </span>
+                );
+            })}
+        </div>
     );
 }
 
