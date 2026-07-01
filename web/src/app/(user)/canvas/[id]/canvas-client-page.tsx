@@ -3477,8 +3477,6 @@ function InfiniteCanvasPage() {
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
                     onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
                     onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
-                    onBatchGenerateImages={(node) => void batchGenerateStoryboardImages(node)}
-                    onBatchGenerateVideos={(node) => void batchGenerateStoryboardVideos(node)}
                 />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}

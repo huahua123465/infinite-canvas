@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, Dropdown, Modal } from "antd";
-import { Copy, Ellipsis, Film, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Upload, Video, X } from "lucide-react";
+import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Upload, Video, X } from "lucide-react";
 
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind } from "../types";
 
@@ -29,11 +29,9 @@ type CanvasScriptNodeDialogProps = {
     onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void;
     onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void;
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
-    onBatchGenerateImages: (node: CanvasNodeData) => void;
-    onBatchGenerateVideos: (node: CanvasNodeData) => void;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateImages, onBatchGenerateVideos }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onGenerateImage, onGenerateVideo }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -127,13 +125,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onBatchGenerateAssets={onBatchGenerateAssets}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} actionKey={actionKey} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onBatchGenerateImages={onBatchGenerateImages} onBatchGenerateVideos={onBatchGenerateVideos} onOpenAssets={openAssets} promptCount={promptCount} />
+                        <ShotsTable node={node} rows={rows} actionKey={actionKey} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
                     )}
                     {editingAsset ? (
                         <div className="absolute inset-y-0 right-0 z-40 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]">
-                            <div className="flex h-16 items-center justify-between border-b border-[#353535] px-5">
+                            <div className="flex h-16 items-center justify-between border-b border-[#353535] px-5 pr-12">
                                 <div className="text-sm font-semibold">编辑{ASSET_KIND_LABEL[editingAsset.kind]}</div>
-                                <Button type="text" className="!text-[#e8e8e8]" icon={<X className="size-5" />} onClick={() => setEditingAssetId(null)} />
+                                <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
                             </div>
                             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
                                 <div className="mb-4 text-xs font-semibold text-[#f0f0f0]">{ASSET_KIND_LABEL[editingAsset.kind]}形象</div>
@@ -178,7 +176,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateImages, onBatchGenerateVideos, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateImages: (node: CanvasNodeData) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; onOpenAssets: () => void; promptCount: number }) {
+function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -232,17 +230,6 @@ function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow
                 <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={onAddRow}>
                     添加镜头
                 </Button>
-                <div className="flex items-center gap-2">
-                    <Button icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} className="!h-10 !rounded-lg" disabled={actionKey !== null} onClick={() => onComposeFinalPrompt(node)}>
-                        批量合成提示词
-                    </Button>
-                    <Button icon={actionKey === "image:all" ? <LoaderCircle className="size-4 animate-spin" /> : <ImageIcon className="size-4" />} className="!h-10 !rounded-lg" disabled={actionKey !== null} onClick={() => onBatchGenerateImages(node)}>
-                        批量生成分镜图
-                    </Button>
-                    <Button icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Film className="size-4" />} className="!h-10 !rounded-lg" disabled={actionKey !== null} onClick={() => onBatchGenerateVideos(node)}>
-                        批量生成视频
-                    </Button>
-                </div>
                 <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} onClick={onOpenAssets}>
                     下一步：准备资产
                 </Button>
