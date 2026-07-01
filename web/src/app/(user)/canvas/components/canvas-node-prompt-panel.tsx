@@ -103,7 +103,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 onPointerDown={(event) => event.stopPropagation()}
                 className="thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
-                placeholder={isScriptNode ? "把剧本文本节点连到左侧后，可留空直接生成分镜脚本；也可以输入额外要求" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
+                placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
