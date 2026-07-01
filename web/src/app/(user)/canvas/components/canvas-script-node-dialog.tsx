@@ -34,10 +34,11 @@ type CanvasScriptNodeDialogProps = {
     onModelChange: (nodeId: string, model: string) => void;
     onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void;
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
+    onBatchGenerateVideos: (node: CanvasNodeData) => void;
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -156,6 +157,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onComposeFinalPrompt={onComposeFinalPrompt}
                             onGenerateImage={onGenerateImage}
                             onGenerateVideo={onGenerateVideo}
+                            onBatchGenerateVideos={onBatchGenerateVideos}
                             promptCount={promptCount}
                         />
                     ) : (
@@ -304,7 +306,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
     );
 }
 
-function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; promptCount: number }) {
+function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -376,6 +378,9 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                 <div className="text-xs text-[#bcbcbc]">{promptCount}/{rows.length} 已合成，支持逐镜头单独重写，也可以批量重写全部镜头。</div>
                 <div className="flex items-center gap-2">
                     <ModelPicker config={config} value={model} capability="text" className="!h-10 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
+                    <Button className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Video className="size-4" />} onClick={() => onBatchGenerateVideos(node)}>
+                        批量生成视频
+                    </Button>
                     <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
                         批量合成提示词
                     </Button>

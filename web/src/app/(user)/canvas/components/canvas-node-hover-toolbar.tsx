@@ -38,6 +38,7 @@ type CanvasNodeHoverToolbarProps = {
     onPromptAssistant: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
     onExportScriptAssets: (node: CanvasNodeData) => void;
+    onBatchGenerateScriptVideos: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
@@ -78,6 +79,7 @@ export function CanvasNodeHoverToolbar({
     onPromptAssistant,
     onReversePrompt,
     onExportScriptAssets,
+    onBatchGenerateScriptVideos,
     onRetry,
     onToggleFreeResize,
     onDelete,
@@ -201,6 +203,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isScript ? [{ id: "exportScriptAssets", title: "批量生成并导出资产", label: "批量生成资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
+        ...(isScript ? [{ id: "batchScriptVideos", title: "按合成提示词批量生成视频", label: "批量生成视频", icon: <Video className="size-4" />, onClick: () => onBatchGenerateScriptVideos(node) }] : []),
         ...(isText ? [{ id: "editText", title: "编辑文本", label: "编辑文字", icon: <Pencil className="size-4" />, onClick: () => onEditText(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),

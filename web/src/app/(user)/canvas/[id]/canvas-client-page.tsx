@@ -2017,9 +2017,16 @@ function InfiniteCanvasPage() {
     const generateStoryboardVideo = useCallback(
         async (node: CanvasNodeData, rowIndex: number) => {
             const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
-            const prompt = node.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
+            const detail = node.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+            const prompt = detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
             if (!row || !prompt) {
                 message.warning("请先填写或合成最终提示词");
+                return;
+            }
+            const requestedMentions = storyboardAssetMentionsForPrompt(detail);
+            const assetReferences = storyboardVideoAssetReferences(node, rowIndex, nodesRef.current);
+            if (requestedMentions.length && !assetReferences.length) {
+                message.warning("请先在脚本节点上批量生成资产，再生成引用资产的视频");
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
@@ -2032,13 +2039,14 @@ function InfiniteCanvasPage() {
             const x = node.position.x + node.width + 96 + (rowIndex % 3) * (spec.width + 32);
             const y = node.position.y + Math.floor(rowIndex / 3) * (spec.height + 42);
             setStoryboardActionKey(`video:${rowIndex}`);
-            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } }]);
-            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
+            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: node.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention) } }]);
+            setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: node.id, toNodeId: childId }, ...assetReferences.map((item) => ({ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }))]));
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, [], [], [], { signal: controller.signal }));
+                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal }));
                 const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: node.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention) } } : item)));
             } catch (error) {
                 if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成视频失败" } } : item)));
             } finally {
@@ -2067,7 +2075,7 @@ function InfiniteCanvasPage() {
     const batchGenerateStoryboardVideos = useCallback(
         async (node: CanvasNodeData) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
-            const indexes = rows.map((row, index) => (row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
+            const indexes = rows.map((row, index) => (node.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() || row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
             if (!indexes.length) {
                 message.warning("请先合成最终提示词");
                 return;
@@ -3524,6 +3532,7 @@ function InfiniteCanvasPage() {
                     onPromptAssistant={openPromptAssistant}
                     onReversePrompt={createImageReversePromptNodes}
                     onExportScriptAssets={(node) => void exportStoryboardAssetsToCanvas(node)}
+                    onBatchGenerateScriptVideos={(node) => void batchGenerateStoryboardVideos(node)}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
@@ -3617,6 +3626,7 @@ function InfiniteCanvasPage() {
                     onModelChange={updateStoryboardModel}
                     onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
                     onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
+                    onBatchGenerateVideos={(node) => void batchGenerateStoryboardVideos(node)}
                     config={effectiveConfig}
                 />
 
@@ -4123,6 +4133,17 @@ function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNode
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }
 
+function addUniqueConnections(current: CanvasConnection[], next: CanvasConnection[]) {
+    const existing = new Set(current.map((connection) => `${connection.fromNodeId}->${connection.toNodeId}`));
+    const additions = next.filter((connection) => {
+        const key = `${connection.fromNodeId}->${connection.toNodeId}`;
+        if (existing.has(key)) return false;
+        existing.add(key);
+        return true;
+    });
+    return additions.length ? [...current, ...additions] : current;
+}
+
 function shouldUseMultiViewGrid(prompt: string, metadata?: CanvasNodeData["metadata"]) {
     if (metadata?.disableAutoMultiView || metadata?.sceneViewRole) return false;
     if (metadata?.enableMultiViewGrid) return true;
@@ -4296,6 +4317,44 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
     }
     return prompt;
+}
+
+function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
+    const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+    const promptText = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
+    const assets = scriptNode.metadata?.storyboardAssets || [];
+    const mentions = Array.from(new Set([...storyboardAssetMentionsForPrompt(detail), ...assets.filter((asset) => promptText.includes(`@${asset.name}`) || promptText.includes(asset.name)).map((asset) => `@${asset.name}`)]));
+    const mentionNodeIds = scriptNode.metadata?.storyboardAssetMentionNodeIds || {};
+    const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
+    const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
+    const resolved = new Map<string, { mention: string; node: CanvasNodeData; reference: ReferenceImage }>();
+    for (const mention of mentions) {
+        const asset = assetByName.get(mention);
+        const nodeId = mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
+        const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
+        const reference = referenceImageFromCanvasNode(assetNode);
+        if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
+    }
+    return Array.from(resolved.values()).slice(0, 7);
+}
+
+function storyboardAssetMentionsForPrompt(detail?: StoryboardPromptDetail) {
+    const explicit = detail?.assetMentions || [];
+    const text = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
+    const inline = Array.from(text.matchAll(/@([^\s@，,、。；;：:）)】\]]+)/g)).map((match) => `@${match[1].trim()}`);
+    return Array.from(new Set([...explicit, ...inline].map(normalizeAssetMention).filter(Boolean)));
+}
+
+function referenceImageFromCanvasNode(node?: CanvasNodeData | null): ReferenceImage | null {
+    if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
+    return {
+        id: node.id,
+        name: `${node.title || node.id}.png`,
+        type: node.metadata.mimeType || "image/png",
+        dataUrl: node.metadata.content,
+        url: node.metadata.content,
+        storageKey: node.metadata.storageKey,
+    };
 }
 
 function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
