@@ -83,7 +83,7 @@ type PendingConnectionCreate = {
     position: Position;
 };
 
-type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Script | "storyboard";
+type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Script;
 
 type ConnectionDropTarget = {
     nodeId: string | null;
@@ -142,6 +142,9 @@ const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚�
 
 要求：如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜；只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
+const STORYBOARD_FINAL_PROMPT_PROMPT = `You are a storyboard prompt specialist. Turn the single shot below into one Chinese prompt that can be used directly for AI image or video generation.
+Return only the prompt text. Do not add explanations or headings.
+The prompt must include subject, scene, action, emotion, shot size, lighting atmosphere, camera movement/lens language, and must stay consistent with the story.`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -233,7 +236,6 @@ function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: Pending
                 </button>
             </div>
             <div className="grid gap-1">
-                <ConnectionCreateOption theme={theme} icon={<BookOpen className="size-5" />} title="分镜脚本" description="按表格拆镜头、提示词" onClick={() => onCreate("storyboard")} />
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
@@ -340,6 +342,7 @@ function InfiniteCanvasPage() {
     const [promptAssistantNodeId, setPromptAssistantNodeId] = useState<string | null>(null);
     const [promptAssistantLoading, setPromptAssistantLoading] = useState(false);
     const [promptAssistantModel, setPromptAssistantModel] = useState("");
+    const [storyboardActionKey, setStoryboardActionKey] = useState<string | null>(null);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -643,14 +646,11 @@ function InfiniteCanvasPage() {
 
     const createConnectedNode = useCallback(
         (type: ConnectionCreateKind, pending: PendingConnectionCreate) => {
-            const nodeType = type === "storyboard" ? CanvasNodeType.Script : type;
             const metadata =
-                type === "storyboard"
-                    ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], model: effectiveConfig.textModel || effectiveConfig.model }
-                    : type === CanvasNodeType.Config
-                      ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
-                      : undefined;
-            const newNode = createCanvasNode(nodeType, pending.position, metadata);
+                type === CanvasNodeType.Config
+                    ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
+                    : undefined;
+            const newNode = createCanvasNode(type, pending.position, metadata);
             if (type === "storyboard") {
                 newNode.title = "分镜脚本";
                 newNode.width = NODE_DEFAULT_SIZE[CanvasNodeType.Script].width;
@@ -1650,6 +1650,143 @@ function InfiniteCanvasPage() {
     const handleNodeContentChange = useCallback((nodeId: string, content: string, storyboardRows?: string[][]) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content, ...(storyboardRows ? { storyboardRows } : {}) } } : node)));
     }, []);
+
+    const updateStoryboardRows = useCallback((nodeId: string, rows: string[][]) => {
+        const normalized = renumberStoryboardRowsForCanvas(rows);
+        handleNodeContentChange(nodeId, storyboardRowsToMarkdownForCanvas(normalized), [STORYBOARD_COLUMNS, ...normalized]);
+    }, [handleNodeContentChange]);
+
+    const composeStoryboardFinalPrompt = useCallback(
+        async (node: CanvasNodeData, rowIndex?: number) => {
+            const rows = parseStoryboardRows(node.metadata?.storyboardRows);
+            const indexes = rowIndex === undefined ? rows.map((_, index) => index).filter((index) => !rows[index][8]?.trim()) : [rowIndex];
+            if (!indexes.length) return message.info("没有需要合成的最终提示词");
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey(rowIndex === undefined ? "prompt:all" : `prompt:${rowIndex}`);
+            try {
+                const nextRows = rows.map((row) => [...row]);
+                for (const index of indexes) {
+                    const row = nextRows[index];
+                    const source = STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n");
+                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FINAL_PROMPT_PROMPT}\n\n${source}` }], () => {});
+                    nextRows[index][8] = answer.trim();
+                    updateStoryboardRows(node.id, nextRows);
+                }
+                message.success(rowIndex === undefined ? "最终提示词已批量合成" : "最终提示词已合成");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "合成最终提示词失败");
+            } finally {
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardRows],
+    );
+
+    const generateStoryboardImage = useCallback(
+        async (node: CanvasNodeData, rowIndex: number) => {
+            const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
+            const prompt = row?.[8]?.trim() || row?.[2]?.trim();
+            if (!row || !prompt) {
+                message.warning("请先填写或合成最终提示词");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+            const childId = nanoid();
+            const x = node.position.x + node.width + 96 + (rowIndex % 3) * (imageConfig.width + 32);
+            const y = node.position.y + Math.floor(rowIndex / 3) * (imageConfig.height + 42);
+            const metadata = buildImageGenerationMetadata("generation", generationConfig, 1, []);
+            setStoryboardActionKey(`image:${rowIndex}`);
+            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Image, title: `分镜图 ${row[0] || rowIndex + 1}`, position: { x, y }, width: imageConfig.width, height: imageConfig.height, metadata: { prompt, status: NODE_STATUS_LOADING, ...metadata } }]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            const controller = startGenerationRequest(childId, node.id, childId);
+            try {
+                const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                const uploaded = await uploadImage(image.dataUrl);
+                const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...metadata } } : item)));
+            } catch (error) {
+                if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成分镜图失败" } } : item)));
+            } finally {
+                finishGenerationRequest(childId, controller);
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+    );
+
+    const generateStoryboardVideo = useCallback(
+        async (node: CanvasNodeData, rowIndex: number) => {
+            const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
+            const prompt = row?.[8]?.trim() || row?.[2]?.trim();
+            if (!row || !prompt) {
+                message.warning("请先填写或合成最终提示词");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+            const childId = nanoid();
+            const x = node.position.x + node.width + 96 + (rowIndex % 3) * (spec.width + 32);
+            const y = node.position.y + Math.floor(rowIndex / 3) * (spec.height + 42);
+            setStoryboardActionKey(`video:${rowIndex}`);
+            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } }]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+            const controller = startGenerationRequest(childId, node.id, childId);
+            try {
+                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, [], [], [], { signal: controller.signal }));
+                const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)));
+            } catch (error) {
+                if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成视频失败" } } : item)));
+            } finally {
+                finishGenerationRequest(childId, controller);
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+    );
+
+    const batchGenerateStoryboardImages = useCallback(
+        async (node: CanvasNodeData) => {
+            const rows = parseStoryboardRows(node.metadata?.storyboardRows);
+            const indexes = rows.map((row, index) => (row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
+            if (!indexes.length) {
+                message.warning("请先合成最终提示词");
+                return;
+            }
+            setStoryboardActionKey("image:all");
+            for (const index of indexes) await generateStoryboardImage(node, index);
+            setStoryboardActionKey(null);
+        },
+        [generateStoryboardImage, message],
+    );
+
+    const batchGenerateStoryboardVideos = useCallback(
+        async (node: CanvasNodeData) => {
+            const rows = parseStoryboardRows(node.metadata?.storyboardRows);
+            const indexes = rows.map((row, index) => (row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
+            if (!indexes.length) {
+                message.warning("请先合成最终提示词");
+                return;
+            }
+            setStoryboardActionKey("video:all");
+            for (const index of indexes) await generateStoryboardVideo(node, index);
+            setStoryboardActionKey(null);
+        },
+        [generateStoryboardVideo, message],
+    );
 
     const importStoryboardScreenshot = useCallback(
         async (node: CanvasNodeData, file: File, model?: string): Promise<StoryboardImportPreview | null> => {
@@ -3172,7 +3309,18 @@ function InfiniteCanvasPage() {
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 
-                <CanvasScriptNodeDialog node={scriptNode} open={Boolean(scriptNode)} onClose={() => setScriptNodeId(null)} onRowsChange={handleNodeContentChange} />
+                <CanvasScriptNodeDialog
+                    node={scriptNode}
+                    open={Boolean(scriptNode)}
+                    actionKey={storyboardActionKey}
+                    onClose={() => setScriptNodeId(null)}
+                    onRowsChange={handleNodeContentChange}
+                    onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
+                    onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
+                    onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
+                    onBatchGenerateImages={(node) => void batchGenerateStoryboardImages(node)}
+                    onBatchGenerateVideos={(node) => void batchGenerateStoryboardVideos(node)}
+                />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 

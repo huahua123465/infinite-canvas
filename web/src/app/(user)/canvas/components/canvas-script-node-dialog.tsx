@@ -1,7 +1,8 @@
 "use client";
 
-import { Button, Modal } from "antd";
-import { Plus, X } from "lucide-react";
+import type { ReactNode } from "react";
+import { Button, Dropdown, Modal } from "antd";
+import { Copy, Ellipsis, Film, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Video, X } from "lucide-react";
 
 import type { CanvasNodeData } from "../types";
 
@@ -11,13 +12,20 @@ const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
 type CanvasScriptNodeDialogProps = {
     node: CanvasNodeData | null;
     open: boolean;
+    actionKey?: string | null;
     onClose: () => void;
     onRowsChange: (nodeId: string, content: string, rows: string[][]) => void;
+    onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void;
+    onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void;
+    onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
+    onBatchGenerateImages: (node: CanvasNodeData) => void;
+    onBatchGenerateVideos: (node: CanvasNodeData) => void;
 };
 
-export function CanvasScriptNodeDialog({ node, open, onClose, onRowsChange }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateImages, onBatchGenerateVideos }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
+    const promptCount = rows.filter((row) => row[8]?.trim()).length;
 
     const saveRows = (nextRows: string[][]) => {
         if (!node) return;
@@ -53,8 +61,8 @@ export function CanvasScriptNodeDialog({ node, open, onClose, onRowsChange }: Ca
                 <div className="flex h-full flex-col bg-[#101010] text-[#f1f1f1]">
                     <div className="grid h-20 grid-cols-[1fr_1fr_1fr_auto] items-center gap-6 border-b border-[#303030] bg-[#070707] px-8">
                         <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active />
-                        <Step index="2" title="准备资产" detail={`0/${rows.length} 已生成`} />
-                        <Step index="3" title="合成提示词" detail={`0/${rows.length} 已合成`} />
+                        <Step index="2" title="准备资产" detail="可批量生成分镜图" active={promptCount > 0} />
+                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={promptCount > 0} />
                         <div className="text-sm font-semibold">{filledCount}/{rows.length} 完成后可批量生视频</div>
                     </div>
                     <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -66,7 +74,7 @@ export function CanvasScriptNodeDialog({ node, open, onClose, onRowsChange }: Ca
                                             {column}
                                         </th>
                                     ))}
-                                    <th className="w-24 border-b border-[#343434] px-3 py-3 font-medium">操作</th>
+                                    <th className="w-44 border-b border-[#343434] px-3 py-3 font-medium">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -82,10 +90,27 @@ export function CanvasScriptNodeDialog({ node, open, onClose, onRowsChange }: Ca
                                                 />
                                             </td>
                                         ))}
-                                        <td className="border-b border-[#303030] px-3 py-3 text-center">
-                                            <Button size="small" danger ghost onClick={() => deleteRow(rowIndex)}>
-                                                删除
-                                            </Button>
+                                        <td className="border-b border-[#303030] px-3 py-3">
+                                            <div className="flex items-center justify-center gap-1.5">
+                                                <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="合成最终提示词" onClick={() => node && onComposeFinalPrompt(node, rowIndex)} />
+                                                <RowActionButton loading={actionKey === `image:${rowIndex}`} icon={<ImageIcon className="size-3.5" />} title="生成分镜图" onClick={() => node && onGenerateImage(node, rowIndex)} />
+                                                <RowActionButton loading={actionKey === `video:${rowIndex}`} icon={<Video className="size-3.5" />} title="生成视频" onClick={() => node && onGenerateVideo(node, rowIndex)} />
+                                                <Dropdown
+                                                    trigger={["click"]}
+                                                    menu={{
+                                                        items: [
+                                                            { key: "copy", label: "复制最终提示词", icon: <Copy className="size-3.5" /> },
+                                                            { key: "delete", label: "删除镜头", danger: true },
+                                                        ],
+                                                        onClick: ({ key }) => {
+                                                            if (key === "copy") void navigator.clipboard?.writeText(row[8] || "");
+                                                            if (key === "delete") deleteRow(rowIndex);
+                                                        },
+                                                    }}
+                                                >
+                                                    <Button size="small" type="text" className="!text-[#d8d8d8]" icon={<Ellipsis className="size-4" />} />
+                                                </Dropdown>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -96,13 +121,30 @@ export function CanvasScriptNodeDialog({ node, open, onClose, onRowsChange }: Ca
                         <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={addRow}>
                             添加镜头
                         </Button>
-                        <Button type="primary" className="!h-10 !rounded-lg !px-8">
+                        <div className="flex items-center gap-2">
+                            <Button icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} className="!h-10 !rounded-lg" disabled={!node || actionKey !== null} onClick={() => node && onComposeFinalPrompt(node)}>
+                                批量合成提示词
+                            </Button>
+                            <Button icon={actionKey === "image:all" ? <LoaderCircle className="size-4 animate-spin" /> : <ImageIcon className="size-4" />} className="!h-10 !rounded-lg" disabled={!node || actionKey !== null} onClick={() => node && onBatchGenerateImages(node)}>
+                                批量生成分镜图
+                            </Button>
+                            <Button icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Film className="size-4" />} className="!h-10 !rounded-lg" disabled={!node || actionKey !== null} onClick={() => node && onBatchGenerateVideos(node)}>
+                                批量生成视频
+                            </Button>
+                        </div>
+                        <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!promptCount}>
                             下一步：准备资产
                         </Button>
                     </div>
                 </div>
             ) : null}
         </Modal>
+    );
+}
+
+function RowActionButton({ icon, title, loading, onClick }: { icon: ReactNode; title: string; loading: boolean; onClick: () => void }) {
+    return (
+        <Button size="small" type="text" className="!text-[#d8d8d8]" title={title} disabled={loading} icon={loading ? <LoaderCircle className="size-3.5 animate-spin" /> : icon} onClick={onClick} />
     );
 }
 
