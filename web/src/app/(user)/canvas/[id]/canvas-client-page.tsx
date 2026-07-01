@@ -66,6 +66,7 @@ import {
     type CanvasNodeMetadata,
     type StoryboardAsset,
     type StoryboardAssetKind,
+    type StoryboardPromptDetail,
     type ConnectionHandle,
     type ContextMenuState,
     type Position,
@@ -145,9 +146,24 @@ const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚�
 
 要求：如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜；只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
-const STORYBOARD_FINAL_PROMPT_PROMPT = `You are a storyboard prompt specialist. Turn the single shot below into one Chinese prompt that can be used directly for AI image or video generation.
-Return only the prompt text. Do not add explanations or headings.
-The prompt must include subject, scene, action, emotion, shot size, lighting atmosphere, camera movement/lens language, and must stay consistent with the story.`;
+const ASSET_KIND_TEXT: Record<StoryboardAssetKind, string> = { character: "人物", scene: "场景", prop: "道具" };
+const STORYBOARD_FINAL_PROMPT_PROMPT = `你是短剧分镜与视频运动提示词专家。请把单个镜头、第二步资产和全局风格整合成第三步“合成提示词”。
+
+只输出 JSON，不要 Markdown，不要解释。
+
+JSON 格式必须为：
+{
+  "storyboardPrompt": "分镜提示词，用于首帧图/分镜图生成",
+  "videoMotionPrompt": "视频运动提示词，用于视频模型理解动作和镜头运动",
+  "assetMentions": ["@人物名", "@场景名", "@道具名"]
+}
+
+要求：
+1. storyboardPrompt 必须综合画面描述、景别、光影、对白旁白、音效、运镜、全局风格和相关资产。
+2. videoMotionPrompt 必须按自然语言清楚写出：起始状态、动作过程、结束状态、镜头运动、情绪/节奏、音效/对白。
+3. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，并在两个提示词里显式使用 @资产名。
+4. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
+5. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -1680,6 +1696,34 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)) } } : node)));
     }, []);
 
+    const updateStoryboardPromptDetail = useCallback((nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => {
+        setNodes((prev) =>
+            prev.map((node) => {
+                if (node.id !== nodeId) return node;
+                const rows = parseStoryboardRows(node.metadata?.storyboardRows).map((row) => [...row]);
+                if (rows[rowIndex]) rows[rowIndex][8] = detail.storyboardPrompt || detail.videoMotionPrompt;
+                const normalized = renumberStoryboardRowsForCanvas(rows);
+                return {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        content: storyboardRowsToMarkdownForCanvas(normalized),
+                        storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
+                        storyboardStep: "prompts",
+                        storyboardPromptDetails: {
+                            ...(node.metadata?.storyboardPromptDetails || {}),
+                            [String(rowIndex)]: detail,
+                        },
+                    },
+                };
+            }),
+        );
+    }, []);
+
+    const updateStoryboardModel = useCallback((nodeId: string, model: string) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, model } } : node)));
+    }, []);
+
     const prepareStoryboardAssets = useCallback(
         async (node: CanvasNodeData) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
@@ -1816,7 +1860,8 @@ function InfiniteCanvasPage() {
     const composeStoryboardFinalPrompt = useCallback(
         async (node: CanvasNodeData, rowIndex?: number) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
-            const indexes = rowIndex === undefined ? rows.map((_, index) => index).filter((index) => !rows[index][8]?.trim()) : [rowIndex];
+            const promptDetails = node.metadata?.storyboardPromptDetails || {};
+            const indexes = rowIndex === undefined ? rows.map((_, index) => index).filter((index) => !promptDetails[String(index)]?.storyboardPrompt?.trim()) : [rowIndex];
             if (!indexes.length) return message.info("没有需要合成的最终提示词");
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
@@ -1825,13 +1870,10 @@ function InfiniteCanvasPage() {
             }
             setStoryboardActionKey(rowIndex === undefined ? "prompt:all" : `prompt:${rowIndex}`);
             try {
-                const nextRows = rows.map((row) => [...row]);
                 for (const index of indexes) {
-                    const row = nextRows[index];
-                    const source = STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n");
+                    const source = buildStoryboardPromptComposeSource(node, rows, index);
                     const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FINAL_PROMPT_PROMPT}\n\n${source}` }], () => {});
-                    nextRows[index][8] = answer.trim();
-                    updateStoryboardRows(node.id, nextRows);
+                    updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer));
                 }
                 message.success(rowIndex === undefined ? "最终提示词已批量合成" : "最终提示词已合成");
             } catch (error) {
@@ -1840,13 +1882,13 @@ function InfiniteCanvasPage() {
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardRows],
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardPromptDetail],
     );
 
     const generateStoryboardImage = useCallback(
         async (node: CanvasNodeData, rowIndex: number) => {
             const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
-            const prompt = row?.[8]?.trim() || row?.[2]?.trim();
+            const prompt = node.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.storyboardPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
             if (!row || !prompt) {
                 message.warning("请先填写或合成最终提示词");
                 return;
@@ -1883,7 +1925,7 @@ function InfiniteCanvasPage() {
     const generateStoryboardVideo = useCallback(
         async (node: CanvasNodeData, rowIndex: number) => {
             const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
-            const prompt = row?.[8]?.trim() || row?.[2]?.trim();
+            const prompt = node.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
             if (!row || !prompt) {
                 message.warning("请先填写或合成最终提示词");
                 return;
@@ -3478,8 +3520,11 @@ function InfiniteCanvasPage() {
                     onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
+                    onPromptDetailChange={updateStoryboardPromptDetail}
+                    onModelChange={updateStoryboardModel}
                     onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
                     onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
+                    config={effectiveConfig}
                 />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
@@ -4158,6 +4203,48 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
     }
     return prompt;
+}
+
+function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
+    const row = rows[rowIndex] || [];
+    const assets = node.metadata?.storyboardAssets || [];
+    const assetLines = assets.length
+        ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}`).join("\n")
+        : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
+    const contextStart = Math.max(0, rowIndex - 1);
+    const contextRows = rows
+        .slice(contextStart, Math.min(rows.length, rowIndex + 2))
+        .map((item, offset) => `${contextStart + offset === rowIndex ? "当前镜头" : "相邻镜头"}：${storyboardRowSummary(item)}`)
+        .join("\n");
+    return [
+        node.metadata?.prompt || node.metadata?.content ? `原始剧本或补充要求：\n${node.metadata?.prompt || node.metadata?.content}` : "",
+        node.metadata?.storyboardAssetStyle ? `全局风格：\n${node.metadata.storyboardAssetStyle}` : "",
+        `当前镜头：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n")}`,
+        contextRows ? `前后镜头上下文：\n${contextRows}` : "",
+        `第二步资产清单：\n${assetLines}`,
+    ]
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+function storyboardRowSummary(row: string[]) {
+    return `镜号 ${row[0] || ""}，画面：${row[2] || ""}，对白：${row[5] || ""}，运镜：${row[7] || ""}`;
+}
+
+function parseStoryboardPromptDetailAnswer(content: string): StoryboardPromptDetail {
+    const data = parseJsonObject(content) as Record<string, unknown>;
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("模型没有返回可用的提示词 JSON");
+    const storyboardPrompt = readStringField(data, ["storyboardPrompt", "分镜提示词", "imagePrompt", "prompt"]).trim();
+    const videoMotionPrompt = readStringField(data, ["videoMotionPrompt", "视频运动提示词", "videoPrompt", "motionPrompt"]).trim();
+    const mentionValue = data.assetMentions ?? data.assets ?? data["资产引用"];
+    const assetMentions = (Array.isArray(mentionValue) ? mentionValue.map((item) => String(item || "")) : typeof mentionValue === "string" ? mentionValue.split(/[，,、\n]/) : []).map(normalizeAssetMention).filter(Boolean);
+    if (!storyboardPrompt && !videoMotionPrompt) throw new Error("模型没有返回分镜提示词或视频运动提示词");
+    return { storyboardPrompt: storyboardPrompt || videoMotionPrompt, videoMotionPrompt: videoMotionPrompt || storyboardPrompt, assetMentions: Array.from(new Set(assetMentions)) };
+}
+
+function normalizeAssetMention(value: string) {
+    const name = value.trim().replace(/^@+/, "");
+    return name ? `@${name}` : "";
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {

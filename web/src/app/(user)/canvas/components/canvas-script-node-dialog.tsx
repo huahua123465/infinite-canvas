@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, Dropdown, Modal } from "antd";
 import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Upload, Video, X } from "lucide-react";
 
-import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind } from "../types";
+import { ModelPicker } from "@/components/model-picker";
+import type { AiConfig } from "@/stores/use-config-store";
+import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardPromptDetail } from "../types";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
@@ -27,28 +29,39 @@ type CanvasScriptNodeDialogProps = {
     onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void;
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void;
+    onPromptDetailChange: (nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => void;
+    onModelChange: (nodeId: string, model: string) => void;
     onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void;
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
+    config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onGenerateImage, onGenerateVideo }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, config }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
     const assetError = node?.metadata?.storyboardAssetError || "";
+    const promptDetails = node?.metadata?.storyboardPromptDetails || {};
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
-    const promptCount = rows.filter((row) => row[8]?.trim()).length;
+    const promptCount = rows.filter((row, index) => promptDetails[String(index)]?.storyboardPrompt?.trim() || row[8]?.trim()).length;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
     const [view, setView] = useState<"shots" | "assets">(node?.metadata?.storyboardStep === "assets" ? "assets" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+    const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
+    const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
+    const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
 
     useEffect(() => {
         if (!node) return;
         setView(node.metadata?.storyboardStep === "assets" ? "assets" : "shots");
-        setEditingAssetId(null);
     }, [node?.id, node?.metadata?.storyboardStep]);
+
+    useEffect(() => {
+        setEditingAssetId(null);
+        setPromptEditorRowIndex(null);
+    }, [node?.id]);
 
     useEffect(() => {
         if (editingAssetId && !assets.some((asset) => asset.id === editingAssetId)) setEditingAssetId(null);
@@ -82,6 +95,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         setView("assets");
     };
 
+    const openPrompts = () => {
+        if (!node || !rows.length) return;
+        setPromptEditorRowIndex(0);
+    };
+
     const uploadEditingAsset = (file?: File) => {
         if (!node || !editingAsset || !file) return;
         onUploadAssetImage(node.id, editingAsset.id, file);
@@ -107,7 +125,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     <div className="grid h-20 grid-cols-[1fr_1fr_1fr_auto] items-center gap-6 border-b border-[#303030] bg-[#070707] px-8">
                         <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
                         <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(assets.length - readyAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
-                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={promptCount > 0} done={promptCount === rows.length && rows.length > 0} />
+                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={promptEditorRowIndex !== null} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
                         <div className="text-sm font-semibold">{promptCount}/{rows.length} 完成后可批量生视频</div>
                     </div>
                     {view === "assets" ? (
@@ -125,8 +143,25 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onBatchGenerateAssets={onBatchGenerateAssets}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} actionKey={actionKey} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
+                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
                     )}
+                    {promptEditorRow && promptEditorRowIndex !== null ? (
+                        <PromptComposeModal
+                            node={node}
+                            row={promptEditorRow}
+                            rowIndex={promptEditorRowIndex}
+                            detail={promptEditorDetail}
+                            config={config}
+                            actionKey={actionKey}
+                            model={node.metadata?.model || config.textModel || config.model}
+                            onModelChange={(model) => onModelChange(node.id, model)}
+                            onSave={(detail) => onPromptDetailChange(node.id, promptEditorRowIndex, detail)}
+                            onRegenerate={() => onComposeFinalPrompt(node, promptEditorRowIndex)}
+                            onGenerateImage={() => onGenerateImage(node, promptEditorRowIndex)}
+                            onGenerateVideo={() => onGenerateVideo(node, promptEditorRowIndex)}
+                            onClose={() => setPromptEditorRowIndex(null)}
+                        />
+                    ) : null}
                     {editingAsset ? (
                         <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setEditingAssetId(null)}>
                             <div className="absolute inset-y-0 right-0 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
@@ -178,7 +213,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
+function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onComposeFinalPrompt, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -196,14 +231,24 @@ function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow
                     <tbody>
                         {rows.map((row, rowIndex) => (
                             <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
-                                {COLUMNS.map((_, colIndex) => (
-                                    <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
-                                        <textarea className={`block w-full resize-none bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`} style={{ minHeight: 78, color: colIndex === 8 ? "#bdbdbd" : "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
-                                    </td>
-                                ))}
+                                {COLUMNS.map((_, colIndex) => {
+                                    const detail = promptDetails[String(rowIndex)];
+                                    return (
+                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
+                                            {colIndex === 8 ? (
+                                                <button className="block min-h-[78px] w-full px-3 py-3 text-left leading-5 text-[#bdbdbd] outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
+                                                    <span className="line-clamp-3">{detail?.storyboardPrompt || row[colIndex] || "点击打开合成提示词"}</span>
+                                                    {detail?.videoMotionPrompt ? <span className="mt-2 inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
+                                                </button>
+                                            ) : (
+                                                <textarea className={`block w-full resize-none bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`} style={{ minHeight: 78, color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
+                                            )}
+                                        </td>
+                                    );
+                                })}
                                 <td className="border-b border-[#303030] px-3 py-3">
                                     <div className="flex items-center justify-center gap-1.5">
-                                        <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="合成最终提示词" onClick={() => onComposeFinalPrompt(node, rowIndex)} />
+                                        <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="打开合成提示词" onClick={() => onOpenPrompt(rowIndex)} />
                                         <RowActionButton loading={actionKey === `image:${rowIndex}`} icon={<ImageIcon className="size-3.5" />} title="生成分镜图" onClick={() => onGenerateImage(node, rowIndex)} />
                                         <RowActionButton loading={actionKey === `video:${rowIndex}`} icon={<Video className="size-3.5" />} title="生成视频" onClick={() => onGenerateVideo(node, rowIndex)} />
                                         <Dropdown
@@ -214,7 +259,7 @@ function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow
                                                     { key: "delete", label: "删除镜头", danger: true },
                                                 ],
                                                 onClick: ({ key }) => {
-                                                    if (key === "copy") void navigator.clipboard?.writeText(row[8] || "");
+                                                    if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(promptDetails[String(rowIndex)], row[8] || ""));
                                                     if (key === "delete") onDeleteRow(rowIndex);
                                                 },
                                             }}
@@ -235,9 +280,106 @@ function ShotsTable({ node, rows, actionKey, onUpdateCell, onDeleteRow, onAddRow
                 <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} onClick={onOpenAssets}>
                     下一步：准备资产
                 </Button>
+                <Button className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
+                    批量合成提示词
+                </Button>
             </div>
         </>
     );
+}
+
+function PromptComposeModal({ node, row, rowIndex, detail, config, model, actionKey, onModelChange, onSave, onRegenerate, onGenerateImage, onGenerateVideo, onClose }: { node: CanvasNodeData; row: string[]; rowIndex: number; detail: StoryboardPromptDetail | null; config: AiConfig; model: string; actionKey?: string | null; onModelChange: (model: string) => void; onSave: (detail: StoryboardPromptDetail) => void; onRegenerate: () => void; onGenerateImage: () => void; onGenerateVideo: () => void; onClose: () => void }) {
+    const [draft, setDraft] = useState<StoryboardPromptDetail>(() => initialPromptDetail(detail, row));
+    const loading = actionKey === `prompt:${rowIndex}` || actionKey === "prompt:all";
+
+    useEffect(() => {
+        setDraft(initialPromptDetail(detail, row));
+    }, [detail, row, rowIndex]);
+
+    const updateDraft = (patch: Partial<StoryboardPromptDetail>) => setDraft((current) => ({ ...current, ...patch }));
+    const mentions = draft.assetMentions || [];
+
+    return (
+        <Modal
+            className="canvas-script-prompt-modal"
+            open
+            footer={null}
+            closeIcon={<X className="size-5" />}
+            onCancel={onClose}
+            width={980}
+            centered
+            styles={{
+                mask: { background: "rgba(0,0,0,.42)" },
+                content: { padding: 0, borderRadius: 12, background: "#1c1c1c", overflow: "hidden", boxShadow: "0 28px 90px rgba(0,0,0,.58)" },
+                body: { maxHeight: "min(88vh, 820px)", overflow: "hidden" },
+            }}
+        >
+            <div className="flex max-h-[min(88vh,820px)] flex-col text-[#f3f3f3]">
+                <div className="flex items-center justify-between border-b border-[#343434] bg-[#151515] px-6 py-4 pr-12">
+                    <div className="min-w-0">
+                        <div className="text-base font-semibold">第 {row[0] || rowIndex + 1} 镜：最终提示词</div>
+                        <div className="mt-1 truncate text-xs text-[#9f9f9f]">{row[2] || node.title}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <ModelPicker config={config} value={model} capability="text" className="!h-9 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
+                        <Button className="!h-9 !rounded-lg" icon={loading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={loading || actionKey !== null} onClick={onRegenerate}>
+                            重新合成
+                        </Button>
+                    </div>
+                </div>
+                <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-6 py-5">
+                    <div className="mb-4 flex flex-wrap gap-2">
+                        {mentions.length ? mentions.map((mention) => <span key={mention} className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-100">{mention}</span>) : <span className="rounded-full border border-[#444] bg-[#252525] px-3 py-1 text-xs text-[#9f9f9f]">重新合成后会自动 @ 人物、场景、道具</span>}
+                    </div>
+                    <PromptBlock
+                        title="分镜提示词"
+                        hint="用于首帧图、分镜图和画面生成"
+                        value={draft.storyboardPrompt}
+                        onChange={(storyboardPrompt) => updateDraft({ storyboardPrompt })}
+                    />
+                    <PromptBlock
+                        title="视频运动提示词"
+                        hint="用于视频模型理解起始状态、动作过程、结束状态、镜头运动、情绪节奏与声音"
+                        value={draft.videoMotionPrompt}
+                        tall
+                        onChange={(videoMotionPrompt) => updateDraft({ videoMotionPrompt })}
+                    />
+                </div>
+                <div className="flex h-16 items-center justify-between border-t border-[#343434] bg-[#151515] px-6">
+                    <div className="flex items-center gap-2">
+                        <Button onClick={() => void navigator.clipboard?.writeText(draft.storyboardPrompt || "")} icon={<Copy className="size-4" />}>复制分镜提示词</Button>
+                        <Button onClick={() => void navigator.clipboard?.writeText(draft.videoMotionPrompt || "")} icon={<Copy className="size-4" />}>复制视频运动提示词</Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Button disabled={!draft.storyboardPrompt.trim()} icon={<ImageIcon className="size-4" />} onClick={onGenerateImage}>生成分镜图</Button>
+                        <Button disabled={!draft.videoMotionPrompt.trim()} icon={<Video className="size-4" />} onClick={onGenerateVideo}>生成视频</Button>
+                        <Button type="primary" className="!h-10 !rounded-lg !px-7" onClick={() => onSave({ ...draft, assetMentions: mentions.map((item) => item.trim()).filter(Boolean) })}>保存</Button>
+                    </div>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function PromptBlock({ title, hint, value, tall, onChange }: { title: string; hint: string; value: string; tall?: boolean; onChange: (value: string) => void }) {
+    return (
+        <section className="mb-5 rounded-lg border border-[#363636] bg-[#202020]">
+            <div className="flex items-center justify-between border-b border-[#343434] px-4 py-3">
+                <div className="text-sm font-semibold text-[#f4f4f4]">{title}</div>
+                <div className="text-xs text-[#8f8f8f]">{hint}</div>
+            </div>
+            <textarea className={`block w-full resize-none bg-transparent px-4 py-4 text-sm leading-7 text-[#ededed] outline-none ${tall ? "h-72" : "h-44"}`} value={value} onChange={(event) => onChange(event.target.value)} />
+        </section>
+    );
+}
+
+function initialPromptDetail(detail: StoryboardPromptDetail | null, row: string[]): StoryboardPromptDetail {
+    return detail || { storyboardPrompt: row[8] || "", videoMotionPrompt: "", assetMentions: [] };
+}
+
+function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback: string) {
+    if (!detail) return fallback;
+    return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
 function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void }) {

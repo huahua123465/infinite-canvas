@@ -36,6 +36,12 @@ export type StoryboardAsset = {
     errorDetails?: string;
 };
 
+export type StoryboardPromptDetail = {
+    storyboardPrompt: string;
+    videoMotionPrompt: string;
+    assetMentions?: string[];
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     storyboardRows?: string[][];
@@ -43,6 +49,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetStyle?: string;
     storyboardAssetError?: string;
     storyboardAssets?: StoryboardAsset[];
+    storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
