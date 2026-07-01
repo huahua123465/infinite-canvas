@@ -49,7 +49,13 @@ export type CanvasNodeMetadata = {
     storyboardAssetStyle?: string;
     storyboardAssetError?: string;
     storyboardAssets?: StoryboardAsset[];
+    storyboardAssetNodeIds?: Record<string, string>;
+    storyboardAssetMentionNodeIds?: Record<string, string>;
     storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
+    storyboardSourceNodeId?: string;
+    storyboardAssetId?: string;
+    storyboardAssetKind?: StoryboardAssetKind;
+    storyboardAssetName?: string;
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
