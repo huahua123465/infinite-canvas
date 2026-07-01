@@ -651,11 +651,6 @@ function InfiniteCanvasPage() {
                     ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) }
                     : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata);
-            if (type === "storyboard") {
-                newNode.title = "分镜脚本";
-                newNode.width = NODE_DEFAULT_SIZE[CanvasNodeType.Script].width;
-                newNode.height = NODE_DEFAULT_SIZE[CanvasNodeType.Script].height;
-            }
             const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
                 message.warning("配置节点之间不能连接");
@@ -669,12 +664,11 @@ function InfiniteCanvasPage() {
             setConnections(nextConnections);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== "storyboard") setDialogNodeId(newNode.id);
+            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
-            if (type === "storyboard") queueMicrotask(() => void generateNodeRef.current?.(newNode.id, "text", STORYBOARD_SCRIPT_PRESET));
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, effectiveConfig.textModel, message, setConnecting],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, setConnecting],
     );
 
     const cancelPendingConnectionCreate = useCallback(() => {
