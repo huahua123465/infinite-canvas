@@ -780,6 +780,7 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 
 function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange }: NodeContentRendererProps) {
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
+    const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
     if (!node.metadata?.content) {
         const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
         if (isStoryboardVideo) {
@@ -800,10 +801,16 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
                         <div className="flex items-center justify-between text-[11px] opacity-60">
                             <span>{boundCount ? `已绑定 ${boundCount} 个资产` : "未绑定资产"}{missingCount ? `，${missingCount} 个未绑定` : ""}</span>
-                            <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setReferenceEditorOpen(true)}>
-                                编辑参考
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                                <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setPromptPreviewOpen(true)}>
+                                    查看提示词
+                                </button>
+                                <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setReferenceEditorOpen(true)}>
+                                    编辑参考
+                                </button>
+                            </div>
                         </div>
+                        <StoryboardVideoPromptPreviewModal node={node} open={promptPreviewOpen} references={assetPreviews} assetLinks={assetLinks} theme={theme} onClose={() => setPromptPreviewOpen(false)} />
                         <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferencePatch(references))} />
                     </div>
                 </div>
@@ -923,6 +930,108 @@ function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string })
 
     if (!resolvedSrc) return <div className="flex h-full w-full items-center justify-center text-[10px] text-white/50">加载中</div>;
     return <img src={resolvedSrc} alt={alt} className="h-full w-full object-cover" />;
+}
+
+function StoryboardVideoPromptPreviewModal({ node, open, references, assetLinks, theme, onClose }: { node: CanvasNodeData; open: boolean; references: StoryboardVideoReference[]; assetLinks: StoryboardAssetMentionLink[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onClose: () => void }) {
+    const prompt = node.metadata?.prompt || "";
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
+    const finalPrompt = storyboardVideoFinalPrompt(prompt, references);
+    const orderedReferences = sortStoryboardVideoReferences(references);
+
+    useEffect(() => {
+        if (!open) return;
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (target.closest(".storyboard-video-prompt-modal .ant-modal-content")) return;
+            onClose();
+        };
+        window.addEventListener("pointerdown", closeOnOutsidePointer, true);
+        return () => window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+    }, [open, onClose]);
+
+    return (
+        <Modal
+            className="storyboard-video-prompt-modal"
+            title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜最终生成提示词`}
+            open={open}
+            onCancel={onClose}
+            footer={null}
+            maskClosable
+            keyboard
+            width={900}
+            destroyOnHidden
+            closeIcon={<X className="size-4 text-stone-400 hover:text-white" />}
+        >
+            <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
+                    卡片上方只是截断预览；实际生成视频时，以这里的最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
+                </div>
+                <section>
+                    <div className="mb-2 text-sm font-semibold">原始视频运动提示词</div>
+                    <PromptPreviewBox emptyText="还没有写入视频提示词">{prompt ? renderStoryboardPromptMentions(prompt, assetLinks, theme) : null}</PromptPreviewBox>
+                </section>
+                <section>
+                    <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-semibold">参考资产</div>
+                        <span className="text-xs text-stone-500">顺序：首帧 → 参考 → 尾帧</span>
+                    </div>
+                    {orderedReferences.length ? (
+                        <div className="grid grid-cols-3 gap-3">
+                            {orderedReferences.map((item, index) => (
+                                <div key={`${item.mention}-${index}`} className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
+                                    <div className="relative aspect-[4/3] bg-stone-100 dark:bg-stone-800">
+                                        {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full items-center justify-center text-xs text-amber-500">未绑定图片</div>}
+                                        <div className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white">{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
+                                    </div>
+                                    <div className="space-y-1 px-2 py-2 text-xs">
+                                        <div className="truncate font-semibold">{item.mention}</div>
+                                        <div className="truncate text-stone-500">{item.status === "bound" ? "已作为参考图传入" : "未绑定，生成时不会传入图片"}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有参考资产" />
+                    )}
+                </section>
+                {continuityPrompt ? (
+                    <section>
+                        <div className="mb-2 text-sm font-semibold">首尾帧连续性补充</div>
+                        <PromptPreviewBox>{renderStoryboardPromptMentions(continuityPrompt, assetLinks, theme)}</PromptPreviewBox>
+                    </section>
+                ) : null}
+                <section>
+                    <div className="mb-2 text-sm font-semibold">最终生成提示词</div>
+                    <PromptPreviewBox emptyText="还没有可发送给视频模型的提示词">{finalPrompt ? renderStoryboardPromptMentions(finalPrompt, assetLinks, theme) : null}</PromptPreviewBox>
+                </section>
+            </div>
+        </Modal>
+    );
+}
+
+function PromptPreviewBox({ children, emptyText = "暂无内容" }: { children?: ReactNode; emptyText?: string }) {
+    return <div className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">{children || <span className="text-stone-400">{emptyText}</span>}</div>;
+}
+
+function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[]) {
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
+    return continuityPrompt ? `${prompt}\n\n${continuityPrompt}`.trim() : prompt;
+}
+
+function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[]) {
+    if (!references?.length) return "";
+    const firstFrames = references.filter((item) => item.role === "firstFrame");
+    const lastFrames = references.filter((item) => item.role === "lastFrame");
+    if (!firstFrames.length && !lastFrames.length) return "";
+    return [
+        "视频连续性要求：",
+        firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
+        lastFrames.length ? `- 视频动作和镜头运动需要自然过渡到尾帧参考图对应的结束状态：${lastFrames.map((item) => item.mention).join("、")}` : "",
+        "- 保持人物身份、服装、场景、光影和空间关系连续，不要突然切换角色外观或场景结构。",
+    ]
+        .filter(Boolean)
+        .join("\n");
 }
 
 function StoryboardVideoReferenceEditor({ node, open, references, scriptReferences, onClose, onSave }: { node: CanvasNodeData; open: boolean; references: StoryboardVideoReference[]; scriptReferences: StoryboardVideoReference[]; onClose: () => void; onSave: (references: StoryboardVideoReference[]) => void }) {
