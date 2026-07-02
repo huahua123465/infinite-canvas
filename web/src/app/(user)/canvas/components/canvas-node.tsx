@@ -934,6 +934,18 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
         if (open) setDraft(references);
     }, [open, node.id]);
 
+    useEffect(() => {
+        if (!open) return;
+        const closeOnOutsidePointer = (event: PointerEvent) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (target.closest(".storyboard-video-reference-modal .ant-modal-content")) return;
+            onClose();
+        };
+        window.addEventListener("pointerdown", closeOnOutsidePointer, true);
+        return () => window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+    }, [open, onClose]);
+
     const updateMention = (index: number, value: string) => {
         setDraft((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, mention: normalizeStoryboardMention(value), name: value.replace(/^@+/, "").trim() || item.name } : item)));
     };
@@ -952,17 +964,16 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
 
     return (
         <Modal
+            className="storyboard-video-reference-modal"
             title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜参考资产`}
             open={open}
             onCancel={onClose}
             footer={null}
+            maskClosable
+            keyboard
             width={860}
             destroyOnHidden
-            closeIcon={
-                <button type="button" className="rounded p-1 text-stone-400 hover:bg-white/10 hover:text-white" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(); }}>
-                    <X className="size-4" />
-                </button>
-            }
+            closeIcon={<X className="size-4 text-stone-400 hover:text-white" />}
         >
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <section>
