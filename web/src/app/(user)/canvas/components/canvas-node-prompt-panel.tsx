@@ -81,6 +81,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         }, 0);
     };
 
+    if (isStoryboardVideo) return null;
+
     return (
         <div
             ref={panelRef}
