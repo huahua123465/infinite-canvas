@@ -83,6 +83,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetMentionLinks?: StoryboardAssetMentionLink[];
     storyboardAssetReferenceNodeIds?: string[];
     storyboardVideoReferences?: StoryboardVideoReference[];
+    storyboardVideoFinalPrompt?: string;
     workspaceKind?: "storyboard-assets" | "storyboard-videos";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];

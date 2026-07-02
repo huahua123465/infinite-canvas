@@ -1012,20 +1012,23 @@ function StoryboardVideoPromptPreviewModal({
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const prompt = node.metadata?.prompt || "";
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
-    const finalPrompt = storyboardVideoFinalPrompt(prompt, references);
+    const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references);
     const orderedReferences = sortStoryboardVideoReferences(references);
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
+    const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
 
     useEffect(() => {
-        if (open) setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
-    }, [globalConfig, node.id, open]);
+        if (!open) return;
+        setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
+        setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references));
+    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, references]);
 
     const updateDraftConfig = (patch: Partial<AiConfig>) => {
         setDraftConfig((current) => ({ ...current, ...patch }));
     };
     const generate = () => {
-        const patch = storyboardVideoConfigPatch(draftConfig, prompt);
+        const patch = storyboardVideoConfigPatch(draftConfig, prompt, draftFinalPrompt.trim());
         onConfigChange(patch);
         onGenerate(patch);
         onClose();
@@ -1096,12 +1099,24 @@ function StoryboardVideoPromptPreviewModal({
                     </section>
                 ) : null}
                 <section>
-                    <div className="mb-2 text-sm font-semibold">最终生成提示词</div>
-                    <PromptPreviewBox emptyText="还没有可发送给视频模型的提示词">{finalPrompt ? renderStoryboardPromptMentions(finalPrompt, assetLinks, theme) : null}</PromptPreviewBox>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">最终生成提示词</div>
+                        <span className="text-xs text-stone-500">可手动修改，生成视频以这里为准</span>
+                    </div>
+                    <textarea
+                        value={draftFinalPrompt}
+                        onChange={(event) => setDraftFinalPrompt(event.target.value)}
+                        className="thin-scrollbar h-40 w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200"
+                        placeholder="请输入最终发送给视频模型的提示词"
+                        data-canvas-no-zoom
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onWheel={(event) => event.stopPropagation()}
+                    />
                 </section>
                 <div className="flex items-center justify-between border-t border-stone-200 pt-4 dark:border-stone-800">
                     <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
-                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!prompt.trim()} onClick={generate}>
+                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim()} onClick={generate}>
                         <span className="flex items-center gap-1.5">
                             <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
                                 <CreditSymbol />
@@ -1133,9 +1148,10 @@ function buildStoryboardVideoNodeConfig(globalConfig: AiConfig, node: CanvasNode
     };
 }
 
-function storyboardVideoConfigPatch(config: AiConfig, prompt: string): Partial<CanvasNodeMetadata> {
+function storyboardVideoConfigPatch(config: AiConfig, prompt: string, finalPrompt: string): Partial<CanvasNodeMetadata> {
     return {
         prompt,
+        storyboardVideoFinalPrompt: finalPrompt,
         model: config.model,
         size: config.size,
         seconds: config.videoSeconds,
