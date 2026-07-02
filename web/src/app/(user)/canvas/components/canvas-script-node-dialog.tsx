@@ -6,7 +6,7 @@ import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Uploa
 
 import { ModelPicker } from "@/components/model-picker";
 import type { AiConfig } from "@/stores/use-config-store";
-import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardPromptDetail } from "../types";
+import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardPromptDetail } from "../types";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
@@ -452,12 +452,16 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                         title="分镜提示词"
                         hint="用于首帧图、分镜图和画面生成"
                         value={draft.storyboardPrompt}
+                        mentions={mentions}
+                        links={mentionLinks}
                         onChange={(storyboardPrompt) => updateDraft({ storyboardPrompt })}
                     />
                     <PromptBlock
                         title="视频运动提示词"
                         hint="用于视频模型理解起始状态、动作过程、结束状态、镜头运动、情绪节奏与声音"
                         value={draft.videoMotionPrompt}
+                        mentions={mentions}
+                        links={mentionLinks}
                         tall
                         onChange={(videoMotionPrompt) => updateDraft({ videoMotionPrompt })}
                     />
@@ -482,21 +486,16 @@ function AssetMentionStrip({ mentions, links }: { mentions: string[]; links: Non
     if (!mentions.length) return <div className="mb-4 rounded-lg border border-[#3a3a3a] bg-[#202020] px-4 py-3 text-xs text-[#9f9f9f]">重新合成后会自动 @ 人物、场景、道具；保存时会校验是否真的绑定到画布资产节点。</div>;
     const linkByMention = new Map(links.map((link) => [link.mention, link]));
     return (
-        <div className="mb-4 flex flex-wrap gap-2">
-            {mentions.map((mention) => {
-                const link = linkByMention.get(mention);
-                const bound = link?.status === "bound";
-                return (
-                    <span key={mention} title={bound ? `已绑定到资产节点：${link?.name || mention}` : "未绑定，请先批量生成资产或检查资产名称"} className={`rounded-full border px-3 py-1 text-xs font-semibold ${bound ? "border-cyan-400/35 bg-cyan-400/10 text-cyan-100" : "border-amber-400/35 bg-amber-400/10 text-amber-100"}`}>
-                        {mention} {bound ? "已绑定" : "未绑定"}
-                    </span>
-                );
-            })}
+        <div className="mb-4 rounded-xl border border-[#343434] bg-[#202020] px-4 py-3">
+            <div className="mb-2 text-xs font-semibold text-[#d8d8d8]">本镜头引用资产</div>
+            <div className="flex flex-wrap gap-2">
+                {mentions.map((mention) => <PromptAssetChip key={mention} link={linkByMention.get(mention) || { mention, name: mention.replace(/^@/, ""), status: "missing" }} />)}
+            </div>
         </div>
     );
 }
 
-function PromptBlock({ title, hint, value, tall, onChange }: { title: string; hint: string; value: string; tall?: boolean; onChange: (value: string) => void }) {
+function PromptBlock({ title, hint, value, mentions, links, tall, onChange }: { title: string; hint: string; value: string; mentions: string[]; links: NonNullable<StoryboardPromptDetail["assetMentionLinks"]>; tall?: boolean; onChange: (value: string) => void }) {
     return (
         <section className="mb-5 rounded-lg border border-[#363636] bg-[#202020]">
             <div className="flex items-center justify-between border-b border-[#343434] px-4 py-3">
@@ -504,7 +503,53 @@ function PromptBlock({ title, hint, value, tall, onChange }: { title: string; hi
                 <div className="text-xs text-[#8f8f8f]">{hint}</div>
             </div>
             <textarea className={`block w-full resize-none bg-transparent px-4 py-4 text-sm leading-7 text-[#ededed] outline-none ${tall ? "h-72" : "h-44"}`} value={value} onChange={(event) => onChange(event.target.value)} />
+            <div className="border-t border-[#343434] px-4 py-3">
+                <div className="mb-2 text-[11px] font-semibold text-[#9f9f9f]">高亮预览</div>
+                <div className="min-h-10 whitespace-pre-wrap rounded-lg bg-black/20 px-3 py-2 text-xs leading-6 text-[#dcdcdc]">
+                    {value.trim() ? renderPromptMentionPreview(value, mentions, links) : "这里会显示 @资产 的高亮效果，方便确认视频模型会拿到哪些参考资产。"}
+                </div>
+            </div>
         </section>
+    );
+}
+
+function renderPromptMentionPreview(text: string, mentions: string[], links: StoryboardAssetMentionLink[]) {
+    const allMentions = Array.from(new Set([...mentions, ...Array.from(text.matchAll(/@([^\s@，,、。；;：:）)】\]]+)/g)).map((match) => `@${match[1]}`)])).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!allMentions.length) return text;
+    const linkByMention = new Map(links.map((link) => [link.mention, link]));
+    const parts: ReactNode[] = [];
+    let index = 0;
+    while (index < text.length) {
+        const next = allMentions
+            .map((mention) => ({ mention, at: text.indexOf(mention, index) }))
+            .filter((item) => item.at >= 0)
+            .sort((a, b) => a.at - b.at || b.mention.length - a.mention.length)[0];
+        if (!next) {
+            parts.push(text.slice(index));
+            break;
+        }
+        if (next.at > index) parts.push(text.slice(index, next.at));
+        parts.push(<PromptAssetChip key={`${next.mention}-${next.at}`} link={linkByMention.get(next.mention) || { mention: next.mention, name: next.mention.replace(/^@/, ""), status: "missing" }} inline />);
+        index = next.at + next.mention.length;
+    }
+    return parts;
+}
+
+function PromptAssetChip({ link, inline }: { link: StoryboardAssetMentionLink; inline?: boolean }) {
+    const bound = link.status === "bound";
+    return (
+        <span
+            title={bound ? `已绑定到资产节点：${link.name}` : "未绑定，请先批量生成资产或检查资产名称"}
+            className={`inline-flex max-w-full items-center rounded-md border font-semibold ${inline ? "mx-1 translate-y-[-1px] align-baseline px-2 py-0.5 text-[11px]" : "px-3 py-1 text-xs"}`}
+            style={{
+                borderColor: bound ? "#2f80ff" : "#f59e0b",
+                background: bound ? "rgba(47, 128, 255, .16)" : "rgba(245, 158, 11, .14)",
+                color: bound ? "#79b2ff" : "#fbbf24",
+            }}
+        >
+            <span className="truncate">{link.mention}</span>
+            {!inline ? <span className="ml-1 opacity-70">{bound ? "已绑定" : "未绑定"}</span> : null}
+        </span>
     );
 }
 

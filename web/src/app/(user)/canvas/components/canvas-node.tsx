@@ -2,17 +2,22 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Video } from "lucide-react";
+import { Button, Empty, Input, Modal } from "antd";
+import { Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { resolveImageUrl } from "@/services/image-storage";
+import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
+const STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT: Record<StoryboardVideoReferenceRole, string> = { firstFrame: "首帧", reference: "参考", lastFrame: "尾帧" };
+const STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER: Record<StoryboardVideoReferenceRole, number> = { firstFrame: 0, reference: 1, lastFrame: 2 };
 export type StoryboardImportPreview = { rows: string[][]; raw: string; model: string };
 
 type CanvasNodeProps = {
@@ -28,6 +33,7 @@ type CanvasNodeProps = {
     showImageInfo: boolean;
     resourceLabel?: CanvasResourceReference;
     mentionReferences?: CanvasResourceReference[];
+    storyboardReferenceAssets?: StoryboardVideoReference[];
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     batchCount?: number;
@@ -41,6 +47,7 @@ type CanvasNodeProps = {
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onMetadataChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
     onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File, model?: string) => Promise<StoryboardImportPreview | null>;
     onToggleBatch?: (nodeId: string) => void;
@@ -64,9 +71,11 @@ type NodeContentRendererProps = {
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
+    onMetadataChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File, model?: string) => Promise<StoryboardImportPreview | null>;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
+    storyboardReferenceAssets: StoryboardVideoReference[];
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
@@ -87,6 +96,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     showImageInfo,
     resourceLabel,
     mentionReferences = [],
+    storyboardReferenceAssets = [],
     renderPanel,
     renderNodeContent,
     batchCount = 0,
@@ -100,6 +110,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverEnd,
     onConnectStart,
     onResize,
+    onMetadataChange,
     onContentChange,
     onStoryboardScreenshotImport,
     onToggleBatch,
@@ -320,7 +331,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                         batchRecovering={batchRecovering}
                         renderNodeContent={renderNodeContent}
                         mentionReferences={mentionReferences}
+                        storyboardReferenceAssets={storyboardReferenceAssets}
                         onContentChange={onContentChange}
+                        onMetadataChange={onMetadataChange}
                         onStoryboardScreenshotImport={onStoryboardScreenshotImport}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
@@ -765,12 +778,15 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange }: NodeContentRendererProps) {
+    const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     if (!node.metadata?.content) {
         const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
         if (isStoryboardVideo) {
-            const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || node.metadata?.storyboardAssetMentionLinks?.filter((link) => link.status === "bound").length || node.metadata?.storyboardAssetMentions?.length || 0;
-            const missingCount = node.metadata?.storyboardAssetMentionLinks?.filter((link) => link.status === "missing").length || 0;
+            const assetLinks = storyboardVideoAssetLinks(node);
+            const assetPreviews = storyboardVideoAssetPreviews(node, assetLinks);
+            const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
+            const missingCount = assetLinks.filter((link) => link.status === "missing").length;
             return (
                 <div className="flex h-full w-full flex-col gap-3 p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center justify-between gap-2">
@@ -779,10 +795,16 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                         </span>
                         <span className="text-[11px] opacity-55">待审核</span>
                     </div>
-                    <div className="line-clamp-4 text-xs leading-5 opacity-80">{node.metadata?.prompt || "等待写入视频提示词"}</div>
-                    <div className="mt-auto flex items-center justify-between text-[11px] opacity-60">
-                        <span>{boundCount ? `已绑定 ${boundCount} 个资产` : "未绑定资产"}{missingCount ? `，${missingCount} 个未绑定` : ""}</span>
-                        <span>审核后单独生成</span>
+                    <div className="line-clamp-3 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
+                    <div className="mt-auto space-y-2">
+                        <StoryboardAssetPreviewStrip items={assetPreviews} />
+                        <div className="flex items-center justify-between text-[11px] opacity-60">
+                            <span>{boundCount ? `已绑定 ${boundCount} 个资产` : "未绑定资产"}{missingCount ? `，${missingCount} 个未绑定` : ""}</span>
+                            <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setReferenceEditorOpen(true)}>
+                                编辑参考
+                            </button>
+                        </div>
+                        <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferencePatch(references))} />
                     </div>
                 </div>
             );
@@ -795,6 +817,276 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
         );
     }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+}
+
+function storyboardVideoAssetLinks(node: CanvasNodeData): StoryboardAssetMentionLink[] {
+    const custom = node.metadata?.storyboardVideoReferences || [];
+    if (custom.length) return custom;
+    const links = node.metadata?.storyboardAssetMentionLinks || [];
+    if (links.length) return links;
+    return (node.metadata?.storyboardAssetMentions || []).map((mention) => ({
+        mention,
+        name: mention.replace(/^@/, ""),
+        status: "bound" as const,
+    }));
+}
+
+function storyboardVideoAssetPreviews(node: CanvasNodeData, links: StoryboardAssetMentionLink[]) {
+    const custom = node.metadata?.storyboardVideoReferences || [];
+    if (custom.length) return custom;
+    const references = (node.metadata?.references || []).filter(Boolean);
+    if (!links.length) return references.map((url, index) => ({ mention: `参考资产 ${index + 1}`, name: `参考资产 ${index + 1}`, status: "bound" as const, url }));
+    let referenceIndex = 0;
+    return links.map((link) => {
+        const url = link.status === "bound" ? references[referenceIndex++] : undefined;
+        return { ...link, role: "reference" as const, storageKey: url?.startsWith("image:") ? url : undefined, url: url?.startsWith("image:") ? undefined : url };
+    });
+}
+
+function renderStoryboardPromptMentions(text: string, links: StoryboardAssetMentionLink[], theme: (typeof canvasThemes)[keyof typeof canvasThemes]) {
+    const mentions = Array.from(new Set([...links.map((link) => link.mention), ...Array.from(text.matchAll(/@([^\s@，,、。；;：:）)】\]]+)/g)).map((match) => `@${match[1]}`)])).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!mentions.length) return text;
+    const linkByMention = new Map(links.map((link) => [link.mention, link]));
+    const parts: ReactNode[] = [];
+    let index = 0;
+    while (index < text.length) {
+        const next = mentions
+            .map((mention) => ({ mention, at: text.indexOf(mention, index) }))
+            .filter((item) => item.at >= 0)
+            .sort((a, b) => a.at - b.at || b.mention.length - a.mention.length)[0];
+        if (!next) {
+            parts.push(text.slice(index));
+            break;
+        }
+        if (next.at > index) parts.push(text.slice(index, next.at));
+        parts.push(<StoryboardAssetChip key={`${next.mention}-${next.at}`} link={linkByMention.get(next.mention) || { mention: next.mention, name: next.mention.replace(/^@/, ""), status: "missing" }} inline theme={theme} />);
+        index = next.at + next.mention.length;
+    }
+    return parts;
+}
+
+function StoryboardAssetChip({ link, inline, compact, theme }: { link: StoryboardAssetMentionLink; inline?: boolean; compact?: boolean; theme?: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const bound = link.status === "bound";
+    return (
+        <span
+            title={bound ? `已绑定到资产节点：${link.name}` : "未绑定，请先生成资产或检查名称"}
+            className={`inline-flex max-w-full items-center rounded-md border font-semibold ${inline ? "mx-0.5 translate-y-[-1px] align-baseline" : ""} ${compact ? "px-1.5 py-0.5 text-[10px] leading-4" : "px-2 py-0.5 text-[11px] leading-5"}`}
+            style={{
+                borderColor: bound ? selectionBlue : "#f59e0b",
+                background: bound ? `${selectionBlue}22` : "rgba(245, 158, 11, .14)",
+                color: bound ? selectionBlue : "#fbbf24",
+                boxShadow: inline && bound ? `0 0 0 1px ${theme?.node.fill || "transparent"}` : undefined,
+            }}
+        >
+            <span className="truncate">{link.mention}</span>
+            {!inline ? <span className="ml-1 opacity-70">{bound ? "已绑定" : "未绑定"}</span> : null}
+        </span>
+    );
+}
+
+function StoryboardAssetPreviewStrip({ items }: { items: StoryboardVideoReference[] }) {
+    if (!items.length) return <span className="text-[11px] opacity-55">未引用资产</span>;
+    const ordered = sortStoryboardVideoReferences(items);
+    return (
+        <div className="space-y-1.5">
+            <div className="text-[10px] font-semibold tracking-[0.14em] opacity-50">参考资产</div>
+            <div className="flex gap-1.5 overflow-hidden">
+                {ordered.slice(0, 5).map((item) => (
+                    <div key={item.mention} title={item.status === "bound" ? `${item.mention} 已绑定` : `${item.mention} 未绑定`} className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: item.status === "bound" ? selectionBlue : "#f59e0b", background: item.status === "bound" ? `${selectionBlue}1a` : "rgba(245, 158, 11, .12)" }}>
+                        {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] leading-3 text-amber-200">未绑定</div>}
+                        <div className="absolute left-0.5 top-0.5 rounded bg-black/70 px-1 text-[9px] font-semibold text-white">{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"].slice(0, 1)}</div>
+                        <div className="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-white">{item.mention}</div>
+                    </div>
+                ))}
+                {items.length > 5 ? <div className="flex h-12 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 text-[10px] opacity-60">+{items.length - 5}</div> : null}
+            </div>
+        </div>
+    );
+}
+
+function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string }) {
+    const [resolvedSrc, setResolvedSrc] = useState(src.startsWith("image:") ? "" : src);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!src.startsWith("image:")) {
+            setResolvedSrc(src);
+            return;
+        }
+        void resolveImageUrl(src, "").then((url) => {
+            if (!cancelled) setResolvedSrc(url);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [src]);
+
+    if (!resolvedSrc) return <div className="flex h-full w-full items-center justify-center text-[10px] text-white/50">加载中</div>;
+    return <img src={resolvedSrc} alt={alt} className="h-full w-full object-cover" />;
+}
+
+function StoryboardVideoReferenceEditor({ node, open, references, scriptReferences, onClose, onSave }: { node: CanvasNodeData; open: boolean; references: StoryboardVideoReference[]; scriptReferences: StoryboardVideoReference[]; onClose: () => void; onSave: (references: StoryboardVideoReference[]) => void }) {
+    const assets = useAssetStore((state) => state.assets);
+    const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
+    const [draft, setDraft] = useState<StoryboardVideoReference[]>(references);
+
+    useEffect(() => {
+        if (open) setDraft(references);
+    }, [open, node.id]);
+
+    const updateMention = (index: number, value: string) => {
+        setDraft((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, mention: normalizeStoryboardMention(value), name: value.replace(/^@+/, "").trim() || item.name } : item)));
+    };
+    const updateRole = (index: number, role: StoryboardVideoReferenceRole) => {
+        setDraft((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, role } : item)));
+    };
+    const addReference = (reference: StoryboardVideoReference, role: StoryboardVideoReferenceRole) => {
+        setDraft((current) => {
+            const mention = uniqueStoryboardMention(normalizeStoryboardMention(reference.mention || reference.name), current);
+            return [...current, { ...reference, mention, name: mention.replace(/^@/, ""), role, status: "bound" }];
+        });
+    };
+    const addAsset = (asset: ImageAsset, role: StoryboardVideoReferenceRole) => {
+        addReference({ mention: normalizeStoryboardMention(asset.title), name: asset.title, status: "bound", assetId: asset.id, url: asset.data.dataUrl, storageKey: asset.data.storageKey, source: "asset" }, role);
+    };
+
+    return (
+        <Modal
+            title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜参考资产`}
+            open={open}
+            onCancel={onClose}
+            footer={null}
+            width={860}
+            destroyOnHidden
+            closeIcon={
+                <button type="button" className="rounded p-1 text-stone-400 hover:bg-white/10 hover:text-white" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(); }}>
+                    <X className="size-4" />
+                </button>
+            }
+        >
+            <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <section>
+                    <div className="mb-2 text-sm font-semibold">当前参考图</div>
+                    {draft.length ? (
+                        <div className="grid grid-cols-2 gap-3">
+                            {draft.map((item, index) => (
+                                <div key={`${item.mention}-${index}`} className="flex gap-3 rounded-xl border border-stone-200 p-2 dark:border-stone-700">
+                                    <div className="size-16 shrink-0 overflow-hidden rounded-lg bg-stone-100 dark:bg-stone-800">{item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : null}</div>
+                                    <div className="min-w-0 flex-1 space-y-2">
+                                        <Input size="small" value={item.mention} onChange={(event) => updateMention(index, event.target.value)} />
+                                        <div className="flex items-center gap-2">
+                                            <select className="h-6 rounded border border-stone-300 bg-transparent px-1 text-xs dark:border-stone-700" value={item.role || "reference"} onChange={(event) => updateRole(index, event.target.value as StoryboardVideoReferenceRole)}>
+                                                {Object.entries(STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
+                                            </select>
+                                            <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => setDraft((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+                                                删除
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有参考资产" />
+                    )}
+                </section>
+                <section>
+                    <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-semibold">从当前剧本资产添加</div>
+                        <span className="text-xs text-stone-500">优先使用脚本节点已生成或导出的资产图</span>
+                    </div>
+                    {scriptReferences.length ? (
+                        <ReferenceSourceGrid items={scriptReferences} onAdd={addReference} />
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前剧本还没有可用资产图，请先准备或导出资产" />
+                    )}
+                </section>
+                <section>
+                    <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-semibold">从我的图片素材添加</div>
+                        <span className="text-xs text-stone-500">点击素材会加入本镜头参考图</span>
+                    </div>
+                    {imageAssets.length ? (
+                        <div className="grid max-h-64 grid-cols-4 gap-3 overflow-auto pr-1">
+                            {imageAssets.map((asset) => (
+                                <div key={asset.id} className="group overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-blue-500 dark:border-stone-700 dark:bg-stone-900">
+                                    <img src={asset.coverUrl || asset.data.dataUrl} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
+                                    <div className="px-2 py-1.5 text-xs font-semibold">
+                                        <span className="truncate">{asset.title}</span>
+                                        <div className="mt-1 flex gap-1">
+                                            {Object.entries(STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT).map(([role, label]) => (
+                                                <button key={role} type="button" className="rounded border border-blue-500/40 px-1.5 py-0.5 text-[10px] text-blue-500 hover:bg-blue-500/10" onClick={() => addAsset(asset, role as StoryboardVideoReferenceRole)}>
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="我的素材里还没有图片" />
+                    )}
+                </section>
+                <div className="flex justify-end gap-2">
+                    <Button onClick={onClose}>取消</Button>
+                    <Button type="primary" onClick={() => { onSave(draft); onClose(); }}>
+                        保存参考资产
+                    </Button>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function ReferenceSourceGrid({ items, onAdd }: { items: StoryboardVideoReference[]; onAdd: (reference: StoryboardVideoReference, role: StoryboardVideoReferenceRole) => void }) {
+    return (
+        <div className="grid max-h-64 grid-cols-4 gap-3 overflow-auto pr-1">
+            {items.map((item) => (
+                <div key={`${item.source || "script"}-${item.assetId || item.nodeId || item.mention}`} className="overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-blue-500 dark:border-stone-700 dark:bg-stone-900">
+                    <div className="aspect-[4/3] w-full bg-stone-100 dark:bg-stone-800">{item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : null}</div>
+                    <div className="px-2 py-1.5 text-xs font-semibold">
+                        <span className="truncate">{item.mention}</span>
+                        <div className="mt-1 flex gap-1">
+                            {Object.entries(STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT).map(([role, label]) => (
+                                <button key={role} type="button" className="rounded border border-blue-500/40 px-1.5 py-0.5 text-[10px] text-blue-500 hover:bg-blue-500/10" onClick={() => onAdd(item, role as StoryboardVideoReferenceRole)}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function storyboardVideoReferencePatch(references: StoryboardVideoReference[]): Partial<CanvasNodeMetadata> {
+    const next = references.map((item) => ({ ...item, mention: normalizeStoryboardMention(item.mention), name: item.name || item.mention.replace(/^@/, ""), status: item.status || ("bound" as const) })).filter((item) => item.mention);
+    return {
+        storyboardVideoReferences: next,
+        storyboardAssetMentions: next.map((item) => item.mention),
+        storyboardAssetMentionLinks: next.map(({ mention, name, status, assetId, nodeId, kind }) => ({ mention, name, status, assetId, nodeId, kind })),
+        storyboardAssetReferenceNodeIds: next.map((item) => item.nodeId).filter((id): id is string => Boolean(id)),
+        references: next.map((item) => item.storageKey || item.url).filter((url): url is string => Boolean(url)),
+    };
+}
+
+function normalizeStoryboardMention(value: string) {
+    const name = value.trim().replace(/^@+/, "");
+    return name ? `@${name}` : "";
+}
+
+function uniqueStoryboardMention(mention: string, current: StoryboardVideoReference[]) {
+    if (!current.some((item) => item.mention === mention)) return mention;
+    const name = mention.replace(/^@/, "");
+    let index = 2;
+    while (current.some((item) => item.mention === `@${name}${index}`)) index += 1;
+    return `@${name}${index}`;
+}
+
+function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
+    return [...references].sort((a, b) => STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[a.role || "reference"] - STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[b.role || "reference"]);
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {

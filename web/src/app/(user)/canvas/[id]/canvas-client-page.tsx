@@ -67,6 +67,7 @@ import {
     type StoryboardAsset,
     type StoryboardAssetKind,
     type StoryboardPromptDetail,
+    type StoryboardVideoReference,
     type ConnectionHandle,
     type ContextMenuState,
     type Position,
@@ -1698,6 +1699,10 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content, ...(storyboardRows ? { storyboardRows } : {}) } } : node)));
     }, []);
 
+    const handleNodeMetadataChange = useCallback((nodeId: string, patch: Partial<CanvasNodeMetadata>) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node)));
+    }, []);
+
     const updateStoryboardRows = useCallback((nodeId: string, rows: string[][]) => {
         const normalized = renumberStoryboardRowsForCanvas(rows);
         handleNodeContentChange(nodeId, storyboardRowsToMarkdownForCanvas(normalized), [STORYBOARD_COLUMNS, ...normalized]);
@@ -2114,13 +2119,14 @@ function InfiniteCanvasPage() {
             const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
             const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodesRef.current).assetMentionLinks || [] : [];
             const assetReferenceNodeIds = assetReferences.map((item) => item.node.id);
-            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds } }]);
+            const storyboardVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
+            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } }]);
             setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: childId }, ...assetReferences.map((item) => ({ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }))]));
             const controller = startGenerationRequest(childId, scriptNode.id, childId);
             try {
                 const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal }));
                 const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } } : item)));
             } catch (error) {
                 if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成视频失败" } } : item)));
             } finally {
@@ -3239,6 +3245,8 @@ function InfiniteCanvasPage() {
             }
             const generationType = savedImageMetadata?.generationType;
             const useReferenceImages = generationType ? generationType === "edit" : Boolean(context?.referenceImages.length);
+            const storyboardVideoReferences = node.type === CanvasNodeType.Video ? await resolveStoryboardVideoReferences(node.metadata?.storyboardVideoReferences) : [];
+            const storyboardVideoFramePrompt = node.type === CanvasNodeType.Video ? storyboardVideoFrameContinuityPrompt(node.metadata?.storyboardVideoReferences) : "";
             const retryReferenceImages =
                 hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
             if (useReferenceImages && !retryReferenceImages) {
@@ -3246,7 +3254,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "参考图片已丢失，无法继续重试" } } : item)));
                 return;
             }
-            const retryImages = retryReferenceImages || [];
+            const retryImages = storyboardVideoReferences.length ? storyboardVideoReferences : retryReferenceImages || [];
 
             setRunningNodeId(node.id);
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
@@ -3266,7 +3274,8 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
+                    const videoPrompt = storyboardVideoFramePrompt ? `${prompt}\n\n${storyboardVideoFramePrompt}` : prompt;
+                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)));
                     return;
@@ -3524,6 +3533,7 @@ function InfiniteCanvasPage() {
                             showImageInfo={showImageInfo}
                             resourceLabel={resourceReferenceByNodeId.get(node.id)}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
+                            storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes)}
                             renderPanel={(panelNode) =>
                                 panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
@@ -3573,6 +3583,7 @@ function InfiniteCanvasPage() {
                             }}
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
+                            onMetadataChange={handleNodeMetadataChange}
                             onContentChange={handleNodeContentChange}
                             onStoryboardScreenshotImport={importStoryboardScreenshot}
                             onToggleBatch={toggleBatchExpanded}
@@ -4072,6 +4083,38 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
+async function resolveStoryboardVideoReferences(references?: StoryboardVideoReference[]) {
+    if (!references?.length) return [];
+    const items = await Promise.all(
+        sortStoryboardVideoReferences(references).map(async (reference, index) => {
+            const source = reference.storageKey || reference.url || "";
+            const dataUrl = source.startsWith("image:") ? await resolveImageUrl(source, "") : source;
+            return dataUrl ? { id: reference.assetId || reference.nodeId || `${index}`, name: `${reference.name || reference.mention || `reference-${index}`}.png`, type: "image/png", dataUrl, url: dataUrl, storageKey: reference.storageKey } : null;
+        }),
+    );
+    return items.filter((item): item is ReferenceImage => Boolean(item));
+}
+
+function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[]) {
+    if (!references?.length) return "";
+    const firstFrames = references.filter((item) => item.role === "firstFrame");
+    const lastFrames = references.filter((item) => item.role === "lastFrame");
+    if (!firstFrames.length && !lastFrames.length) return "";
+    return [
+        "视频连续性要求：",
+        firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
+        lastFrames.length ? `- 视频动作和镜头运动需要自然过渡到尾帧参考图对应的结束状态：${lastFrames.map((item) => item.mention).join("、")}` : "",
+        "- 保持人物身份、服装、场景、光影和空间关系连续，不要突然切换角色外观或场景结构。",
+    ]
+        .filter(Boolean)
+        .join("\n");
+}
+
+function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
+    const order = { firstFrame: 0, reference: 1, lastFrame: 2 };
+    return [...references].sort((a, b) => order[a.role || "reference"] - order[b.role || "reference"]);
+}
+
 async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
@@ -4447,6 +4490,62 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     return Array.from(resolved.values()).slice(0, 7);
 }
 
+function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNodeData[]): StoryboardVideoReference[] {
+    if (node.type !== CanvasNodeType.Video || !node.metadata?.storyboardSourceNodeId) return [];
+    const sourceId = node.metadata.storyboardSourceNodeId;
+    const scriptNode = nodes.find((item) => item.id === sourceId);
+    const references = new Map<string, StoryboardVideoReference>();
+
+    nodes.forEach((item) => {
+        const name = item.metadata?.storyboardAssetName;
+        if (item.type !== CanvasNodeType.Image || item.metadata?.storyboardSourceNodeId !== sourceId || !name || (!item.metadata.content && !item.metadata.storageKey)) return;
+        const mention = `@${name}`;
+        references.set(mention, {
+            mention,
+            name,
+            status: "bound",
+            nodeId: item.id,
+            kind: item.metadata.storyboardAssetKind,
+            url: item.metadata.content,
+            storageKey: item.metadata.storageKey,
+            role: "reference",
+            source: "script",
+        });
+    });
+
+    scriptNode?.metadata?.storyboardAssets?.forEach((asset) => {
+        if (!asset.imageUrl && !asset.storageKey) return;
+        const mention = `@${asset.name}`;
+        if (references.has(mention)) return;
+        references.set(mention, {
+            mention,
+            name: asset.name,
+            status: "bound",
+            assetId: asset.id,
+            kind: asset.kind,
+            url: asset.imageUrl,
+            storageKey: asset.storageKey,
+            role: "reference",
+            source: "script",
+        });
+    });
+
+    return Array.from(references.values());
+}
+
+function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnType<typeof storyboardVideoAssetReferences>): StoryboardVideoReference[] {
+    return assetReferences.map((item) => ({
+        mention: item.mention,
+        name: item.mention.replace(/^@/, ""),
+        status: "bound",
+        nodeId: item.node.id,
+        url: item.reference.url || item.reference.dataUrl,
+        storageKey: item.reference.storageKey,
+        role: "reference",
+        source: "script",
+    }));
+}
+
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content);
     const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
@@ -4477,6 +4576,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
             storyboardAssetMentions: assetReferences.map((item) => item.mention),
             storyboardAssetMentionLinks: assetMentionLinks,
             storyboardAssetReferenceNodeIds: assetReferences.map((item) => item.node.id),
+            storyboardVideoReferences: storyboardVideoReferencesFromAssetReferences(assetReferences),
         },
     };
 }

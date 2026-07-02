@@ -46,6 +46,15 @@ export type StoryboardAssetMentionLink = {
     kind?: StoryboardAssetKind;
 };
 
+export type StoryboardVideoReferenceRole = "reference" | "firstFrame" | "lastFrame";
+
+export type StoryboardVideoReference = StoryboardAssetMentionLink & {
+    url?: string;
+    storageKey?: string;
+    role?: StoryboardVideoReferenceRole;
+    source?: "script" | "asset" | "node";
+};
+
 export type StoryboardPromptDetail = {
     storyboardPrompt: string;
     videoMotionPrompt: string;
@@ -72,6 +81,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetMentions?: string[];
     storyboardAssetMentionLinks?: StoryboardAssetMentionLink[];
     storyboardAssetReferenceNodeIds?: string[];
+    storyboardVideoReferences?: StoryboardVideoReference[];
     workspaceKind?: "storyboard-assets" | "storyboard-videos";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];
