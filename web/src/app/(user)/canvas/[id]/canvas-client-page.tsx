@@ -3217,7 +3217,13 @@ function InfiniteCanvasPage() {
     }, [handleGenerateNode]);
 
     const handleRetryNode = useCallback(
-        async (node: CanvasNodeData) => {
+        async (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => {
+            if (patch) {
+                const nextNodes = nodesRef.current.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, patch) : item));
+                nodesRef.current = nextNodes;
+                setNodes(nextNodes);
+                node = nextNodes.find((item) => item.id === node.id) || applyNodeConfigPatch(node, patch);
+            }
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
@@ -3588,7 +3594,7 @@ function InfiniteCanvasPage() {
                             onStoryboardScreenshotImport={importStoryboardScreenshot}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
-                            onRetry={(node) => void handleRetryNode(node)}
+                            onRetry={(node, patch) => void handleRetryNode(node, patch)}
                             onGenerateImage={generateImageFromTextNode}
                             onOpenScript={(node) => setScriptNodeId(node.id)}
                             onViewImage={(node) => setPreviewNodeId(node.id)}

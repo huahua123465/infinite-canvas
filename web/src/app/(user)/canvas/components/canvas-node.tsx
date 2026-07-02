@@ -3,15 +3,19 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Button, Empty, Input, Modal } from "antd";
-import { Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
+import { ModelPicker } from "@/components/model-picker";
+import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { resolveImageUrl } from "@/services/image-storage";
+import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "../types";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -52,7 +56,7 @@ type CanvasNodeProps = {
     onStoryboardScreenshotImport?: (node: CanvasNodeData, file: File, model?: string) => Promise<StoryboardImportPreview | null>;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
-    onRetry?: (node: CanvasNodeData) => void;
+    onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
@@ -76,7 +80,7 @@ type NodeContentRendererProps = {
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     storyboardReferenceAssets: StoryboardVideoReference[];
-    onRetry?: (node: CanvasNodeData) => void;
+    onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
@@ -778,9 +782,18 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange, onRetry }: NodeContentRendererProps) {
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+
+    useEffect(() => {
+        const openPromptPreview = (event: Event) => {
+            if ((event as CustomEvent<string>).detail === node.id) setPromptPreviewOpen(true);
+        };
+        window.addEventListener(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, openPromptPreview);
+        return () => window.removeEventListener(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, openPromptPreview);
+    }, [node.id]);
+
     if (!node.metadata?.content) {
         const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
         if (isStoryboardVideo) {
@@ -810,7 +823,16 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                                 </button>
                             </div>
                         </div>
-                        <StoryboardVideoPromptPreviewModal node={node} open={promptPreviewOpen} references={assetPreviews} assetLinks={assetLinks} theme={theme} onClose={() => setPromptPreviewOpen(false)} />
+                        <StoryboardVideoPromptPreviewModal
+                            node={node}
+                            open={promptPreviewOpen}
+                            references={assetPreviews}
+                            assetLinks={assetLinks}
+                            theme={theme}
+                            onClose={() => setPromptPreviewOpen(false)}
+                            onConfigChange={(patch) => onMetadataChange(node.id, patch)}
+                            onGenerate={(patch) => onRetry?.(node, patch)}
+                        />
                         <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferencePatch(references))} />
                     </div>
                 </div>
@@ -932,23 +954,47 @@ function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string })
     return <img src={resolvedSrc} alt={alt} className="h-full w-full object-cover" />;
 }
 
-function StoryboardVideoPromptPreviewModal({ node, open, references, assetLinks, theme, onClose }: { node: CanvasNodeData; open: boolean; references: StoryboardVideoReference[]; assetLinks: StoryboardAssetMentionLink[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onClose: () => void }) {
+function StoryboardVideoPromptPreviewModal({
+    node,
+    open,
+    references,
+    assetLinks,
+    theme,
+    onClose,
+    onConfigChange,
+    onGenerate,
+}: {
+    node: CanvasNodeData;
+    open: boolean;
+    references: StoryboardVideoReference[];
+    assetLinks: StoryboardAssetMentionLink[];
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    onClose: () => void;
+    onConfigChange: (patch: Partial<CanvasNodeMetadata>) => void;
+    onGenerate: (patch: Partial<CanvasNodeMetadata>) => void;
+}) {
+    const globalConfig = useEffectiveConfig();
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const prompt = node.metadata?.prompt || "";
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
     const finalPrompt = storyboardVideoFinalPrompt(prompt, references);
     const orderedReferences = sortStoryboardVideoReferences(references);
+    const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
+    const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
 
     useEffect(() => {
-        if (!open) return;
-        const closeOnOutsidePointer = (event: PointerEvent) => {
-            const target = event.target;
-            if (!(target instanceof Element)) return;
-            if (target.closest(".storyboard-video-prompt-modal .ant-modal-content")) return;
-            onClose();
-        };
-        window.addEventListener("pointerdown", closeOnOutsidePointer, true);
-        return () => window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
-    }, [open, onClose]);
+        if (open) setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
+    }, [globalConfig, node.id, open]);
+
+    const updateDraftConfig = (patch: Partial<AiConfig>) => {
+        setDraftConfig((current) => ({ ...current, ...patch }));
+    };
+    const generate = () => {
+        const patch = storyboardVideoConfigPatch(draftConfig, prompt);
+        onConfigChange(patch);
+        onGenerate(patch);
+        onClose();
+    };
 
     return (
         <Modal
@@ -965,8 +1011,20 @@ function StoryboardVideoPromptPreviewModal({ node, open, references, assetLinks,
         >
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
-                    卡片上方只是截断预览；实际生成视频时，以这里的最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
+                    卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
                 </div>
+                <section className="rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-950/60">
+                    <div className="mb-2 text-sm font-semibold">视频生成设置</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={(model) => updateDraftConfig({ model })} onMissingConfig={() => openConfigDialog(true)} />
+                        <CanvasVideoSettingsPopover
+                            config={draftConfig}
+                            placement="bottomLeft"
+                            buttonClassName="!h-9 !min-w-[190px] !max-w-[260px] !justify-start !rounded-full !px-3"
+                            onConfigChange={(key, value) => updateDraftConfig({ [key]: value } as Partial<AiConfig>)}
+                        />
+                    </div>
+                </section>
                 <section>
                     <div className="mb-2 text-sm font-semibold">原始视频运动提示词</div>
                     <PromptPreviewBox emptyText="还没有写入视频提示词">{prompt ? renderStoryboardPromptMentions(prompt, assetLinks, theme) : null}</PromptPreviewBox>
@@ -1005,6 +1063,19 @@ function StoryboardVideoPromptPreviewModal({ node, open, references, assetLinks,
                     <div className="mb-2 text-sm font-semibold">最终生成提示词</div>
                     <PromptPreviewBox emptyText="还没有可发送给视频模型的提示词">{finalPrompt ? renderStoryboardPromptMentions(finalPrompt, assetLinks, theme) : null}</PromptPreviewBox>
                 </section>
+                <div className="flex items-center justify-between border-t border-stone-200 pt-4 dark:border-stone-800">
+                    <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
+                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!prompt.trim()} onClick={generate}>
+                        <span className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
+                                <CreditSymbol />
+                                {credits.toLocaleString()}
+                            </span>
+                            <span>生成视频</span>
+                            <ArrowUp className="size-4" />
+                        </span>
+                    </Button>
+                </div>
             </div>
         </Modal>
     );
@@ -1012,6 +1083,30 @@ function StoryboardVideoPromptPreviewModal({ node, open, references, assetLinks,
 
 function PromptPreviewBox({ children, emptyText = "暂无内容" }: { children?: ReactNode; emptyText?: string }) {
     return <div className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">{children || <span className="text-stone-400">{emptyText}</span>}</div>;
+}
+
+function buildStoryboardVideoNodeConfig(globalConfig: AiConfig, node: CanvasNodeData): AiConfig {
+    return {
+        ...globalConfig,
+        model: node.metadata?.model || globalConfig.videoModel || globalConfig.model || defaultConfig.videoModel,
+        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
+        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
+        videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+        videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
+    };
+}
+
+function storyboardVideoConfigPatch(config: AiConfig, prompt: string): Partial<CanvasNodeMetadata> {
+    return {
+        prompt,
+        model: config.model,
+        size: config.size,
+        seconds: config.videoSeconds,
+        vquality: config.vquality,
+        generateAudio: config.videoGenerateAudio,
+        watermark: config.videoWatermark,
+    };
 }
 
 function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[]) {
@@ -1042,18 +1137,6 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
     useEffect(() => {
         if (open) setDraft(references);
     }, [open, node.id]);
-
-    useEffect(() => {
-        if (!open) return;
-        const closeOnOutsidePointer = (event: PointerEvent) => {
-            const target = event.target;
-            if (!(target instanceof Element)) return;
-            if (target.closest(".storyboard-video-reference-modal .ant-modal-content")) return;
-            onClose();
-        };
-        window.addEventListener("pointerdown", closeOnOutsidePointer, true);
-        return () => window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
-    }, [open, onClose]);
 
     const updateMention = (index: number, value: string) => {
         setDraft((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, mention: normalizeStoryboardMention(value), name: value.replace(/^@+/, "").trim() || item.name } : item)));
@@ -1095,9 +1178,7 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                                     <div className="min-w-0 flex-1 space-y-2">
                                         <Input size="small" value={item.mention} onChange={(event) => updateMention(index, event.target.value)} />
                                         <div className="flex items-center gap-2">
-                                            <select className="h-6 rounded border border-stone-300 bg-transparent px-1 text-xs dark:border-stone-700" value={item.role || "reference"} onChange={(event) => updateRole(index, event.target.value as StoryboardVideoReferenceRole)}>
-                                                {Object.entries(STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT).map(([role, label]) => <option key={role} value={role}>{label}</option>)}
-                                            </select>
+                                            <StoryboardReferenceRoleButtons value={item.role || "reference"} onChange={(role) => updateRole(index, role)} />
                                             <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => setDraft((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
                                                 删除
                                             </Button>
@@ -1156,6 +1237,26 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                 </div>
             </div>
         </Modal>
+    );
+}
+
+function StoryboardReferenceRoleButtons({ value, onChange }: { value: StoryboardVideoReferenceRole; onChange: (role: StoryboardVideoReferenceRole) => void }) {
+    return (
+        <div className="flex rounded-lg border border-stone-300 p-0.5 dark:border-stone-700">
+            {Object.entries(STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT).map(([role, label]) => {
+                const active = value === role;
+                return (
+                    <button
+                        key={role}
+                        type="button"
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold transition ${active ? "bg-blue-500 text-white" : "text-stone-500 hover:bg-blue-500/10 hover:text-blue-500"}`}
+                        onClick={() => onChange(role as StoryboardVideoReferenceRole)}
+                    >
+                        {label}
+                    </button>
+                );
+            })}
+        </div>
     );
 }
 

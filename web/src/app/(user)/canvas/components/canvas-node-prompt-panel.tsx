@@ -14,7 +14,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "../types";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -39,6 +39,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
+    const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const panelRef = useRef<HTMLDivElement | null>(null);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -64,6 +65,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const submit = () => {
         const text = prompt.trim();
         if ((!text && !isScriptNode) || isRunning) return;
+        if (isStoryboardVideo) {
+            window.dispatchEvent(new CustomEvent(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, { detail: node.id }));
+            return;
+        }
         onGenerate(node.id, mode, text);
         setPrompt("");
     };

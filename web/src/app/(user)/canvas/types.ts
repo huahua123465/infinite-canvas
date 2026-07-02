@@ -47,6 +47,7 @@ export type StoryboardAssetMentionLink = {
 };
 
 export type StoryboardVideoReferenceRole = "reference" | "firstFrame" | "lastFrame";
+export const STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT = "infinite-canvas:storyboard-video-prompt-preview";
 
 export type StoryboardVideoReference = StoryboardAssetMentionLink & {
     url?: string;
