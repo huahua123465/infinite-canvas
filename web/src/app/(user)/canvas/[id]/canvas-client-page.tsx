@@ -116,6 +116,10 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
+const STORYBOARD_ASSET_GRID_COLUMNS = 3;
+const STORYBOARD_VIDEO_GRID_COLUMNS = 5;
+const STORYBOARD_WORKSPACE_GAP = 160;
+const STORYBOARD_WORKSPACE_TOP_OFFSET = -40;
 const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连接的剧本拆成可拍摄、可生成视频的分镜脚本。
 
 只输出 Markdown 表格，不要解释，不要标题。
@@ -1019,6 +1023,7 @@ function InfiniteCanvasPage() {
             const allIds = new Set(ids);
             nodesRef.current.forEach((node) => {
                 if (ids.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => allIds.add(childId));
+                if (ids.has(node.id)) node.metadata?.workspaceChildNodeIds?.forEach((childId) => allIds.add(childId));
             });
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
@@ -1937,7 +1942,7 @@ function InfiniteCanvasPage() {
             const exportedNodes: CanvasNodeData[] = [];
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-assets" && item.metadata.workspaceSourceNodeId === node.id);
             const workspaceId = existingWorkspace?.id || nanoid();
-            const workspacePosition = existingWorkspace?.position || { x: node.position.x + node.width + 72, y: node.position.y - 40 };
+            const workspacePosition = existingWorkspace?.position || defaultStoryboardAssetWorkspacePosition(node);
             setStoryboardActionKey("asset:export");
             try {
                 for (let index = 0; index < nextAssets.length; index += 1) {
@@ -1960,7 +1965,7 @@ function InfiniteCanvasPage() {
                     assetNodeIds[asset.id] = existingId;
                     mentionNodeIds[`@${asset.name}`] = existingId;
                     const size = uploaded ? fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height) : imageConfig;
-                    const position = existingNode?.position || { x: workspacePosition.x + 36 + (index % 3) * (imageConfig.width + 34), y: workspacePosition.y + 86 + Math.floor(index / 3) * (imageConfig.height + 74) };
+                    const position = existingNode?.position || { x: workspacePosition.x + 36 + (index % STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.width + 34), y: workspacePosition.y + 86 + Math.floor(index / STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.height + 74) };
                     exportedNodes.push({
                         id: existingId,
                         type: CanvasNodeType.Image,
@@ -2003,7 +2008,7 @@ function InfiniteCanvasPage() {
                     return [...updated, ...[workspaceNode, ...exportedNodes].filter((item) => !existingIds.has(item.id))];
                 });
                 setConnections((prev) => {
-                    const next = [{ id: nanoid(), fromNodeId: node.id, toNodeId: workspaceNode.id }, ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: workspaceNode.id, toNodeId: assetNode.id })), ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: assetNode.id }))];
+                    const next = [{ id: nanoid(), fromNodeId: node.id, toNodeId: workspaceNode.id }, ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: assetNode.id }))];
                     return addUniqueConnections(prev, next);
                 });
                 message.success(`已搭建资产工作区，包含 ${exportedNodes.length} 个资产节点`);
@@ -2145,16 +2150,16 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData) => {
             const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
-            const indexes = rows.map((row, index) => (scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() || row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
+            const indexes = rows.map((_, index) => (scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() ? index : -1)).filter((index) => index >= 0);
             if (!indexes.length) {
-                message.warning("请先合成最终提示词");
+                message.warning("请先合成视频运动提示词");
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
             const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === scriptNode.id);
             const workspaceId = existingWorkspace?.id || nanoid();
-            const workspacePosition = existingWorkspace?.position || { x: scriptNode.position.x + scriptNode.width + 72, y: scriptNode.position.y + scriptNode.height + 120 };
+            const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
             const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current));
             const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length, 0);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, videoNodes, workspacePosition, "storyboard-videos");
@@ -2167,7 +2172,6 @@ function InfiniteCanvasPage() {
             setConnections((prev) =>
                 addUniqueConnections(prev, [
                     { id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id },
-                    ...videoNodes.map((videoNode) => ({ id: nanoid(), fromNodeId: workspaceNode.id, toNodeId: videoNode.id })),
                     ...videoNodes.flatMap((videoNode) => storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).map((assetNode) => ({ id: nanoid(), fromNodeId: assetNode.id, toNodeId: videoNode.id }))),
                 ]),
             );
@@ -3469,7 +3473,7 @@ function InfiniteCanvasPage() {
                             .filter((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
                                 const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
+                                return Boolean(from && to && !isWorkspaceChildConnection(connection, from, to) && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
                             })
                             .map((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
@@ -4228,6 +4232,10 @@ function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNode
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }
 
+function isWorkspaceChildConnection(connection: CanvasConnection, from: CanvasNodeData, to: CanvasNodeData) {
+    return from.type === CanvasNodeType.Workspace && connection.fromNodeId === from.id && from.metadata?.workspaceChildNodeIds?.includes(to.id);
+}
+
 function addUniqueConnections(current: CanvasConnection[], next: CanvasConnection[]) {
     const existing = new Set(current.map((connection) => `${connection.fromNodeId}->${connection.toNodeId}`));
     const additions = next.filter((connection) => {
@@ -4450,7 +4458,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,
         title: `分镜视频 ${row?.[0] || rowIndex + 1}`,
-        position: existing?.position || { x: workspacePosition.x + 36 + (order % 3) * (spec.width + 34), y: workspacePosition.y + 86 + Math.floor(order / 3) * (spec.height + 74) },
+        position: existing?.position || { x: workspacePosition.x + 36 + (order % STORYBOARD_VIDEO_GRID_COLUMNS) * (spec.width + 34), y: workspacePosition.y + 86 + Math.floor(order / STORYBOARD_VIDEO_GRID_COLUMNS) * (spec.height + 74) },
         width: existing?.width || spec.width,
         height: existing?.height || spec.height,
         metadata: {
@@ -4479,6 +4487,22 @@ function storyboardVideoAssetReferenceNodes(videoNode: CanvasNodeData, nodes: Ca
     if (nodeIds.length) return nodeIds.map((nodeId) => nodes.find((node) => node.id === nodeId)).filter((node): node is CanvasNodeData => Boolean(node));
     const mentions = videoNode.metadata?.storyboardAssetMentions || [];
     return nodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storyboardSourceNodeId === sourceId && node.metadata?.storyboardAssetName && mentions.includes(`@${node.metadata.storyboardAssetName}`));
+}
+
+function defaultStoryboardAssetWorkspacePosition(sourceNode: CanvasNodeData): Position {
+    return { x: sourceNode.position.x + sourceNode.width + 96, y: sourceNode.position.y + STORYBOARD_WORKSPACE_TOP_OFFSET };
+}
+
+function defaultStoryboardVideoWorkspacePosition(sourceNode: CanvasNodeData, nodes: CanvasNodeData[]): Position {
+    const assetWorkspace = nodes.find((node) => node.metadata?.workspaceKind === "storyboard-assets" && node.metadata.workspaceSourceNodeId === sourceNode.id);
+    const assetPosition = assetWorkspace?.position || defaultStoryboardAssetWorkspacePosition(sourceNode);
+    const assetWidth = assetWorkspace?.width || estimateStoryboardGridWorkspaceWidth(sourceNode.metadata?.storyboardAssets?.length || STORYBOARD_ASSET_GRID_COLUMNS, NODE_DEFAULT_SIZE[CanvasNodeType.Image], STORYBOARD_ASSET_GRID_COLUMNS);
+    return { x: assetPosition.x + assetWidth + STORYBOARD_WORKSPACE_GAP, y: assetPosition.y };
+}
+
+function estimateStoryboardGridWorkspaceWidth(count: number, spec: { width: number; height: number }, maxColumns: number) {
+    const columns = Math.min(maxColumns, Math.max(count, 1));
+    return 36 + columns * spec.width + Math.max(columns - 1, 0) * 34 + 36;
 }
 
 function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: string, sourceNode: CanvasNodeData, childNodes: CanvasNodeData[], position: Position, kind: "storyboard-assets" | "storyboard-videos"): CanvasNodeData {

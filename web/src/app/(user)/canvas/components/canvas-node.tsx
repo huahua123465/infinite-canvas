@@ -342,8 +342,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                 <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
             </div>
 
-            <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
-            <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
+            {!isWorkspace ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
+            {!isWorkspace ? <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[500px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
@@ -818,8 +818,18 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 
 function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererProps) {
     const rows = normalizeStoryboardRows(node.metadata?.storyboardRows);
+    const assets = node.metadata?.storyboardAssets || [];
+    const promptDetails = node.metadata?.storyboardPromptDetails || {};
     const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const isReady = filledRows > 0;
+    const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
+    const assetsDone = assets.length > 0 && readyAssets === assets.length;
+    const promptCount = rows.filter((_, index) => {
+        const detail = promptDetails[String(index)];
+        return detail?.storyboardPrompt?.trim() || detail?.videoMotionPrompt?.trim();
+    }).length;
+    const promptsDone = promptCount === rows.length && rows.length > 0;
+    const statusText = promptsDone ? `${promptCount} 个提示词已合成` : assets.length ? `${readyAssets}/${assets.length} 个资产已准备` : filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头";
 
     return (
         <div className="flex h-full w-full flex-col justify-between p-5 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
@@ -833,10 +843,10 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
                 </div>
                 <div className="grid w-full max-w-[250px] grid-cols-[1fr_1fr_1fr] items-start gap-2 text-[11px]">
                     <ScriptStep active done={isReady} index="1" label="确认镜头" />
-                    <ScriptStep active={isReady} index="2" label="准备资产" />
-                    <ScriptStep active={isReady} index="3" label="合成提示词" />
+                    <ScriptStep active={isReady || assets.length > 0} done={assetsDone} index="2" label="准备资产" />
+                    <ScriptStep active={assetsDone || promptCount > 0} done={promptsDone} index="3" label="合成提示词" />
                 </div>
-                <div className="text-xs opacity-60">{filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头"}</div>
+                <div className="text-xs opacity-60">{statusText}</div>
             </div>
             <button
                 type="button"

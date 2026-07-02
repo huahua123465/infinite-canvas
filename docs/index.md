@@ -33,6 +33,7 @@
 ## 项目进度
 
 - [更新日志](/docs/progress/changelog)
+- [Codex 换线程交接模板](/docs/progress/codex-thread-handoff)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
 

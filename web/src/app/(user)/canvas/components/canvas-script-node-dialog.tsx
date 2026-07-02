@@ -46,7 +46,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const assetError = node?.metadata?.storyboardAssetError || "";
     const promptDetails = node?.metadata?.storyboardPromptDetails || {};
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
-    const promptCount = rows.filter((row, index) => promptDetails[String(index)]?.storyboardPrompt?.trim() || row[8]?.trim()).length;
+    const promptCount = rows.filter((_, index) => hasComposedPrompt(promptDetails[String(index)])).length;
+    const videoPromptCount = rows.filter((_, index) => hasVideoPrompt(promptDetails[String(index)])).length;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
@@ -129,7 +130,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
                         <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(assets.length - readyAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
                         <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={view === "prompts"} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
-                        <div className="text-sm font-semibold">{promptCount}/{rows.length} 完成后可批量生视频</div>
+                        <div className="text-sm font-semibold">{videoPromptCount}/{rows.length} 完成后可批量生视频</div>
                     </div>
                     {view === "assets" ? (
                         <AssetPrepView
@@ -160,6 +161,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onGenerateVideo={onGenerateVideo}
                             onBatchGenerateVideos={onBatchGenerateVideos}
                             promptCount={promptCount}
+                            videoPromptCount={videoPromptCount}
                         />
                     ) : (
                         <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
@@ -314,7 +316,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
     );
 }
 
-function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number }) {
+function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount, videoPromptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number; videoPromptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -392,7 +394,7 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                 <div className="text-xs text-[#bcbcbc]">{promptCount}/{rows.length} 已合成，支持逐镜头单独重写，也可以批量重写全部镜头。</div>
                 <div className="flex items-center gap-2">
                     <ModelPicker config={config} value={model} capability="text" className="!h-10 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
-                    <Button className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Video className="size-4" />} onClick={() => onBatchGenerateVideos(node)}>
+                    <Button className="!h-10 !rounded-lg !px-8" disabled={!videoPromptCount || actionKey !== null} icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Video className="size-4" />} onClick={() => onBatchGenerateVideos(node)}>
                         批量生成视频
                     </Button>
                     <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
@@ -508,6 +510,14 @@ function PromptBlock({ title, hint, value, tall, onChange }: { title: string; hi
 
 function initialPromptDetail(detail: StoryboardPromptDetail | null, row: string[]): StoryboardPromptDetail {
     return detail || { storyboardPrompt: row[8] || "", videoMotionPrompt: "", assetMentions: [] };
+}
+
+function hasComposedPrompt(detail?: StoryboardPromptDetail) {
+    return Boolean(detail?.storyboardPrompt?.trim() || detail?.videoMotionPrompt?.trim());
+}
+
+function hasVideoPrompt(detail?: StoryboardPromptDetail) {
+    return Boolean(detail?.videoMotionPrompt?.trim());
 }
 
 function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback: string) {
