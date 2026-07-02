@@ -827,6 +827,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                             node={node}
                             open={promptPreviewOpen}
                             references={assetPreviews}
+                            scriptReferences={storyboardReferenceAssets}
                             assetLinks={assetLinks}
                             theme={theme}
                             onClose={() => setPromptPreviewOpen(false)}
@@ -993,6 +994,7 @@ function StoryboardVideoPromptPreviewModal({
     node,
     open,
     references,
+    scriptReferences,
     assetLinks,
     theme,
     onClose,
@@ -1002,6 +1004,7 @@ function StoryboardVideoPromptPreviewModal({
     node: CanvasNodeData;
     open: boolean;
     references: StoryboardVideoReference[];
+    scriptReferences: StoryboardVideoReference[];
     assetLinks: StoryboardAssetMentionLink[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onClose: () => void;
@@ -1010,25 +1013,32 @@ function StoryboardVideoPromptPreviewModal({
 }) {
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const assets = useAssetStore((state) => state.assets);
+    const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
     const prompt = node.metadata?.prompt || "";
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
     const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references);
-    const orderedReferences = sortStoryboardVideoReferences(references);
+    const referencesKey = references.map((item) => `${item.mention}:${item.role || "reference"}:${item.status}:${item.storageKey || item.url || ""}`).join("|");
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
     const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
+    const referenceCandidates = storyboardReferenceAssetCandidates(references, scriptReferences, imageAssets);
+    const draftReferences = storyboardVideoReferencesFromPrompt(draftFinalPrompt, references, referenceCandidates);
+    const draftAssetLinks = draftReferences.map(storyboardReferenceToMentionLink);
+    const orderedReferences = sortStoryboardVideoReferences(draftReferences);
+    const mentionReferences = storyboardReferencesToCanvasResources([...referenceCandidates, ...draftReferences]);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
 
     useEffect(() => {
         if (!open) return;
         setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
         setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references));
-    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, references]);
+    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, referencesKey]);
 
     const updateDraftConfig = (patch: Partial<AiConfig>) => {
         setDraftConfig((current) => ({ ...current, ...patch }));
     };
     const generate = () => {
-        const patch = storyboardVideoConfigPatch(draftConfig, prompt, draftFinalPrompt.trim());
+        const patch = { ...storyboardVideoReferencePatch(draftReferences), ...storyboardVideoConfigPatch(draftConfig, prompt, draftFinalPrompt.trim()) };
         onConfigChange(patch);
         onGenerate(patch);
         onClose();
@@ -1041,7 +1051,7 @@ function StoryboardVideoPromptPreviewModal({
             open={open}
             onCancel={onClose}
             footer={null}
-            maskClosable
+            mask={{ closable: true }}
             keyboard
             width={900}
             destroyOnHidden
@@ -1066,7 +1076,9 @@ function StoryboardVideoPromptPreviewModal({
                 </section>
                 <section>
                     <div className="mb-2 text-sm font-semibold">原始视频运动提示词</div>
-                    <PromptPreviewBox emptyText="还没有写入视频提示词">{prompt ? renderStoryboardPromptMentions(prompt, assetLinks, theme) : null}</PromptPreviewBox>
+                    <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-500 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-400">
+                        原始提示词已作为初稿填入下方；请直接修改“最终生成提示词”，视频生成只以下方内容为准。
+                    </div>
                 </section>
                 <section>
                     <div className="mb-2 flex items-center justify-between">
@@ -1101,11 +1113,12 @@ function StoryboardVideoPromptPreviewModal({
                 <section>
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold">最终生成提示词</div>
-                        <span className="text-xs text-stone-500">可手动修改，生成视频以这里为准</span>
+                        <span className="text-xs text-stone-500">可手动修改，@ 资产会自动尝试绑定到参考图</span>
                     </div>
-                    <textarea
+                    <CanvasResourceMentionTextarea
                         value={draftFinalPrompt}
-                        onChange={(event) => setDraftFinalPrompt(event.target.value)}
+                        references={mentionReferences}
+                        onChange={setDraftFinalPrompt}
                         className="thin-scrollbar h-40 w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200"
                         placeholder="请输入最终发送给视频模型的提示词"
                         data-canvas-no-zoom
@@ -1113,6 +1126,13 @@ function StoryboardVideoPromptPreviewModal({
                         onMouseDown={(event) => event.stopPropagation()}
                         onWheel={(event) => event.stopPropagation()}
                     />
+                    <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">
+                        <div className="mb-1 text-[11px] font-semibold text-stone-500">高亮预览</div>
+                        <div className="whitespace-pre-wrap">{draftFinalPrompt ? renderStoryboardPromptMentions(draftFinalPrompt, draftAssetLinks, theme) : <span className="text-stone-400">暂无最终提示词</span>}</div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                        {draftAssetLinks.length ? draftAssetLinks.map((link) => <StoryboardAssetChip key={link.mention} link={link} compact theme={theme} />) : <span className="text-xs text-stone-500">暂未识别到 @ 资产</span>}
+                    </div>
                 </section>
                 <div className="flex items-center justify-between border-t border-stone-200 pt-4 dark:border-stone-800">
                     <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
@@ -1134,6 +1154,69 @@ function StoryboardVideoPromptPreviewModal({
 
 function PromptPreviewBox({ children, emptyText = "暂无内容" }: { children?: ReactNode; emptyText?: string }) {
     return <div className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">{children || <span className="text-stone-400">{emptyText}</span>}</div>;
+}
+
+function storyboardReferenceAssetCandidates(references: StoryboardVideoReference[], scriptReferences: StoryboardVideoReference[], imageAssets: ImageAsset[]) {
+    const materialReferences = imageAssets
+        .map((asset) => ({
+            mention: normalizeStoryboardMention(asset.title),
+            name: asset.title,
+            status: "bound" as const,
+            assetId: asset.id,
+            url: asset.data.dataUrl,
+            storageKey: asset.data.storageKey,
+            source: "asset" as const,
+        }));
+    return dedupeStoryboardReferences([...references, ...scriptReferences, ...materialReferences]);
+}
+
+function storyboardVideoReferencesFromPrompt(prompt: string, current: StoryboardVideoReference[], candidates: StoryboardVideoReference[]) {
+    const mentions = storyboardPromptMentions(prompt);
+    if (!mentions.length) return current;
+    const candidateByMention = new Map(candidates.map((item) => [item.mention, item]));
+    const currentByMention = new Map(current.map((item) => [item.mention, item]));
+    return mentions.map((mention) => {
+        const matched = currentByMention.get(mention) || candidateByMention.get(mention);
+        if (matched) return { ...matched, mention, name: matched.name || mention.replace(/^@/, ""), role: matched.role || "reference", status: matched.status || ("bound" as const) };
+        return { mention, name: mention.replace(/^@/, ""), role: "reference" as const, status: "missing" as const };
+    });
+}
+
+function dedupeStoryboardReferences(references: StoryboardVideoReference[]) {
+    const seen = new Set<string>();
+    return references.filter((reference) => {
+        const mention = reference.mention;
+        if (!mention || seen.has(mention)) return false;
+        seen.add(mention);
+        return true;
+    });
+}
+
+function storyboardPromptMentions(text: string) {
+    return Array.from(new Set(Array.from(text.matchAll(/@([^\s@，、。；;：:,.!?！？()[\]{}]+)/g)).map((match) => normalizeStoryboardMention(match[1])))).filter(Boolean);
+}
+
+function storyboardReferenceToMentionLink(reference: StoryboardVideoReference): StoryboardAssetMentionLink {
+    return {
+        mention: reference.mention,
+        name: reference.name || reference.mention.replace(/^@/, ""),
+        status: reference.status,
+        assetId: reference.assetId,
+        nodeId: reference.nodeId,
+        kind: reference.kind,
+    };
+}
+
+function storyboardReferencesToCanvasResources(references: StoryboardVideoReference[]): CanvasResourceReference[] {
+    return references.map((reference, index) => ({
+        id: reference.assetId || reference.nodeId || reference.mention || `storyboard-reference-${index}`,
+        nodeId: reference.nodeId || reference.assetId || reference.mention || `storyboard-reference-${index}`,
+        kind: "image",
+        label: reference.mention,
+        title: reference.name || reference.mention.replace(/^@/, ""),
+        previewUrl: reference.storageKey || reference.url,
+        active: Boolean(reference.mention),
+    }));
 }
 
 function buildStoryboardVideoNodeConfig(globalConfig: AiConfig, node: CanvasNodeData): AiConfig {
@@ -1213,7 +1296,7 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
             open={open}
             onCancel={onClose}
             footer={null}
-            maskClosable
+            mask={{ closable: true }}
             keyboard
             width={860}
             destroyOnHidden
