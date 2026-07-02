@@ -954,6 +954,41 @@ function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string })
     return <img src={resolvedSrc} alt={alt} className="h-full w-full object-cover" />;
 }
 
+function CanvasModalTitle({ title, onClose }: { title: string; onClose: () => void }) {
+    return (
+        <div className="flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate">{title}</span>
+            <button
+                type="button"
+                className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-400 transition hover:bg-white/10 hover:text-white"
+                aria-label="关闭"
+                data-canvas-no-zoom
+                onPointerDown={(event) => {
+                    event.stopPropagation();
+                }}
+                onMouseDown={(event) => {
+                    event.stopPropagation();
+                }}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onClose();
+                }}
+            >
+                <X className="size-4" />
+            </button>
+        </div>
+    );
+}
+
+function renderCanvasModal(modal: ReactNode) {
+    const stop = (event: React.SyntheticEvent) => event.stopPropagation();
+    return (
+        <div data-canvas-no-zoom onPointerDown={stop} onMouseDown={stop} onClick={stop} onWheel={stop}>
+            {modal}
+        </div>
+    );
+}
+
 function StoryboardVideoPromptPreviewModal({
     node,
     open,
@@ -999,7 +1034,7 @@ function StoryboardVideoPromptPreviewModal({
     return (
         <Modal
             className="storyboard-video-prompt-modal"
-            title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜最终生成提示词`}
+            title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜最终生成提示词`} onClose={onClose} />}
             open={open}
             onCancel={onClose}
             footer={null}
@@ -1007,7 +1042,8 @@ function StoryboardVideoPromptPreviewModal({
             keyboard
             width={900}
             destroyOnHidden
-            closeIcon={<X className="size-4 text-stone-400 hover:text-white" />}
+            closable={false}
+            modalRender={renderCanvasModal}
         >
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
@@ -1157,7 +1193,7 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
     return (
         <Modal
             className="storyboard-video-reference-modal"
-            title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜参考资产`}
+            title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜参考资产`} onClose={onClose} />}
             open={open}
             onCancel={onClose}
             footer={null}
@@ -1165,7 +1201,8 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
             keyboard
             width={860}
             destroyOnHidden
-            closeIcon={<X className="size-4 text-stone-400 hover:text-white" />}
+            closable={false}
+            modalRender={renderCanvasModal}
         >
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <section>

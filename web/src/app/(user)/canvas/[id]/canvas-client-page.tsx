@@ -3871,7 +3871,9 @@ function CanvasTopBar({
     useEffect(() => {
         if (!isTitleEditing) return;
         const close = (event: PointerEvent) => {
-            if (!titleRef.current?.contains(event.target as Node)) onFinishTitleEditing();
+            const target = event.target;
+            if (target instanceof Element && (target.closest("[data-canvas-no-zoom]") || target.closest(".ant-modal-root"))) return;
+            if (!titleRef.current?.contains(target as Node)) onFinishTitleEditing();
         };
         document.addEventListener("pointerdown", close, true);
         return () => document.removeEventListener("pointerdown", close, true);
