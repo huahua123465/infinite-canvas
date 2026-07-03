@@ -8,3 +8,6 @@ description: 当前项目后续值得处理的事项
 本文档用来记录当前项目后续比较值得处理的事项。
 
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
+- 方舟 Seedance 真人短剧后续：按官方回复先验证 AI 写实人物图通过公网 URL、Base64 或素材库 `asset://<ASSET_ID>` 作为 `image_url.url` 输入的效果；如素材库路径更稳定，在角色/视频参考资产里支持手动保存方舟素材地址或 ID，生成视频时优先传官方资产引用。
+- 方舟私域虚拟人像素材库后续：如后续需要更自动化，可在角色基准图生成后接入方舟素材库的创建分组、上传资产、状态查询和 `asset://` 引用保存流程，减少手动打包上传步骤。
+- 方舟 Seedance 安全风格后续：把“AI 写实人脸转 2.5D/3D 卡通/非真人角色”的提示词沉淀到资产生成或视频参考编辑流程，方便短剧角色先转成不触发真人脸风控的参考图，再批量生成视频。

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Button, Empty, Input, Modal } from "antd";
+import { Alert, Button, Empty, Input, Modal } from "antd";
 import { ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -370,6 +370,9 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
+    if (props.node.type === CanvasNodeType.Video && props.node.metadata?.storyboardSourceNodeId && props.node.metadata?.storyboardRowIndex !== undefined && !props.node.metadata?.content) {
+        return <VideoNodeContent {...props} />;
+    }
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
@@ -481,6 +484,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
+const STORYBOARD_ROW_LIMIT = 120;
 
 function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -713,7 +717,7 @@ function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotI
 function normalizeStoryboardRows(rows?: string[][]) {
     const source = rows?.length ? rows : [STORYBOARD_COLUMNS, ...Array.from({ length: 9 }, (_, index) => [`${index + 1}`, "5s", "", "", "", "", "", "", ""])];
     const body = source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
-    return renumberStoryboardRows(body.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, 30));
+    return renumberStoryboardRows(body.map((row, index) => STORYBOARD_COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, STORYBOARD_ROW_LIMIT));
 }
 
 function renumberStoryboardRows(rows: string[][]) {
@@ -785,6 +789,9 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange, onRetry }: NodeContentRendererProps) {
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+    const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
+    const isLoading = node.metadata?.status === "loading";
+    const isError = node.metadata?.status === "error";
 
     useEffect(() => {
         const openPromptPreview = (event: Event) => {
@@ -795,25 +802,34 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
     }, [node.id]);
 
     if (!node.metadata?.content) {
-        const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
         if (isStoryboardVideo) {
             const assetLinks = storyboardVideoAssetLinks(node);
             const assetPreviews = storyboardVideoAssetPreviews(node, assetLinks);
             const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
             const missingCount = assetLinks.filter((link) => link.status === "missing").length;
+            const statusText = isLoading ? "生成中" : isError ? "生成失败" : "待审核";
+            const helperText = isError
+                ? node.metadata?.errorDetails || "视频生成失败，请检查模型、参考图和提示词后重试"
+                : isLoading
+                  ? "方舟视频任务会按官方示例每 30 秒查询一次，长时间停留在生成中通常是上游仍在排队或处理。"
+                  : boundCount
+                    ? `已绑定 ${boundCount} 个资产${missingCount ? `，${missingCount} 个未绑定` : ""}`
+                    : missingCount
+                      ? `${missingCount} 个资产未绑定，生成时不会传入图片`
+                      : "未绑定资产";
             return (
                 <div className="flex h-full w-full flex-col gap-3 p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center justify-between gap-2">
                         <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold" style={{ borderColor: theme.node.stroke }}>
                             第 {(node.metadata?.storyboardRowIndex || 0) + 1} 镜
                         </span>
-                        <span className="text-[11px] opacity-55">待审核</span>
+                        <span className="text-[11px] opacity-55">{statusText}</span>
                     </div>
                     <div className="line-clamp-3 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
                     <div className="mt-auto space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
                         <div className="flex items-center justify-between text-[11px] opacity-60">
-                            <span>{boundCount ? `已绑定 ${boundCount} 个资产` : "未绑定资产"}{missingCount ? `，${missingCount} 个未绑定` : ""}</span>
+                            <span className="line-clamp-2 max-w-[55%] whitespace-pre-wrap">{helperText}</span>
                             <div className="flex items-center gap-1.5">
                                 <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setPromptPreviewOpen(true)}>
                                     查看提示词
@@ -821,6 +837,17 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                                 <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setReferenceEditorOpen(true)}>
                                     编辑参考
                                 </button>
+                                {isError ? (
+                                    <button
+                                        type="button"
+                                        className="rounded px-1.5 py-0.5 hover:bg-white/10"
+                                        data-canvas-no-zoom
+                                        onMouseDown={(event) => event.stopPropagation()}
+                                        onClick={() => onRetry?.(node)}
+                                    >
+                                        重试
+                                    </button>
+                                ) : null}
                             </div>
                         </div>
                         <StoryboardVideoPromptPreviewModal
@@ -1304,6 +1331,12 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
             modalRender={renderCanvasModal}
         >
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <Alert
+                    showIcon
+                    type="warning"
+                    message="方舟 Seedance 对真人脸参考图限制较严"
+                    description="AI 生成图如果高度写实、像真人演员定妆照，也可能被识别为真人脸并拒绝生成。建议换成更明显的二次元、3D 卡通、非真人虚拟角色，或使用方舟授权素材。"
+                />
                 <section>
                     <div className="mb-2 text-sm font-semibold">当前参考图</div>
                     {draft.length ? (
@@ -1525,7 +1558,7 @@ function ScriptStep({ index, label, active, done }: { index: string; label: stri
 
 function WorkspaceNodeContent({ node, theme }: NodeContentRendererProps) {
     const childCount = node.metadata?.workspaceChildNodeIds?.length || 0;
-    const isAssetWorkspace = node.metadata?.workspaceKind === "storyboard-assets";
+    const workspaceLabel = node.metadata?.workspaceKind === "storyboard-assets" ? "资产工作区" : node.metadata?.workspaceKind === "character-references" ? "角色基准图" : "视频工作区";
     return (
         <div
             className="pointer-events-none flex h-full w-full flex-col rounded-3xl border border-dashed px-5 py-4"
@@ -1542,7 +1575,7 @@ function WorkspaceNodeContent({ node, theme }: NodeContentRendererProps) {
                     <span className="truncate text-sm font-semibold">{node.metadata?.workspaceTitle || node.title || "工作区"}</span>
                 </div>
                 <span className="rounded-full border px-2 py-0.5 text-[11px] opacity-70" style={{ borderColor: theme.node.stroke }}>
-                    {isAssetWorkspace ? "资产工作区" : "视频工作区"} · {childCount}
+                    {workspaceLabel} · {childCount}
                 </span>
             </div>
             <div className="mt-auto text-left text-[11px] opacity-55">拖动背景板可整体移动内部节点</div>

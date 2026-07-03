@@ -56,9 +56,9 @@ const seedancePixels = {
     },
 } as const;
 
-export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl">) {
+export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl" | "apiFormat">) {
     const requestConfig = "channels" in config ? resolveModelRequestConfig(config, config.model || config.videoModel) : config;
-    return isSeedanceVideoModel(modelOptionName(requestConfig.model || requestConfig.videoModel)) || isArkPlanBaseUrl(requestConfig.baseUrl);
+    return requestConfig.apiFormat === "ark" || isSeedanceVideoModel(modelOptionName(requestConfig.model || requestConfig.videoModel)) || isArkVideoBaseUrl(requestConfig.baseUrl);
 }
 
 export function isSeedanceVideoModel(model: string) {
@@ -75,10 +75,19 @@ export function isArkPlanBaseUrl(baseUrl: string) {
     return baseUrl.toLowerCase().includes("ark.cn-beijing.volces.com/api/plan/v3") || baseUrl.toLowerCase().includes("/api/plan/v3");
 }
 
+export function isArkVideoBaseUrl(baseUrl: string) {
+    const lowerBaseUrl = baseUrl.toLowerCase();
+    return lowerBaseUrl.includes("ark.cn-beijing.volces.com/api/v3") || isArkPlanBaseUrl(baseUrl);
+}
+
 export function normalizeSeedanceResolution(value: string, model = "") {
     const normalized = normalizeResolutionToken(value);
     if (isSeedanceFastModel(model) && normalized === "1080p") return "720p";
     return seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
+}
+
+export function normalizeSeedanceApiResolution(value: string, model = "") {
+    return normalizeSeedanceResolution(value, model).toUpperCase();
 }
 
 export function normalizeResolutionToken(value: string) {

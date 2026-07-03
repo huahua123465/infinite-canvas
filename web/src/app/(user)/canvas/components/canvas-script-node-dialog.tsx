@@ -10,7 +10,10 @@ import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAs
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
+const STORYBOARD_ROW_LIMIT = 120;
 type ScriptDialogView = "shots" | "assets" | "prompts";
+type StoryboardRowsUpdater = string[][] | ((rows: string[][]) => string[][]);
+type ShotImportMode = "auto" | "append" | "insert";
 const ASSET_KIND_LABEL: Record<StoryboardAssetKind, string> = { character: "角色", scene: "场景", prop: "道具" };
 const ASSET_SECTIONS: Array<{ kind: StoryboardAssetKind; title: string }> = [
     { kind: "character", title: "角色" },
@@ -23,7 +26,7 @@ type CanvasScriptNodeDialogProps = {
     open: boolean;
     actionKey?: string | null;
     onClose: () => void;
-    onRowsChange: (nodeId: string, content: string, rows: string[][]) => void;
+    onRowsChange: (nodeId: string, rows: StoryboardRowsUpdater) => void;
     onPrepareAssets: (node: CanvasNodeData) => void;
     onUpdateAsset: (nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => void;
     onUploadAssetImage: (nodeId: string, assetId: string, file: File) => void;
@@ -52,6 +55,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
+    const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
@@ -78,20 +82,30 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
 
     const groupedAssets = useMemo(() => Object.fromEntries(ASSET_SECTIONS.map(({ kind }) => [kind, assets.filter((asset) => asset.kind === kind)])) as Record<StoryboardAssetKind, StoryboardAsset[]>, [assets]);
 
-    const saveRows = (nextRows: string[][]) => {
+    const saveRows = (nextRows: StoryboardRowsUpdater) => {
         if (!node) return;
-        const normalized = renumberRows(nextRows);
-        onRowsChange(node.id, rowsToMarkdown(normalized), [COLUMNS, ...normalized]);
+        onRowsChange(node.id, (currentRows) => {
+            const baseRows = normalizeRows(currentRows);
+            const updatedRows = typeof nextRows === "function" ? nextRows(baseRows) : nextRows;
+            return renumberRows(updatedRows);
+        });
     };
 
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
-        const nextRows = rows.map((row) => [...row]);
-        nextRows[rowIndex][colIndex] = value;
-        saveRows(nextRows);
+        saveRows((currentRows) => {
+            const nextRows = currentRows.map((row) => [...row]);
+            if (nextRows[rowIndex]) nextRows[rowIndex][colIndex] = value;
+            return nextRows;
+        });
     };
 
-    const addRow = () => saveRows([...rows, [`${rows.length + 1}`, "5s", "", "", "", "", "", "", ""]]);
-    const deleteRow = (rowIndex: number) => saveRows(rows.filter((_, index) => index !== rowIndex));
+    const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, "5s", "", "", "", "", "", "", ""]]);
+    const deleteRow = (rowIndex: number) => saveRows((currentRows) => currentRows.filter((_, index) => index !== rowIndex));
+    const importRows = (importedRows: string[][], mode: ShotImportMode, insertAfter: number) => {
+        saveRows((currentRows) => mergeImportedRows(currentRows, importedRows, mode, insertAfter));
+        setView("shots");
+        setShotImportOpen(false);
+    };
 
     const openAssets = () => {
         if (!node) return;
@@ -157,6 +171,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onModelChange={(model) => onModelChange(node.id, model)}
                             onOpenPrompt={setPromptEditorRowIndex}
                             onComposeFinalPrompt={onComposeFinalPrompt}
+                            onAddRow={addRow}
+                            onOpenImport={() => setShotImportOpen(true)}
                             onGenerateImage={onGenerateImage}
                             onGenerateVideo={onGenerateVideo}
                             onBatchGenerateVideos={onBatchGenerateVideos}
@@ -164,8 +180,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             videoPromptCount={videoPromptCount}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
+                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onComposeFinalPrompt={onComposeFinalPrompt} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
                     )}
+                    <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
                         <PromptComposeModal
                             node={node}
@@ -234,7 +251,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onGenerateShotsFromInputs, onComposeFinalPrompt, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
+function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onComposeFinalPrompt, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
     const generatingShots = actionKey === "shots:generate";
     return (
         <>
@@ -300,6 +317,9 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                     <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={onAddRow}>
                     添加镜头
                     </Button>
+                    <Button icon={<Upload className="size-4" />} type="text" className="!text-[#f1f1f1]" disabled={actionKey !== null} onClick={onOpenImport}>
+                        导入镜头
+                    </Button>
                     <Button className="!h-10 !rounded-lg !px-6" disabled={actionKey !== null} icon={generatingShots ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onGenerateShotsFromInputs(node)}>
                         从连接剧本生成镜头
                     </Button>
@@ -316,7 +336,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
     );
 }
 
-function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount, videoPromptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number; videoPromptCount: number }) {
+function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount, videoPromptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number; videoPromptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -391,7 +411,15 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                 </table>
             </div>
             <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#121212] px-8">
-                <div className="text-xs text-[#bcbcbc]">{promptCount}/{rows.length} 已合成，支持逐镜头单独重写，也可以批量重写全部镜头。</div>
+                <div className="flex items-center gap-3">
+                    <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" disabled={actionKey !== null} onClick={onAddRow}>
+                        添加镜头
+                    </Button>
+                    <Button icon={<Upload className="size-4" />} type="text" className="!text-[#f1f1f1]" disabled={actionKey !== null} onClick={onOpenImport}>
+                        导入镜头
+                    </Button>
+                    <div className="text-xs text-[#bcbcbc]">{promptCount}/{rows.length} 已合成，支持逐镜头单独重写，也可以批量重写全部镜头。</div>
+                </div>
                 <div className="flex items-center gap-2">
                     <ModelPicker config={config} value={model} capability="text" className="!h-10 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
                     <Button className="!h-10 !rounded-lg !px-8" disabled={!videoPromptCount || actionKey !== null} icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Video className="size-4" />} onClick={() => onBatchGenerateVideos(node)}>
@@ -553,6 +581,91 @@ function PromptAssetChip({ link, inline }: { link: StoryboardAssetMentionLink; i
     );
 }
 
+function ShotImportModal({ open, rowCount, onClose, onImport }: { open: boolean; rowCount: number; onClose: () => void; onImport: (rows: string[][], mode: ShotImportMode, insertAfter: number) => void }) {
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [text, setText] = useState("");
+    const [mode, setMode] = useState<ShotImportMode>("auto");
+    const [insertAfter, setInsertAfter] = useState(String(rowCount));
+    const parsedRows = useMemo(() => parseImportedRows(text), [text]);
+
+    useEffect(() => {
+        if (!open) return;
+        setText("");
+        setMode("auto");
+        setInsertAfter(String(rowCount));
+    }, [open, rowCount]);
+
+    const readFile = async (file?: File) => {
+        if (!file) return;
+        setText(await file.text());
+    };
+
+    return (
+        <Modal
+            className="canvas-script-import-modal"
+            open={open}
+            title={<span className="text-[#f1f1f1]">导入镜头</span>}
+            centered
+            width={900}
+            onCancel={onClose}
+            footer={[
+                <Button key="cancel" onClick={onClose}>
+                    取消
+                </Button>,
+                <Button key="import" type="primary" disabled={!parsedRows.length} onClick={() => onImport(parsedRows, mode, Number(insertAfter) || rowCount)}>
+                    导入 {parsedRows.length || ""} 个镜头
+                </Button>,
+            ]}
+            styles={{ mask: { background: "rgba(0,0,0,.62)" }, content: { background: "#171717", color: "#f1f1f1" }, header: { background: "#171717" } }}
+        >
+            <div className="space-y-4 text-[#f1f1f1]">
+                <div className="flex flex-wrap items-center gap-3">
+                    <Button icon={<Upload className="size-4" />} onClick={() => fileInputRef.current?.click()}>
+                        选择 TXT / MD / CSV
+                    </Button>
+                    <input ref={fileInputRef} type="file" accept=".txt,.md,.csv,.tsv,text/plain,text/markdown,text/csv" className="hidden" onChange={(event) => void readFile(event.target.files?.[0])} />
+                    <select className="h-9 rounded-md border border-[#3a3a3a] bg-[#252525] px-3 text-sm text-[#f1f1f1] outline-none" value={mode} onChange={(event) => setMode(event.target.value as ShotImportMode)}>
+                        <option value="auto">按镜号归位</option>
+                        <option value="append">追加到末尾</option>
+                        <option value="insert">插入到指定镜头后</option>
+                    </select>
+                    {mode === "insert" ? (
+                        <label className="flex items-center gap-2 text-xs text-[#bcbcbc]">
+                            插入到第
+                            <input className="h-9 w-20 rounded-md border border-[#3a3a3a] bg-[#252525] px-2 text-center text-sm text-[#f1f1f1] outline-none" value={insertAfter} onChange={(event) => setInsertAfter(event.target.value.replace(/\D/g, ""))} />
+                            镜后
+                        </label>
+                    ) : null}
+                    <span className="text-xs text-[#9c9c9c]">可粘贴 Markdown 表格、CSV/TSV，或按“镜号：/画面描述：”分段。</span>
+                </div>
+                <textarea
+                    className="thin-scrollbar h-64 w-full resize-none rounded-lg border border-[#343434] bg-[#101010] px-3 py-3 text-xs leading-5 text-[#f1f1f1] outline-none focus:border-[#777]"
+                    placeholder={`| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |\n| 35 | 5s | ... | 中景 | ... | ... | ... | 推进 | ... |`}
+                    value={text}
+                    onChange={(event) => setText(event.target.value)}
+                />
+                <div className="rounded-lg border border-[#303030] bg-[#101010] p-3">
+                    <div className="mb-2 text-xs font-semibold text-[#d8d8d8]">识别预览：{parsedRows.length ? `${parsedRows.length} 个镜头` : "未识别到镜头"}</div>
+                    {parsedRows.length ? (
+                        <div className="thin-scrollbar max-h-44 overflow-auto text-xs text-[#bdbdbd]">
+                            {parsedRows.slice(0, 8).map((row, index) => (
+                                <div key={index} className="grid grid-cols-[54px_62px_1fr] gap-2 border-t border-[#282828] py-2 first:border-t-0">
+                                    <span className="text-center font-semibold text-[#f1f1f1]">{row[0] || index + 1}</span>
+                                    <span>{row[1] || "5s"}</span>
+                                    <span className="line-clamp-2">{row[2] || row[8] || "-"}</span>
+                                </div>
+                            ))}
+                            {parsedRows.length > 8 ? <div className="pt-2 text-[#8f8f8f]">还有 {parsedRows.length - 8} 个镜头...</div> : null}
+                        </div>
+                    ) : (
+                        <div className="text-xs text-[#8f8f8f]">请粘贴外部分镜文本，系统会转换成当前 9 列格式。</div>
+                    )}
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
 function initialPromptDetail(detail: StoryboardPromptDetail | null, row: string[]): StoryboardPromptDetail {
     return detail || { storyboardPrompt: row[8] || "", videoMotionPrompt: "", assetMentions: [] };
 }
@@ -660,13 +773,165 @@ function Step({ index, title, detail, active, done, onClick }: { index: string; 
 function normalizeRows(rows?: string[][]) {
     const source = rows?.length ? rows : [COLUMNS, ...Array.from({ length: 9 }, (_, index) => [`${index + 1}`, "5s", "", "", "", "", "", "", ""])];
     const body = source[0]?.join("|").includes("镜号") ? source.slice(1) : source;
-    return renumberRows(body.map((row, index) => COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, 60));
+    return renumberRows(body.map((row, index) => COLUMNS.map((_, colIndex) => row[colIndex] || (colIndex === 0 ? `${index + 1}` : colIndex === 1 ? "5s" : ""))).slice(0, STORYBOARD_ROW_LIMIT));
 }
 
 function renumberRows(rows: string[][]) {
     return rows.map((row, index) => COLUMNS.map((_, colIndex) => (colIndex === 0 ? String(index + 1) : row[colIndex] || "")));
 }
 
-function rowsToMarkdown(rows: string[][]) {
-    return [`| ${COLUMNS.join(" | ")} |`, `| ${COLUMNS.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${COLUMNS.map((_, index) => (row[index] || "").replace(/\n/g, " ")).join(" | ")} |`)].join("\n");
+function mergeImportedRows(currentRows: string[][], importedRows: string[][], mode: ShotImportMode, insertAfter: number) {
+    const nextRows = currentRows.map((row) => [...row]);
+    const rowsToImport = importedRows.map(normalizeImportRow).filter((row) => row.some((cell, index) => index > 1 && cell.trim()));
+    if (!rowsToImport.length) return nextRows;
+    if (mode === "append") return [...nextRows, ...rowsToImport].slice(0, STORYBOARD_ROW_LIMIT);
+    if (mode === "insert") {
+        const index = Math.min(Math.max(insertAfter, 0), nextRows.length);
+        return [...nextRows.slice(0, index), ...rowsToImport, ...nextRows.slice(index)].slice(0, STORYBOARD_ROW_LIMIT);
+    }
+    if (!rowsToImport.some((row) => shotNumber(row[0]) > 0)) return [...nextRows, ...rowsToImport].slice(0, STORYBOARD_ROW_LIMIT);
+    rowsToImport.forEach((row) => {
+        const index = shotNumber(row[0]) - 1;
+        if (index < 0 || index >= STORYBOARD_ROW_LIMIT) return;
+        while (nextRows.length <= index) nextRows.push([`${nextRows.length + 1}`, "5s", "", "", "", "", "", "", ""]);
+        nextRows[index] = row;
+    });
+    return nextRows.slice(0, STORYBOARD_ROW_LIMIT);
 }
+
+function parseImportedRows(text: string) {
+    const content = text.trim();
+    if (!content) return [];
+    const tableRows = parseImportedTableRows(content);
+    if (tableRows.length) return tableRows;
+    const delimitedRows = parseImportedDelimitedRows(content);
+    if (delimitedRows.length) return delimitedRows;
+    const blockRows = parseImportedBlocks(content);
+    if (blockRows.length) return blockRows;
+    return content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line, index) => normalizeImportRow([String(index + 1), "5s", line]));
+}
+
+function parseImportedTableRows(content: string) {
+    const rows = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.includes("|"))
+        .map((line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim()))
+        .filter((row) => !isDividerRow(row) && !isImportHeaderRow(row));
+    return rows.filter((row) => row.length >= 3).map(normalizeImportRow).slice(0, STORYBOARD_ROW_LIMIT);
+}
+
+function parseImportedDelimitedRows(content: string) {
+    const rows = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => (line.includes("\t") ? line.split("\t") : parseCsvLine(line)).map((cell) => cell.trim()))
+        .filter((row) => row.length >= 3 && !isImportHeaderRow(row));
+    return rows.some((row) => row.length >= 5 || shotNumber(row[0]) > 0) ? rows.map(normalizeImportRow).slice(0, STORYBOARD_ROW_LIMIT) : [];
+}
+
+function parseImportedBlocks(content: string) {
+    const blocks = splitImportBlocks(content);
+    return blocks.map(parseImportBlock).filter((row) => row.some((cell, index) => index > 1 && cell.trim())).slice(0, STORYBOARD_ROW_LIMIT);
+}
+
+function splitImportBlocks(content: string) {
+    const blocks: string[][] = [];
+    let current: string[] = [];
+    content.split(/\r?\n/).forEach((rawLine) => {
+        const line = rawLine.trim();
+        if (!line) {
+            if (current.length) blocks.push(current);
+            current = [];
+            return;
+        }
+        if (current.length && /^(?:镜头|镜号|shot)\s*[#：: -]*\d+/i.test(line)) {
+            blocks.push(current);
+            current = [];
+        }
+        current.push(line);
+    });
+    if (current.length) blocks.push(current);
+    return blocks;
+}
+
+function parseImportBlock(lines: string[]) {
+    const row = ["", "5s", "", "", "", "", "", "", ""];
+    lines.forEach((line) => {
+        const heading = line.match(/^(?:镜头|镜号|shot)\s*[#：: -]*(\d+)/i);
+        if (heading) row[0] = heading[1];
+        const matched = line.match(/^([^:：]+)[:：]\s*(.*)$/);
+        if (!matched) return;
+        const key = matched[1].trim();
+        const value = matched[2].trim();
+        const colIndex = importColumnIndex(key);
+        if (colIndex >= 0) row[colIndex] = value;
+    });
+    if (!row[2]) {
+        const plain = lines.filter((line) => !/^([^:：]+)[:：]/.test(line) && !/^(?:镜头|镜号|shot)\s*[#：: -]*\d+/i.test(line)).join(" ");
+        row[2] = plain;
+    }
+    return normalizeImportRow(row);
+}
+
+function normalizeImportRow(row: string[]) {
+    const normalized = COLUMNS.map((_, index) => row[index] || "");
+    normalized[0] = shotNumber(normalized[0]) ? String(shotNumber(normalized[0])) : normalized[0];
+    if (!normalized[1]) normalized[1] = "5s";
+    return normalized;
+}
+
+function importColumnIndex(key: string) {
+    if (/^(镜号|镜头|序号|shot)$/i.test(key)) return 0;
+    if (/时长|时间|duration/i.test(key)) return 1;
+    if (/画面|描述|内容|scene|visual/i.test(key)) return 2;
+    if (/景别|景深|shot size/i.test(key)) return 3;
+    if (/光影|氛围|灯光|lighting/i.test(key)) return 4;
+    if (/对白|旁白|台词|dialogue|voice/i.test(key)) return 5;
+    if (/音效|声音|sound/i.test(key)) return 6;
+    if (/运镜|镜头运动|camera/i.test(key)) return 7;
+    if (/最终|提示词|prompt/i.test(key)) return 8;
+    return -1;
+}
+
+function isImportHeaderRow(row: string[]) {
+    const joined = row.join("|");
+    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("最终提示词");
+}
+
+function isDividerRow(row: string[]) {
+    return row.every((cell) => /^:?-{2,}:?$/.test(cell.trim()));
+}
+
+function shotNumber(value: string) {
+    return Number(value.match(/\d+/)?.[0] || 0);
+}
+
+function parseCsvLine(line: string) {
+    const cells: string[] = [];
+    let cell = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        const next = line[index + 1];
+        if (char === '"' && quoted && next === '"') {
+            cell += '"';
+            index += 1;
+        } else if (char === '"') {
+            quoted = !quoted;
+        } else if (char === "," && !quoted) {
+            cells.push(cell);
+            cell = "";
+        } else {
+            cell += char;
+        }
+    }
+    cells.push(cell);
+    return cells.length > 1 ? cells : [line];
+}
+

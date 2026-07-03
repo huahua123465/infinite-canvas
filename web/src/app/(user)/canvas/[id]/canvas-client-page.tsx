@@ -82,6 +82,8 @@ type CanvasClipboard = {
     connections: CanvasConnection[];
 };
 
+type StoryboardRowsUpdater = string[][] | ((rows: string[][]) => string[][]);
+
 type PendingConnectionCreate = {
     connection: ConnectionHandle;
     position: Position;
@@ -108,6 +110,12 @@ type CanvasGenerationRequest = {
     controller: AbortController;
 };
 
+type CharacterReferenceVariant = {
+    id: string;
+    title: string;
+    target: string;
+};
+
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
@@ -116,8 +124,17 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+const CHARACTER_REFERENCE_VARIANTS: CharacterReferenceVariant[] = [
+    { id: "front-full", title: "正面全身", target: "正面站姿全身参考图，角色直视镜头，双臂自然放松，完整展示脸、发型、体型、鞋子和整套服装。" },
+    { id: "three-quarter-full", title: "3/4侧全身", target: "三分之四侧身全身参考图，身体转向约45度，脸部仍清晰可见，完整展示侧面轮廓和服装比例。" },
+    { id: "side-half", title: "侧面半身", target: "标准侧面半身参考图，从头到腰部，突出脸部侧面、发型轮廓、肩颈和上半身服装结构。" },
+    { id: "bust-close", title: "近景胸像", target: "胸像近景参考图，脸部和发型占主要画面，表情自然，保留原角色五官、妆容、材质和画风。" },
+    { id: "expression-action", title: "表情动作", target: "轻微动作或表情参考图，可以是抬手、回头或微笑，动作自然，不改变角色身份、服装和画风。" },
+    { id: "clothing-detail", title: "服装细节", target: "服装细节参考图，聚焦上衣、领口、袖口、腰部配饰、鞋子或纹理材质，保持与主视图完全同一套服装。" },
+];
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
 const STORYBOARD_ASSET_GRID_COLUMNS = 3;
+const STORYBOARD_ROW_LIMIT = 120;
 const STORYBOARD_VIDEO_GRID_COLUMNS = 5;
 const STORYBOARD_WORKSPACE_GAP = 160;
 const STORYBOARD_WORKSPACE_TOP_OFFSET = -40;
@@ -129,7 +146,7 @@ const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连�
 | 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
 
 要求：
-1. 按剧情推进拆成 9 到 15 个镜头，情绪递进清楚。
+1. 按剧情长度和节奏拆分镜头，短剧本默认 9 到 15 个镜头，长剧本可以超过 30 个镜头，不要为了固定数量删减关键剧情。
 2. 每个镜头时长用 5s、8s、10s、12s 这类格式。
 3. 画面描述要具体到人物动作、环境、表情和关键物件。
 4. 景别填写远景/全景/中景/近景/特写/空镜等。
@@ -790,6 +807,11 @@ function InfiniteCanvasPage() {
     const scriptNode = scriptNodeId ? nodeById.get(scriptNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const activeNodeId = hasMultipleSelectedNodes ? null : toolbarNodeId || hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
+    const selectedCharacterReferenceSourceNode = useMemo(() => {
+        if (selectedNodeIds.size !== 1) return null;
+        const node = nodeById.get(Array.from(selectedNodeIds)[0]);
+        return node?.type === CanvasNodeType.Image && node.metadata?.content ? node : null;
+    }, [nodeById, selectedNodeIds]);
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
         nodes.forEach((node) => {
@@ -915,9 +937,51 @@ function InfiniteCanvasPage() {
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
     );
 
+    const createCharacterReferenceCardNode = useCallback(
+        (sourceNode: CanvasNodeData) => {
+            if (sourceNode.type !== CanvasNodeType.Image || !sourceNode.metadata?.content) {
+                message.warning("请先选中或上传一张人物照片");
+                return;
+            }
+            const spec = getNodeSpec(CanvasNodeType.Config);
+            const variantPrompts = CHARACTER_REFERENCE_VARIANTS.map((variant) => buildCharacterReferencePrompt(variant, ""));
+            const configNode = createCanvasNode(
+                CanvasNodeType.Config,
+                {
+                    x: sourceNode.position.x + sourceNode.width + 96 + spec.width / 2,
+                    y: sourceNode.position.y + sourceNode.height / 2,
+                },
+                {
+                    generationMode: "image",
+                    model: effectiveConfig.imageModel || effectiveConfig.model,
+                    quality: effectiveConfig.quality,
+                    size: "2:3",
+                    count: variantPrompts.length,
+                    prompt: "基于左侧人物照片生成方舟私域虚拟人像素材库所需的角色基准图。保持同一张脸、同一发型、同一体型、同一套服装和同一画风。",
+                    status: NODE_STATUS_IDLE,
+                    disableAutoMultiView: true,
+                    characterReferenceVariantPrompts: variantPrompts,
+                    characterReferenceVariantTitles: CHARACTER_REFERENCE_VARIANTS.map((variant) => variant.title),
+                },
+            );
+            const connection = { id: nanoid(), fromNodeId: sourceNode.id, toNodeId: configNode.id };
+            setNodes((prev) => [...prev, configNode]);
+            setConnections((prev) => addUniqueConnections(prev, [connection]));
+            setSelectedNodeIds(new Set([configNode.id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(configNode.id);
+            message.success("已创建角色卡生图配置，点击节点里的“开始生成”即可生成基准图");
+        },
+        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, message],
+    );
+
     const handleMangaCardImportRequest = useCallback(() => {
+        if (selectedCharacterReferenceSourceNode) {
+            createCharacterReferenceCardNode(selectedCharacterReferenceSourceNode);
+            return;
+        }
         mangaCardInputRef.current?.click();
-    }, []);
+    }, [createCharacterReferenceCardNode, selectedCharacterReferenceSourceNode]);
 
     const handleMangaStoryboardImportRequest = useCallback(() => {
         mangaStoryboardInputRef.current?.click();
@@ -933,6 +997,23 @@ function InfiniteCanvasPage() {
             event.target.value = "";
             if (!file) return;
             try {
+                if (file.type.startsWith("image/")) {
+                    const image = await uploadImage(file);
+                    const imageSize = fitNodeSize(image.width, image.height);
+                    const center = getCanvasCenter();
+                    const imageNode: CanvasNodeData = {
+                        id: `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                        type: CanvasNodeType.Image,
+                        title: file.name,
+                        position: { x: center.x - imageSize.width - 260, y: center.y - imageSize.height / 2 },
+                        width: imageSize.width,
+                        height: imageSize.height,
+                        metadata: imageMetadata(image),
+                    };
+                    setNodes((prev) => [...prev, imageNode]);
+                    createCharacterReferenceCardNode(imageNode);
+                    return;
+                }
                 const text = await file.text();
                 const { characters, nodes: importedNodes } = buildMangaCharacterPromptNodes({
                     text,
@@ -953,7 +1034,7 @@ function InfiniteCanvasPage() {
                 message.error(error instanceof Error ? error.message : "角色卡导入失败");
             }
         },
-        [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, getCanvasCenter, message],
+        [createCharacterReferenceCardNode, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.quality, getCanvasCenter, message],
     );
 
     const handleMangaStoryboardInputChange = useCallback(
@@ -1703,10 +1784,24 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node)));
     }, []);
 
-    const updateStoryboardRows = useCallback((nodeId: string, rows: string[][]) => {
-        const normalized = renumberStoryboardRowsForCanvas(rows);
-        handleNodeContentChange(nodeId, storyboardRowsToMarkdownForCanvas(normalized), [STORYBOARD_COLUMNS, ...normalized]);
-    }, [handleNodeContentChange]);
+    const updateStoryboardRows = useCallback((nodeId: string, rows: StoryboardRowsUpdater) => {
+        setNodes((prev) =>
+            prev.map((node) => {
+                if (node.id !== nodeId) return node;
+                const currentRows = parseStoryboardRows(node.metadata?.storyboardRows);
+                const normalized = renumberStoryboardRowsForCanvas(typeof rows === "function" ? rows(currentRows) : rows);
+                return {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        content: storyboardRowsToMarkdownForCanvas(normalized),
+                        storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
+                        storyboardStep: "shots",
+                    },
+                };
+            }),
+        );
+    }, []);
 
     const updateStoryboardAsset = useCallback((nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)) } } : node)));
@@ -2869,9 +2964,12 @@ function InfiniteCanvasPage() {
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const useMultiViewGrid = generationType === "generation" && shouldUseMultiViewGrid(effectivePrompt, sourceNode?.metadata);
-                    const requestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : effectivePrompt;
+                    const characterReferencePrompts = isConfigNode ? (sourceNode.metadata?.characterReferenceVariantPrompts || []).map((item) => item.trim()).filter(Boolean) : [];
+                    const characterReferenceTitles = isConfigNode ? sourceNode.metadata?.characterReferenceVariantTitles || [] : [];
+                    const requestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : characterReferencePrompts[0] || effectivePrompt;
+                    const requestPrompts = characterReferencePrompts.length ? characterReferencePrompts : [requestPrompt];
                     const requestConfig = useMultiViewGrid ? { ...generationConfig, count: "1", size: "16:9" } : generationConfig;
-                    const count = useMultiViewGrid ? 1 : getGenerationCount(generationConfig.count);
+                    const count = useMultiViewGrid ? 1 : characterReferencePrompts.length || getGenerationCount(generationConfig.count);
                     const generationMetadata = buildImageGenerationMetadata(generationType, requestConfig, count, referenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
@@ -2885,7 +2983,7 @@ function InfiniteCanvasPage() {
                     const rootNode: CanvasNodeData = {
                         id: rootId,
                         type: CanvasNodeType.Image,
-                        title: effectivePrompt.slice(0, 32) || "Generated Image",
+                        title: characterReferenceTitles[0] || effectivePrompt.slice(0, 32) || "Generated Image",
                         position: {
                             x: isEmptyImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + gap,
                             y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
@@ -2893,7 +2991,7 @@ function InfiniteCanvasPage() {
                         width: isEmptyImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
                         height: isEmptyImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
                         metadata: {
-                            prompt: requestPrompt,
+                            prompt: requestPrompts[0] || requestPrompt,
                             sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined,
                             multiViewRole: useMultiViewGrid ? "grid" : undefined,
                             sceneViewRole: sourceNode?.metadata?.sceneViewRole,
@@ -2909,14 +3007,14 @@ function InfiniteCanvasPage() {
                     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
                         id,
                         type: CanvasNodeType.Image,
-                        title: effectivePrompt.slice(0, 32) || "Generated Image",
+                        title: characterReferenceTitles[index] || effectivePrompt.slice(0, 32) || "Generated Image",
                         position: {
                             x: rootNode.position.x + rootNode.width + 120 + (index % 2) * (imageConfig.width + 36),
                             y: rootNode.position.y + Math.floor(index / 2) * (imageConfig.height + rowGap),
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                        metadata: { prompt: requestPrompts[index] || requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, characterReferenceRole: characterReferenceTitles[index], ...generationMetadata },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -3014,16 +3112,17 @@ function InfiniteCanvasPage() {
                     let hasFailure = false;
                     let lastErrorDetails = "";
                     await Promise.all(
-                        targetIds.map(async (targetId) => {
+                        targetIds.map(async (targetId, index) => {
                             try {
                                 let image;
+                                const targetPrompt = requestPrompts[index] || requestPrompt;
                                 try {
                                     image = referenceImages.length
-                                        ? await requestEdit({ ...requestConfig, count: "1" }, requestPrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                        : await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                                        ? await requestEdit({ ...requestConfig, count: "1" }, targetPrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
+                                        : await requestGeneration({ ...requestConfig, count: "1" }, targetPrompt, { signal: controller.signal }).then((items) => items[0]);
                                 } catch (error) {
                                     if (!referenceImages.length || sourceNode?.metadata?.imagePreset !== "character_sheet" || isGenerationCanceled(error)) throw error;
-                                    image = await requestGeneration({ ...requestConfig, count: "1" }, requestPrompt, { signal: controller.signal }).then((items) => items[0]);
+                                    image = await requestGeneration({ ...requestConfig, count: "1" }, targetPrompt, { signal: controller.signal }).then((items) => items[0]);
                                 }
                                 const uploaded = await uploadImage(image.dataUrl);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -3038,7 +3137,7 @@ function InfiniteCanvasPage() {
                                                 position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
                                                 width: imageSize.width,
                                                 height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, primaryImageId: targetId },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: targetPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, primaryImageId: targetId },
                                             };
                                         if (node.id === targetId)
                                             return {
@@ -3046,7 +3145,7 @@ function InfiniteCanvasPage() {
                                                 position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
                                                 width: imageSize.width,
                                                 height: imageSize.height,
-                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId },
+                                                metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: targetPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId },
                                             };
                                         return node;
                                     });
@@ -3720,7 +3819,7 @@ function InfiniteCanvasPage() {
                 ) : null}
 
                 <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
-                <input ref={mangaCardInputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleMangaCardInputChange} />
+                <input ref={mangaCardInputRef} type="file" accept="image/*,.txt,.json,text/plain,application/json" className="hidden" onChange={handleMangaCardInputChange} />
                 <input ref={mangaStoryboardInputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleMangaStoryboardInputChange} />
                 <input ref={scene360InputRef} type="file" accept=".txt,.json,text/plain,application/json" className="hidden" onChange={handleScene360InputChange} />
 
@@ -3731,7 +3830,7 @@ function InfiniteCanvasPage() {
                     open={Boolean(scriptNode)}
                     actionKey={storyboardActionKey}
                     onClose={() => setScriptNodeId(null)}
-                    onRowsChange={handleNodeContentChange}
+                    onRowsChange={updateStoryboardRows}
                     onPrepareAssets={(node) => void prepareStoryboardAssets(node)}
                     onUpdateAsset={updateStoryboardAsset}
                     onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
@@ -4311,7 +4410,7 @@ function parseStoryboardTable(content: string) {
         .map((line) => line.trim())
         .filter((line) => line.includes("|"))
         .map((line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim()));
-    return rows.filter((row) => row.length >= 9 && !isStoryboardDividerRow(row)).slice(0, 30);
+    return rows.filter((row) => row.length >= 9 && !isStoryboardDividerRow(row)).slice(0, STORYBOARD_ROW_LIMIT);
 }
 
 function parseStoryboardLoose(content: string) {
@@ -4327,13 +4426,13 @@ function parseStoryboardLoose(content: string) {
         .filter(Boolean)
         .map((line) => (line.includes("\t") ? line.split("\t") : parseCsvLine(line)).map((cell) => cell.trim()))
         .filter((row) => row.length >= 3);
-    if (delimitedRows.some((row) => row.length >= 9)) return delimitedRows.map(normalizeStoryboardImportRow).slice(0, 30);
+    if (delimitedRows.some((row) => row.length >= 9)) return delimitedRows.map(normalizeStoryboardImportRow).slice(0, STORYBOARD_ROW_LIMIT);
 
-    return parseStoryboardColonBlocks(content).slice(0, 30);
+    return parseStoryboardColonBlocks(content).slice(0, STORYBOARD_ROW_LIMIT);
 }
 
 function stripStoryboardHeader(rows: string[][]) {
-    return rows.filter((row, index) => !isStoryboardDividerRow(row) && !(index === 0 && isStoryboardHeaderRow(row))).map(normalizeStoryboardImportRow).slice(0, 30);
+    return rows.filter((row, index) => !isStoryboardDividerRow(row) && !(index === 0 && isStoryboardHeaderRow(row))).map(normalizeStoryboardImportRow).slice(0, STORYBOARD_ROW_LIMIT);
 }
 
 function normalizeStoryboardImportRow(row: string[]) {
@@ -4496,7 +4595,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
         const reference = referenceImageFromCanvasNode(assetNode);
         if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
     }
-    return Array.from(resolved.values()).slice(0, 7);
+    return Array.from(resolved.values()).slice(0, 9);
 }
 
 function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNodeData[]): StoryboardVideoReference[] {
@@ -4643,6 +4742,18 @@ function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: 
             workspaceTitle: title,
         },
     };
+}
+
+function buildCharacterReferencePrompt(variant: CharacterReferenceVariant, description: string) {
+    const detail = description.trim() || "以参考图为准，不额外改变角色设定。";
+    return [
+        "基于参考图生成同一个虚拟角色的素材库基准图。",
+        "必须保持同一张脸、同一发型、同一体型、同一套服装、同一服装配色、同一画风和同一材质表现。",
+        "不要改变年龄、性别、脸型、发色、服装款式、服装颜色、画面风格；不要出现多人；不要添加文字、水印、边框或拼贴排版。",
+        `角色补充：${detail}`,
+        `目标画面：${variant.target}`,
+        "画面主体完整清晰，背景简洁干净，适合后续作为官方素材库上传的角色参考图。",
+    ].join("\n");
 }
 
 function storyboardAssetMentionsForPrompt(detail?: StoryboardPromptDetail) {

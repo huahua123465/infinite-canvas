@@ -9,7 +9,7 @@ import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -37,6 +37,7 @@ const modelGroups: ModelGroup[] = [
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
     { label: "Gemini", value: "gemini" },
+    { label: "方舟 Ark", value: "ark" },
 ];
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
@@ -280,13 +281,13 @@ export function AppConfigModal() {
                                                     <Select value={channel.apiFormat} options={apiFormatOptions} onChange={(value: ApiCallFormat) => updateChannelApiFormat(channel, value)} />
                                                 </Form.Item>
                                                 <Form.Item label="Base URL" className="mb-0">
-                                                    <Input value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
+                                                    <Input placeholder={defaultBaseUrlForApiFormat(channel.apiFormat)} value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
                                                 </Form.Item>
                                                 <Form.Item label="API Key" className="mb-0">
                                                     <Input.Password value={channel.apiKey} onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })} />
                                                 </Form.Item>
-                                                <Form.Item label="模型列表" className="mb-0 md:col-span-2">
-                                                    <Select mode="tags" showSearch allowClear maxTagCount="responsive" placeholder="输入模型名，或点击拉取模型" value={channel.models} onChange={(models) => updateChannel(channel.id, { models })} />
+                                                <Form.Item label="模型列表" extra={channel.apiFormat === "ark" ? "方舟 Seedance 可填写模型 ID，或直接填写 Endpoint ID（ep-xxxx）" : undefined} className="mb-0 md:col-span-2">
+                                                    <Select mode="tags" showSearch allowClear maxTagCount="responsive" placeholder={channel.apiFormat === "ark" ? "输入模型 ID 或 Endpoint ID（ep-xxxx），或点击拉取模型" : "输入模型名，或点击拉取模型"} value={channel.models} onChange={(models) => updateChannel(channel.id, { models })} />
                                                 </Form.Item>
                                             </div>
                                         </section>
@@ -436,10 +437,10 @@ export function AppConfigModal() {
 
 function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
     const models = modelOptionsFromChannels(channels);
-    const imageModels = keepOrSuggest(config.imageModels, filterModelsByCapability(models, "image"), models);
-    const videoModels = keepOrSuggest(config.videoModels, filterModelsByCapability(models, "video"), models);
-    const textModels = keepOrSuggest(config.textModels, filterModelsByCapability(models, "text"), models);
-    const audioModels = keepOrSuggest(config.audioModels, filterModelsByCapability(models, "audio"), models);
+    const imageModels = keepOrSuggest(config.imageModels, suggestModelsByCapability(channels, "image"), models);
+    const videoModels = keepOrSuggest(config.videoModels, suggestModelsByCapability(channels, "video"), models);
+    const textModels = keepOrSuggest(config.textModels, suggestModelsByCapability(channels, "text"), models);
+    const audioModels = keepOrSuggest(config.audioModels, suggestModelsByCapability(channels, "audio"), models);
     return {
         ...config,
         channels,
@@ -478,7 +479,9 @@ function uniqueModels(models: string[]) {
 }
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {
-    return apiFormat === "gemini" ? "Gemini" : "OpenAI";
+    if (apiFormat === "gemini") return "Gemini";
+    if (apiFormat === "ark") return "方舟 Ark";
+    return "OpenAI";
 }
 
 function formatWebdavTime(value: string) {

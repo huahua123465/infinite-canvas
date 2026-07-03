@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
-export type ApiCallFormat = "openai" | "gemini";
+export type ApiCallFormat = "openai" | "gemini" | "ark";
 
 export type ModelChannel = {
     id: string;
@@ -61,6 +61,7 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -155,9 +156,22 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
     return capability ? models.filter((model) => modelMatchesCapability(model, capability)) : models;
 }
 
+function isArkEndpointModelName(model: string) {
+    return /^ep-[\w-]+$/i.test(modelOptionName(model).trim());
+}
+
+function channelModelMatchesCapability(channel: Pick<ModelChannel, "apiFormat">, model: string, capability?: ModelCapability) {
+    if (capability === "video" && channel.apiFormat === "ark" && isArkEndpointModelName(model)) return true;
+    return modelMatchesCapability(model, capability);
+}
+
+export function suggestModelsByCapability(channels: ModelChannel[], capability?: ModelCapability) {
+    return channels.flatMap((channel) => channel.models.filter((model) => channelModelMatchesCapability(channel, model, capability)).map((model) => encodeChannelModel(channel.id, model)));
+}
+
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
-    if (!capability) return config.models;
-    return config[modelListKey(capability)];
+    const models = capability ? config[modelListKey(capability)] : config.models;
+    return Array.isArray(models) ? models : [];
 }
 
 function modelListKey(capability: ModelCapability) {
@@ -228,10 +242,10 @@ export const useConfigStore = create<ConfigStore>()(
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
                         canvasImageCount: config.canvasImageCount || "3",
-                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
-                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
-                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : filterModelsByCapability(models, "text"),
-                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : filterModelsByCapability(models, "audio"),
+                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : suggestModelsByCapability(channels, "image"),
+                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : suggestModelsByCapability(channels, "video"),
+                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : suggestModelsByCapability(channels, "text"),
+                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : suggestModelsByCapability(channels, "audio"),
                     },
                 };
             },
@@ -355,11 +369,15 @@ function normalizeChannels(config: AiConfig) {
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
-    return apiFormat === "gemini" ? GEMINI_BASE_URL : OPENAI_BASE_URL;
+    if (apiFormat === "gemini") return GEMINI_BASE_URL;
+    if (apiFormat === "ark") return ARK_BASE_URL;
+    return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" ? "gemini" : "openai";
+    if (apiFormat === "gemini") return "gemini";
+    if (apiFormat === "ark") return "ark";
+    return "openai";
 }
 
 function uniqueRawModels(models: string[]) {
