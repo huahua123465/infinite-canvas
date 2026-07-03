@@ -76,6 +76,11 @@ export type StoryboardPromptDetail = {
     assetMentionLinks?: StoryboardAssetMentionLink[];
 };
 
+export type StoryboardAssetProgress = {
+    percent: number;
+    text: string;
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     storyboardSourceText?: string;
@@ -83,6 +88,7 @@ export type CanvasNodeMetadata = {
     storyboardStep?: StoryboardStep;
     storyboardAssetStyle?: string;
     storyboardAssetError?: string;
+    storyboardAssetProgress?: StoryboardAssetProgress;
     storyboardAssets?: StoryboardAsset[];
     storyboardAssetNodeIds?: Record<string, string>;
     storyboardAssetMentionNodeIds?: Record<string, string>;

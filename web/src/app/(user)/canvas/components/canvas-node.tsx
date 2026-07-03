@@ -482,7 +482,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
     );
 }
 
-const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
+const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 const STORYBOARD_ROW_LIMIT = 120;
 

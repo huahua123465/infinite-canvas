@@ -145,7 +145,7 @@ const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连�
 只输出 Markdown 表格，不要解释，不要标题。
 
 表格列必须严格为：
-| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |
 
 要求：
 1. 按剧情长度和节奏拆分镜头，短剧本默认 9 到 15 个镜头，长剧本可以超过 30 个镜头，不要为了固定数量删减关键剧情。
@@ -155,21 +155,21 @@ const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连�
 5. 对白旁白优先提炼原文里的第一人称旁白，可适当压缩。
 6. 音效写环境声、动作声、音乐情绪。
 7. 运镜写固定机位、推镜、跟拍、摇镜、手持轻晃等。
-8. 最终提示词用于后续视频/图片生成，要把人物、场景、动作、情绪、镜头、光影写完整。
+8. 分镜画面提示词用于首帧图/分镜图画面初稿，要把人物、场景、动作、情绪、镜头、光影写完整；不要把它写成视频最终生成提示词。
 9. 不要编造与剧本冲突的新剧情。`;
 const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本表格，并只输出 Markdown 表格。
 
 表格列必须严格为：
-| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |
 
 要求：只提取截图中能看清的行；看不清的单元格留空；不要解释，不要标题。`;
 const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚本 Markdown 表格。
 
 表格列必须严格为：
-| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |
+| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |
 
 要求：如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜；只输出 Markdown 表格，不要解释，不要标题。`;
-const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
+const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const ASSET_KIND_TEXT: Record<StoryboardAssetKind, string> = { character: "人物", scene: "场景", prop: "道具" };
 const STORYBOARD_FINAL_PROMPT_PROMPT = `你是短剧分镜与视频运动提示词专家。请把单个镜头、第二步资产和全局风格整合成第三步“合成提示词”。
 
@@ -1909,16 +1909,28 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey("asset:prepare");
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: undefined } } : item)));
+            const updateProgress = (percent: number, text: string) => {
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: undefined, storyboardAssetProgress: { percent, text } } } : item)));
+            };
+            updateProgress(8, "整理剧本与分镜");
             try {
+                updateProgress(18, "压缩资产识别输入");
                 const source = [
                     storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
-                    `分镜表：\n${storyboardRowsToMarkdownForCanvas(rows)}`,
+                    `精简分镜表：\n${storyboardAssetRowsToMarkdownForCanvas(rows)}`,
                 ]
                     .filter(Boolean)
                     .join("\n\n");
-                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_ASSET_PROMPT}\n\n${source}` }], () => {});
+                updateProgress(28, "提交资产识别请求");
+                let hasDelta = false;
+                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_ASSET_PROMPT}\n\n${source}` }], () => {
+                    if (hasDelta) return;
+                    hasDelta = true;
+                    updateProgress(70, "模型返回中，整理角色与场景");
+                });
+                updateProgress(86, "解析角色、场景和道具");
                 const parsed = parseStoryboardAssetAnswer(answer);
+                updateProgress(96, "写入资产卡片");
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === node.id
@@ -1929,6 +1941,7 @@ function InfiniteCanvasPage() {
                                       storyboardStep: "assets",
                                       storyboardAssetStyle: parsed.style,
                                       storyboardAssetError: undefined,
+                                      storyboardAssetProgress: undefined,
                                       storyboardAssets: parsed.assets,
                                   },
                               }
@@ -1938,7 +1951,7 @@ function InfiniteCanvasPage() {
                 message.success("资产已识别");
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : "识别资产失败";
-                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage, storyboardAssetProgress: undefined } } : item)));
                 message.error(errorMessage);
             } finally {
                 setStoryboardActionKey(null);
@@ -2176,7 +2189,7 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData, rowIndex?: number) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
             const indexes = rowIndex === undefined ? rows.map((_, index) => index) : [rowIndex];
-            if (!indexes.length) return message.info("没有需要合成的最终提示词");
+            if (!indexes.length) return message.info("没有需要合成提示词的镜头");
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -2189,9 +2202,9 @@ function InfiniteCanvasPage() {
                     const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FINAL_PROMPT_PROMPT}\n\n${source}` }], () => {});
                     updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer));
                 }
-                message.success(rowIndex === undefined ? "最终提示词已批量合成" : "最终提示词已合成");
+                message.success(rowIndex === undefined ? "合成提示词已批量生成" : "合成提示词已生成");
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "合成最终提示词失败");
+                message.error(error instanceof Error ? error.message : "合成提示词失败");
             } finally {
                 setStoryboardActionKey(null);
             }
@@ -2204,7 +2217,7 @@ function InfiniteCanvasPage() {
             const row = parseStoryboardRows(node.metadata?.storyboardRows)[rowIndex];
             const prompt = node.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.storyboardPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
             if (!row || !prompt) {
-                message.warning("请先填写或合成最终提示词");
+                message.warning("请先填写分镜画面提示词或合成提示词");
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
@@ -2241,9 +2254,9 @@ function InfiniteCanvasPage() {
             const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
             const row = parseStoryboardRows(scriptNode.metadata?.storyboardRows)[rowIndex];
             const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
-            const prompt = detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
+            const prompt = detail?.videoMotionPrompt?.trim();
             if (!row || !prompt) {
-                message.warning("请先填写或合成最终提示词");
+                message.warning("请先到第三步合成视频运动提示词");
                 return;
             }
             const requestedMentions = storyboardAssetMentionsForPrompt(detail);
@@ -2286,9 +2299,9 @@ function InfiniteCanvasPage() {
     const batchGenerateStoryboardImages = useCallback(
         async (node: CanvasNodeData) => {
             const rows = parseStoryboardRows(node.metadata?.storyboardRows);
-            const indexes = rows.map((row, index) => (row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
+            const indexes = rows.map((row, index) => (node.metadata?.storyboardPromptDetails?.[String(index)]?.storyboardPrompt?.trim() || row[8]?.trim() ? index : -1)).filter((index) => index >= 0);
             if (!indexes.length) {
-                message.warning("请先合成最终提示词");
+                message.warning("请先填写分镜画面提示词或合成提示词");
                 return;
             }
             setStoryboardActionKey("image:all");
@@ -4520,7 +4533,7 @@ function normalizeStoryboardImportRow(row: string[]) {
 
 function isStoryboardHeaderRow(row: string[]) {
     const joined = row.join("|");
-    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("最终提示词");
+    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("分镜画面提示词") || joined.includes("最终提示词");
 }
 
 function isStoryboardDividerRow(row: string[]) {
@@ -4594,6 +4607,9 @@ function parseStoryboardColonBlocks(content: string) {
         声音: 6,
         运镜: 7,
         镜头运动: 7,
+        分镜画面提示词: 8,
+        画面提示词: 8,
+        分镜提示词: 8,
         最终提示词: 8,
         提示词: 8,
         生图提示词: 8,
@@ -5048,6 +5064,23 @@ function renumberStoryboardRowsForCanvas(rows: string[][]) {
 
 function storyboardRowsToMarkdownForCanvas(rows: string[][]) {
     return [`| ${STORYBOARD_COLUMNS.join(" | ")} |`, `| ${STORYBOARD_COLUMNS.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${STORYBOARD_COLUMNS.map((_, index) => (row[index] || "").replace(/\n/g, " ")).join(" | ")} |`)].join("\n");
+}
+
+function storyboardAssetRowsToMarkdownForCanvas(rows: string[][]) {
+    const columns = [
+        ["镜号", 0],
+        ["画面描述", 2],
+        ["景别", 3],
+        ["对白旁白", 5],
+        ["音效", 6],
+        ["运镜", 7],
+    ] as const;
+    return [`| ${columns.map(([title]) => title).join(" | ")} |`, `| ${columns.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${columns.map(([, index]) => compactStoryboardAssetCell(row[index] || "")).join(" | ")} |`)].join("\n");
+}
+
+function compactStoryboardAssetCell(value: string) {
+    const text = value.replace(/\s+/g, " ").trim();
+    return text.length > 160 ? `${text.slice(0, 160)}...` : text;
 }
 
 function fileToDataUrl(file: File) {

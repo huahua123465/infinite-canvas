@@ -7,9 +7,9 @@ import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Squar
 import { ModelPicker } from "@/components/model-picker";
 import type { AiConfig } from "@/stores/use-config-store";
 import { OFFICIAL_VIRTUAL_ACTORS, isValidOfficialActorAssetUri, normalizeOfficialActorAssetUri, officialActorBinding, officialActorById, storyboardAssetReadyWithOfficialActor } from "../utils/official-virtual-actors";
-import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardPromptDetail } from "../types";
+import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "../types";
 
-const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
+const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
 const STORYBOARD_ROW_LIMIT = 120;
 type ScriptDialogView = "shots" | "assets" | "prompts";
@@ -305,7 +305,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                                             trigger={["click"]}
                                             menu={{
                                                 items: [
-                                                    { key: "copy", label: "复制最终提示词", icon: <Copy className="size-3.5" /> },
+                                                    { key: "copy", label: "复制当前提示词", icon: <Copy className="size-3.5" /> },
                                                     { key: "delete", label: "删除镜头", danger: true },
                                                 ],
                                                 onClick: ({ key }) => {
@@ -359,7 +359,7 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                                     {column}
                                 </th>
                             ))}
-                            <th className="w-[310px] border-b border-r border-[#343434] px-3 py-3 font-medium">最终提示词</th>
+                            <th className="w-[310px] border-b border-r border-[#343434] px-3 py-3 font-medium">合成结果</th>
                             <th className="w-24 border-b border-[#343434] px-3 py-3 text-center font-medium">操作</th>
                         </tr>
                     </thead>
@@ -475,7 +475,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
             <div className="flex max-h-[min(88vh,820px)] flex-col text-[#f3f3f3]">
                 <div className="flex items-center justify-between border-b border-[#343434] bg-[#151515] px-6 py-4 pr-12">
                     <div className="min-w-0">
-                        <div className="text-base font-semibold">第 {row[0] || rowIndex + 1} 镜：最终提示词</div>
+                        <div className="text-base font-semibold">第 {row[0] || rowIndex + 1} 镜：合成提示词</div>
                         <div className="mt-1 truncate text-xs text-[#9f9f9f]">{row[2] || node.title}</div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -497,7 +497,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                     />
                     <PromptBlock
                         title="视频运动提示词"
-                        hint="用于视频模型理解起始状态、动作过程、结束状态、镜头运动、情绪节奏与声音"
+                        hint="用于待审核视频节点的运动初稿；最终发送内容在视频节点确认页确认"
                         value={draft.videoMotionPrompt}
                         mentions={mentions}
                         links={mentionLinks}
@@ -652,7 +652,7 @@ function ShotImportModal({ open, rowCount, onClose, onImport }: { open: boolean;
                 </div>
                 <textarea
                     className="thin-scrollbar h-64 w-full resize-none rounded-lg border border-[#343434] bg-[#101010] px-3 py-3 text-xs leading-5 text-[#f1f1f1] outline-none focus:border-[#777]"
-                    placeholder={`| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |\n| 35 | 5s | ... | 中景 | ... | ... | ... | 推进 | ... |`}
+                    placeholder={`| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |\n| 35 | 5s | ... | 中景 | ... | ... | ... | 推进 | ... |`}
                     value={text}
                     onChange={(event) => setText(event.target.value)}
                 />
@@ -698,6 +698,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
 function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
     const missingCount = assets.length - readyAssets;
     const preparing = actionKey === "asset:prepare";
+    const progress = node.metadata?.storyboardAssetProgress;
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-8 py-5">
@@ -705,6 +706,7 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, r
                     <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
                     <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
                 </div>
+                {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
                 {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
                 <div className="mb-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-xs leading-6 text-cyan-50">
                     官方虚拟演员模式：角色设定仍由剧本生成，脸部来源绑定到方舟预置虚拟人像。点开角色卡后可替换候选演员，并粘贴从方舟 API 面板复制的 <span className="font-semibold">asset://asset-...</span>。
@@ -741,6 +743,21 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, r
                 </div>
             </div>
         </>
+    );
+}
+
+function AssetRecognitionProgress({ progress }: { progress?: StoryboardAssetProgress }) {
+    const percent = Math.max(6, Math.min(98, Math.round(progress?.percent || 12)));
+    return (
+        <div className="mb-5 rounded-xl border border-cyan-400/20 bg-[#122225] px-4 py-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                <span className="font-semibold text-cyan-100">{progress?.text || "准备识别资产"}</span>
+                <span className="tabular-nums text-cyan-200/80">{percent}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-cyan-300 transition-all duration-500" style={{ width: `${percent}%` }} />
+            </div>
+        </div>
     );
 }
 
@@ -975,7 +992,7 @@ function importColumnIndex(key: string) {
 
 function isImportHeaderRow(row: string[]) {
     const joined = row.join("|");
-    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("最终提示词");
+    return joined.includes("镜号") || joined.includes("画面描述") || joined.includes("分镜画面提示词") || joined.includes("最终提示词");
 }
 
 function isDividerRow(row: string[]) {
