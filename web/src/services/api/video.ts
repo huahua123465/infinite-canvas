@@ -17,11 +17,15 @@ type SeedanceTask = {
     content?: { video_url?: string; last_frame_url?: string } | null;
 };
 type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
-type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
+type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void };
+export type VideoGenerationTaskState =
+    | { status: "pending"; providerStatus?: string }
+    | { status: "completed"; result: VideoGenerationResult; providerStatus?: string }
+    | { status: "failed"; error: string; providerStatus?: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -35,13 +39,22 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 }
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
+    options?.onProgress?.({ percent: 8, text: "正在提交视频任务", stage: "submitting" });
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
+    options?.onProgress?.({ percent: 16, text: task.provider === "seedance" ? "视频任务已创建，等待方舟返回任务状态" : "视频任务已创建，等待接口处理", stage: "submitted" });
     const delayMs = task.provider === "seedance" ? 30000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
-        if (state.status === "completed") return state.result;
-        if (state.status === "failed") throw new Error(state.error);
+        if (state.status === "completed") {
+            options?.onProgress?.({ percent: 96, text: "视频已生成，正在保存到画布", stage: "saving", providerStatus: state.providerStatus });
+            return state.result;
+        }
+        if (state.status === "failed") {
+            options?.onProgress?.({ percent: 100, text: state.error, stage: "failed", providerStatus: state.providerStatus });
+            throw new Error(state.error);
+        }
+        options?.onProgress?.(videoPollingProgress(task.provider, state.providerStatus, attempt));
         if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : ""}视频生成超时，请稍后重试`);
         await delay(delayMs, options?.signal);
     }
@@ -96,12 +109,13 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
         if (video.status === "completed") {
+            options?.onProgress?.({ percent: 90, text: "视频任务完成，正在下载视频", stage: "saving", providerStatus: video.status });
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
-            return { status: "completed", result: { blob: content.data } };
+            return { status: "completed", result: { blob: content.data }, providerStatus: video.status };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: video.error?.message || "视频生成失败" };
-        return { status: "pending" };
+        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: video.error?.message || "视频生成失败", providerStatus: video.status };
+        return { status: "pending", providerStatus: video.status };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
     }
@@ -138,11 +152,12 @@ async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, opt
         const state = unwrapSeedanceTask((await axios.get<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config, task.id), { headers: aiHeaders(config), signal: options?.signal })).data);
         if (state.status === "succeeded") {
             const url = state.content?.video_url;
-            if (!url) return { status: "failed", error: "Seedance 任务成功但没有返回视频 URL" };
-            return { status: "completed", result: await videoResultFromUrl(url, options) };
+            if (!url) return { status: "failed", error: "Seedance 任务成功但没有返回视频 URL", providerStatus: state.status };
+            options?.onProgress?.({ percent: 90, text: "Seedance 任务成功，正在下载视频", stage: "saving", providerStatus: state.status });
+            return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: state.status };
         }
-        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: normalizeVideoErrorMessage(state.error?.message || `Seedance 视频生成${state.status === "expired" ? "超时" : "失败"}`) };
-        return { status: "pending" };
+        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: normalizeVideoErrorMessage(state.error?.message || `Seedance 视频生成${state.status === "expired" ? "超时" : "失败"}`), providerStatus: state.status };
+        return { status: "pending", providerStatus: state.status || "running" };
     } catch (error) {
         throw new Error(readAxiosError(error, "Seedance 任务查询失败"));
     }
@@ -279,6 +294,17 @@ function readAxiosError(error: unknown, fallback: string) {
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     return normalizeVideoErrorMessage(error instanceof Error ? error.message : fallback);
+}
+
+function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number): VideoGenerationProgress {
+    const normalized = status || "running";
+    if (normalized === "queued") {
+        return { percent: Math.min(35, 22 + attempt * 2), text: provider === "seedance" ? "Seedance 任务排队中，正在等待调度" : "视频任务排队中", stage: "queued", providerStatus: normalized };
+    }
+    if (normalized === "running" || normalized === "in_progress" || normalized === "processing") {
+        return { percent: Math.min(86, 42 + attempt * 3), text: provider === "seedance" ? "Seedance 任务生成中，正在按 30 秒间隔查询" : "视频任务生成中", stage: "running", providerStatus: normalized };
+    }
+    return { percent: Math.min(72, 30 + attempt * 3), text: "视频任务处理中，正在查询最新状态", stage: "running", providerStatus: normalized };
 }
 
 function extractErrorMessage(payload: unknown) {

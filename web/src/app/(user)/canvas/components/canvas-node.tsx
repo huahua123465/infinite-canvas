@@ -792,6 +792,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
     const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
     const isLoading = node.metadata?.status === "loading";
     const isError = node.metadata?.status === "error";
+    const videoProgress = node.metadata?.videoGenerationProgress;
 
     useEffect(() => {
         const openPromptPreview = (event: Event) => {
@@ -808,11 +809,11 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
             const hasPreviousTailFrame = assetPreviews.some((item) => item.role === "firstFrame" && item.mention.includes("尾帧"));
             const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
             const missingCount = assetLinks.filter((link) => link.status === "missing").length;
-            const statusText = isLoading ? "生成中" : isError ? "生成失败" : "待审核";
+            const statusText = isLoading ? videoGenerationStatusText(videoProgress) : isError ? "生成失败" : "待审核";
             const helperText = isError
                 ? node.metadata?.errorDetails || "视频生成失败，请检查模型、参考图和提示词后重试"
                 : isLoading
-                  ? "方舟视频任务会按官方示例每 30 秒查询一次，长时间停留在生成中通常是上游仍在排队或处理。"
+                  ? videoProgress?.text || "方舟视频任务会按官方示例每 30 秒查询一次，长时间停留在生成中通常是上游仍在排队或处理。"
                   : boundCount
                     ? `已绑定 ${boundCount} 个资产${missingCount ? `，${missingCount} 个未绑定` : ""}`
                     : missingCount
@@ -827,6 +828,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                         <span className="text-[11px] opacity-55">{statusText}</span>
                     </div>
                     <div className="line-clamp-3 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
+                    {isLoading ? <VideoGenerationProgressBar progress={videoProgress} theme={theme} /> : null}
                     <div className="mt-auto space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
                         {hasPreviousTailFrame ? <div className="inline-flex w-fit rounded bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-300">已使用上一镜尾帧作为首帧</div> : null}
@@ -868,6 +870,17 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                 </div>
             );
         }
+        if (isLoading) {
+            return (
+                <div className="flex h-full w-full flex-col justify-center gap-4 p-5" style={{ background: theme.node.fill, color: theme.node.text }}>
+                    <div className="flex items-center gap-2">
+                        <Video className="size-5 opacity-55" />
+                        <span className="text-sm font-semibold">{videoGenerationStatusText(videoProgress)}</span>
+                    </div>
+                    <VideoGenerationProgressBar progress={videoProgress} theme={theme} />
+                </div>
+            );
+        }
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
                 <Video className="size-7 opacity-35" />
@@ -876,6 +889,40 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
         );
     }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+}
+
+function VideoGenerationProgressBar({ progress, theme }: { progress?: CanvasNodeMetadata["videoGenerationProgress"]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const percent = Math.max(8, Math.min(98, Math.round(progress?.percent || 8)));
+    return (
+        <div className="space-y-1.5 rounded-lg border px-2.5 py-2" style={{ borderColor: theme.node.stroke, background: `${selectionBlue}10` }}>
+            <div className="flex items-center justify-between gap-3 text-[11px]">
+                <span className="min-w-0 truncate font-semibold">{progress?.text || "正在提交视频任务"}</span>
+                <span className="shrink-0 tabular-nums opacity-70">{percent}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full" style={{ background: `${selectionBlue}22` }}>
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${percent}%`, background: selectionBlue }} />
+            </div>
+            <div className="text-[10px] opacity-55">{progress?.providerStatus ? `接口状态：${videoProviderStatusLabel(progress.providerStatus)}` : "阶段进度，非接口真实百分比"}</div>
+        </div>
+    );
+}
+
+function videoGenerationStatusText(progress?: CanvasNodeMetadata["videoGenerationProgress"]) {
+    if (progress?.stage === "queued") return "排队中";
+    if (progress?.stage === "saving") return "保存中";
+    if (progress?.stage === "failed") return "生成失败";
+    if (progress?.providerStatus) return videoProviderStatusLabel(progress.providerStatus);
+    return "生成中";
+}
+
+function videoProviderStatusLabel(status: string) {
+    if (status === "queued") return "排队中";
+    if (status === "running" || status === "in_progress" || status === "processing") return "生成中";
+    if (status === "succeeded" || status === "completed") return "已完成";
+    if (status === "failed") return "失败";
+    if (status === "cancelled") return "已取消";
+    if (status === "expired") return "已超时";
+    return status;
 }
 
 function storyboardVideoAssetLinks(node: CanvasNodeData): StoryboardAssetMentionLink[] {

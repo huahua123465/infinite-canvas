@@ -81,6 +81,13 @@ export type StoryboardAssetProgress = {
     text: string;
 };
 
+export type VideoGenerationProgress = {
+    percent: number;
+    text: string;
+    stage?: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed";
+    providerStatus?: string;
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     storyboardSourceText?: string;
@@ -105,6 +112,7 @@ export type CanvasNodeMetadata = {
     storyboardVideoFinalPrompt?: string;
     storyboardVideoTailFrameUrl?: string;
     storyboardVideoTailFrameStorageKey?: string;
+    videoGenerationProgress?: VideoGenerationProgress;
     officialActor?: OfficialVirtualActorBinding;
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;

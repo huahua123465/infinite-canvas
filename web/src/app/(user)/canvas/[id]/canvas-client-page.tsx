@@ -2279,16 +2279,16 @@ function InfiniteCanvasPage() {
             const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodesRef.current).assetMentionLinks || [] : [];
             const assetReferenceNodeIds = assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id));
             const storyboardVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
-            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } }]);
+            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences, videoGenerationProgress: initialVideoGenerationProgress() } }]);
             setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: childId }, ...assetReferences.flatMap((item) => (item.node ? [{ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }] : []))]));
             const controller = startGenerationRequest(childId, scriptNode.id, childId);
             try {
-                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal }));
+                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))) }));
                 const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                 const tailFrame = await extractVideoLastFrame(video).catch(() => null);
                 setNodes((prev) =>
                     applyStoryboardTailFrameToNextVideo(
-                        prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } } : item)),
+                        prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences, videoGenerationProgress: undefined } } : item)),
                         scriptNode.id,
                         rowIndex,
                         tailFrame,
@@ -3272,16 +3272,16 @@ function InfiniteCanvasPage() {
                         position: isEmptyVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: isEmptyVideoNode ? sourceNode.width : spec.width,
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }) },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }), videoGenerationProgress: initialVideoGenerationProgress() },
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, effectivePrompt, videoReferenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }));
+                        const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, effectivePrompt, videoReferenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoGenerationProgress: progress } } : node))) }));
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                        setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 }, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }) } } : node)));
+                        setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 }, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }), videoGenerationProgress: undefined } } : node)));
                     } finally {
                         finishGenerationRequest(videoId, controller);
                     }
@@ -3438,7 +3438,7 @@ function InfiniteCanvasPage() {
             const retryImages = storyboardVideoReferences.length ? storyboardVideoReferences : retryReferenceImages || [];
 
             setRunningNodeId(node.id);
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, videoGenerationProgress: node.type === CanvasNodeType.Video ? initialVideoGenerationProgress() : item.metadata?.videoGenerationProgress } } : item)));
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
 
             try {
@@ -3456,12 +3456,12 @@ function InfiniteCanvasPage() {
                 }
                 if (node.type === CanvasNodeType.Video) {
                     const videoPrompt = storyboardVideoFinalPrompt || (storyboardVideoFramePrompt ? `${prompt}\n\n${storyboardVideoFramePrompt}` : prompt);
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
+                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))) }));
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     const tailFrame = await extractVideoLastFrame(video).catch(() => null);
                     setNodes((prev) =>
                         applyStoryboardTailFrameToNextVideo(
-                            prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)),
+                            prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, videoGenerationProgress: undefined } } : item)),
                             node.metadata?.storyboardSourceNodeId,
                             node.metadata?.storyboardRowIndex,
                             tailFrame,
@@ -4224,6 +4224,10 @@ function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs };
+}
+
+function initialVideoGenerationProgress(): CanvasNodeMetadata["videoGenerationProgress"] {
+    return { percent: 8, text: "正在提交视频任务", stage: "submitting" };
 }
 
 function storyboardTailFrameMetadata(image: UploadedImage | null): Partial<CanvasNodeMetadata> {
