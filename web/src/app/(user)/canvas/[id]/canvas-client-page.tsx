@@ -4405,7 +4405,7 @@ function withOfficialActorImagePrompt(prompt: string, node?: CanvasNodeData | nu
     const officialActor = node?.type === CanvasNodeType.Image ? node.metadata?.officialActor : undefined;
     const officialAssetUri = normalizeOfficialActorAssetUri(officialActor?.assetUri);
     if (!isValidOfficialActorAssetUri(officialAssetUri)) return prompt;
-    return `${prompt}\n\n官方虚拟人像基座：${officialActor?.name || "自定义官方虚拟人像"}，素材 ID：${officialAssetUri}。请将该官方虚拟人像作为角色脸部细节和身份基座，先生成一张可预览的完整角色图；服装、体态、姿势、镜头、场景和画风按用户提示词执行。画面保持非真人虚拟角色/2.5D 数字角色质感，不要真实摄影皮肤毛孔，不要现实人物肖像。`;
+    return `${prompt}\n\n官方虚拟人像视频基座：${officialActor?.name || "自定义官方虚拟人像"}，素材 ID：${officialAssetUri}。当前生图模型无法直接读取该 asset:// 的真实脸，因此本图只生成服装、体态、姿势、镜头、场景和画风的可视造型预览；不要把脸作为最终一致性依据，不要生成写实真人脸部特写。后续生成视频时会把该官方 asset:// 作为第一参考图传给 Seedance 来决定角色脸部基座。画面保持非真人虚拟角色/2.5D 数字角色质感。`;
 }
 
 function isGenerationCanceled(error: unknown) {
@@ -4651,7 +4651,7 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
     }
     const officialUri = normalizeOfficialActorAssetUri(asset.officialActor?.assetUri);
     if (asset.kind === "character" && isValidOfficialActorAssetUri(officialUri)) {
-        return `${prompt}\n\n官方虚拟人像基座：${asset.officialActor?.name || asset.name}，素材 ID：${officialUri}。请把这个官方虚拟人像理解为角色脸部基座，生成一张可预览的完整角色图；脸部方向、年龄气质和身份感向官方基座靠拢，但画面重点仍按本提示词生成服装、发型整理、体态、姿势、画风、光影和场景。生成结果必须是非真人虚拟角色/2.5D 数字角色质感，不要真实摄影皮肤毛孔，不要现实人物肖像。`;
+        return `${prompt}\n\n官方虚拟人像视频基座：${asset.officialActor?.name || asset.name}，素材 ID：${officialUri}。当前生图模型无法直接读取该 asset:// 的真实脸，因此本图只生成服装、体态、发型整理、姿势、画风、光影和场景的可视造型参考；不要生成写实真人脸部特写，不要把脸作为最终一致性依据。后续生成视频时会把该官方 asset:// 作为第一参考图传给 Seedance 来决定角色脸部基座。画面保持非真人虚拟角色/2.5D 数字角色质感。`;
     }
     return prompt;
 }

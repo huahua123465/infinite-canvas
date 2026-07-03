@@ -208,7 +208,7 @@ function OfficialAssetEditor({ node, theme, onChange }: { node: CanvasNodeData; 
         <div className="mt-3 rounded-xl border p-3 text-xs" style={{ background: "rgba(6,182,212,.09)", borderColor: valid ? "rgba(16,185,129,.45)" : "rgba(34,211,238,.28)" }}>
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="font-semibold text-cyan-100">官方虚拟人像素材</div>
-                <div className={valid ? "text-emerald-200" : "text-amber-200"}>{valid ? "视频会同时使用官方素材和可视图" : "可粘贴 asset-... 或 asset://..."}</div>
+                <div className={valid ? "text-emerald-200" : "text-amber-200"}>{valid ? "生图做造型预览，视频读官方脸" : "可粘贴 asset-... 或 asset://..."}</div>
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_1.25fr]">
                 <label className="block">
@@ -221,7 +221,7 @@ function OfficialAssetEditor({ node, theme, onChange }: { node: CanvasNodeData; 
                 </label>
                 <label className="block sm:col-span-2">
                     <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">自定义说明/标签</span>
-                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.traits?.join("、") || ""} placeholder="例如：女、青年、古风、清冷；生成视频时只把官方脸作为人物脸部基座" onChange={(event) => update({ traits: event.target.value.split(/[、,，\s]+/).map((item) => item.trim()).filter(Boolean), description: event.target.value })} />
+                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.traits?.join("、") || ""} placeholder="例如：女、青年、古风、清冷；生图做造型预览，视频用官方脸基座" onChange={(event) => update({ traits: event.target.value.split(/[、,，\s]+/).map((item) => item.trim()).filter(Boolean), description: event.target.value })} />
                 </label>
             </div>
         </div>

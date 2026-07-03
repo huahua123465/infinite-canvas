@@ -60,6 +60,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
+    const editingAssetUsesOfficialActor = isValidOfficialActorAssetUri(editingAsset?.officialActor?.assetUri);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
 
@@ -218,7 +219,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             trigger={["click"]}
                                             menu={{
                                                 items: [
-                                                    { key: "generate", label: "生成图片", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "generate", label: editingAssetUsesOfficialActor ? "生成造型图" : "生成图片", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "upload", label: "上传图片", icon: <Upload className="size-3.5" /> },
                                                 ],
                                                 onClick: ({ key, domEvent }) => {
@@ -248,7 +249,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         </Button>
                                     ) : (
                                         <Button type="primary" icon={<Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
-                                            生成图片
+                                            {editingAssetUsesOfficialActor ? "生成造型图" : "生成图片"}
                                         </Button>
                                     )}
                                 </div>
@@ -820,7 +821,7 @@ function OfficialActorEditor({ asset, onChange }: { asset: StoryboardAsset; onCh
                     onChange={(event) => onChange({ officialActor: { ...(actor || officialActorBinding(OFFICIAL_VIRTUAL_ACTORS[0])), assetUri: normalizeOfficialActorAssetUri(event.target.value) } })}
                 />
             </label>
-            <div className={`mt-2 rounded px-2 py-1 text-[11px] ${valid ? "bg-emerald-500/15 text-emerald-200" : "bg-amber-500/15 text-amber-100"}`}>{valid ? "已填入合法官方素材地址，生成视频时会优先作为角色参考图传给 Seedance。" : "还未填入可用官方素材 ID；可直接粘贴方舟复制的 asset-...，系统会自动补成 asset://asset-...。"}</div>
+            <div className={`mt-2 rounded px-2 py-1 text-[11px] ${valid ? "bg-emerald-500/15 text-emerald-200" : "bg-amber-500/15 text-amber-100"}`}>{valid ? "已填入合法官方素材地址：生图只生成服装/造型预览，视频会优先把该 asset:// 作为脸部基座传给 Seedance。" : "还未填入可用官方素材 ID；可直接粘贴方舟复制的 asset-...，系统会自动补成 asset://asset-...。"}</div>
             {actor?.matchReason ? <div className="mt-2 text-[11px] leading-5 text-[#a5ddeb]">{actor.matchReason}</div> : null}
             {actor?.traits?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{actor.traits.map((trait) => <span key={trait} className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-[#d8f7ff]">{trait}</span>)}</div> : null}
         </section>
