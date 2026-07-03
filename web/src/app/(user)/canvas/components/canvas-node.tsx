@@ -805,6 +805,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
         if (isStoryboardVideo) {
             const assetLinks = storyboardVideoAssetLinks(node);
             const assetPreviews = storyboardVideoAssetPreviews(node, assetLinks);
+            const hasPreviousTailFrame = assetPreviews.some((item) => item.role === "firstFrame" && item.mention.includes("尾帧"));
             const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
             const missingCount = assetLinks.filter((link) => link.status === "missing").length;
             const statusText = isLoading ? "生成中" : isError ? "生成失败" : "待审核";
@@ -828,6 +829,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                     <div className="line-clamp-3 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
                     <div className="mt-auto space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
+                        {hasPreviousTailFrame ? <div className="inline-flex w-fit rounded bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-300">已使用上一镜尾帧作为首帧</div> : null}
                         <div className="flex items-center justify-between text-[11px] opacity-60">
                             <span className="line-clamp-2 max-w-[55%] whitespace-pre-wrap">{helperText}</span>
                             <div className="flex items-center gap-1.5">

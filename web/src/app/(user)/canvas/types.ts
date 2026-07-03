@@ -103,6 +103,8 @@ export type CanvasNodeMetadata = {
     storyboardAssetReferenceNodeIds?: string[];
     storyboardVideoReferences?: StoryboardVideoReference[];
     storyboardVideoFinalPrompt?: string;
+    storyboardVideoTailFrameUrl?: string;
+    storyboardVideoTailFrameStorageKey?: string;
     officialActor?: OfficialVirtualActorBinding;
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;

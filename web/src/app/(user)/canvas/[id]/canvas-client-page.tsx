@@ -2285,7 +2285,15 @@ function InfiniteCanvasPage() {
             try {
                 const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal }));
                 const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } } : item)));
+                const tailFrame = await extractVideoLastFrame(video).catch(() => null);
+                setNodes((prev) =>
+                    applyStoryboardTailFrameToNextVideo(
+                        prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } } : item)),
+                        scriptNode.id,
+                        rowIndex,
+                        tailFrame,
+                    ),
+                );
             } catch (error) {
                 if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成视频失败" } } : item)));
             } finally {
@@ -3450,7 +3458,15 @@ function InfiniteCanvasPage() {
                     const videoPrompt = storyboardVideoFinalPrompt || (storyboardVideoFramePrompt ? `${prompt}\n\n${storyboardVideoFramePrompt}` : prompt);
                     const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)));
+                    const tailFrame = await extractVideoLastFrame(video).catch(() => null);
+                    setNodes((prev) =>
+                        applyStoryboardTailFrameToNextVideo(
+                            prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)),
+                            node.metadata?.storyboardSourceNodeId,
+                            node.metadata?.storyboardRowIndex,
+                            tailFrame,
+                        ),
+                    );
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
@@ -4210,6 +4226,44 @@ function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs };
 }
 
+function storyboardTailFrameMetadata(image: UploadedImage | null): Partial<CanvasNodeMetadata> {
+    if (!image) return {};
+    return { storyboardVideoTailFrameUrl: image.url, storyboardVideoTailFrameStorageKey: image.storageKey };
+}
+
+async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedImage | null> {
+    const url = await resolveMediaUrl(videoFile.storageKey, videoFile.url);
+    if (!url) return null;
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    const loaded = new Promise<void>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => reject(new Error("视频尾帧读取失败"));
+    });
+    video.src = url;
+    await loaded;
+    const duration = Number.isFinite(video.duration) ? video.duration : (videoFile.durationMs || 0) / 1000;
+    const targetTime = Math.max(0, duration - 0.08);
+    if (targetTime > 0) {
+        await new Promise<void>((resolve, reject) => {
+            video.onseeked = () => resolve();
+            video.onerror = () => reject(new Error("视频尾帧定位失败"));
+            video.currentTime = targetTime;
+        });
+    }
+    const width = video.videoWidth || videoFile.width || 1280;
+    const height = video.videoHeight || videoFile.height || 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d")?.drawImage(video, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    return blob ? uploadImage(blob) : null;
+}
+
 function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
     return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
 }
@@ -4761,6 +4815,42 @@ function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnTyp
     }));
 }
 
+function storyboardTailFrameReference(previousRowIndex: number, image: Pick<UploadedImage, "url" | "storageKey">): StoryboardVideoReference {
+    const name = `第${previousRowIndex + 1}镜尾帧`;
+    return {
+        mention: `@${name}`,
+        name,
+        status: "bound",
+        url: image.url,
+        storageKey: image.storageKey,
+        role: "firstFrame",
+        source: "script",
+    };
+}
+
+function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: number, nodes: CanvasNodeData[]) {
+    if (rowIndex <= 0) return null;
+    const previous = nodes.find((node) => node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1 && (node.metadata.storyboardVideoTailFrameStorageKey || node.metadata.storyboardVideoTailFrameUrl));
+    if (!previous?.metadata?.storyboardVideoTailFrameStorageKey && !previous?.metadata?.storyboardVideoTailFrameUrl) return null;
+    return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" });
+}
+
+function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?: StoryboardVideoReference | null) {
+    if (!extra) return base;
+    const next = base.filter((item) => item.mention !== extra.mention);
+    return [extra, ...next];
+}
+
+function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null) {
+    if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
+    const reference = storyboardTailFrameReference(rowIndex, tailFrame);
+    return nodes.map((node) => {
+        if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content) return node;
+        const current = node.metadata.storyboardVideoReferences || [];
+        return { ...node, metadata: { ...node.metadata, storyboardVideoReferences: mergeStoryboardVideoReferences(current, reference) } };
+    });
+}
+
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content);
     const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
@@ -4768,6 +4858,8 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
     const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
+    const baseVideoReferences = existing?.metadata?.storyboardVideoReferences?.length ? existing.metadata.storyboardVideoReferences : storyboardVideoReferencesFromAssetReferences(assetReferences);
+    const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes);
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,
@@ -4791,7 +4883,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
             storyboardAssetMentions: assetReferences.map((item) => item.mention),
             storyboardAssetMentionLinks: assetMentionLinks,
             storyboardAssetReferenceNodeIds: assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id)),
-            storyboardVideoReferences: storyboardVideoReferencesFromAssetReferences(assetReferences),
+            storyboardVideoReferences: mergeStoryboardVideoReferences(baseVideoReferences, previousTailFrame),
         },
     };
 }
