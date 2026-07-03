@@ -25,6 +25,16 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
 
+export type OfficialVirtualActorBinding = {
+    id: string;
+    name: string;
+    description: string;
+    traits: string[];
+    assetUri?: string;
+    matchReason?: string;
+    confidence?: number;
+};
+
 export type StoryboardAsset = {
     id: string;
     kind: StoryboardAssetKind;
@@ -35,6 +45,7 @@ export type StoryboardAsset = {
     storageKey?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
+    officialActor?: OfficialVirtualActorBinding;
 };
 
 export type StoryboardAssetMentionLink = {
@@ -44,6 +55,8 @@ export type StoryboardAssetMentionLink = {
     assetId?: string;
     nodeId?: string;
     kind?: StoryboardAssetKind;
+    source?: "node" | "officialActor" | "script" | "asset";
+    url?: string;
 };
 
 export type StoryboardVideoReferenceRole = "reference" | "firstFrame" | "lastFrame";

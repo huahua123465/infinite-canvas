@@ -22,6 +22,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType } from "../utils/canvas-multi-view";
 import { buildMangaCharacterPromptNodes } from "../utils/manga-character-card-import";
+import { isValidOfficialActorAssetUri, matchOfficialVirtualActor, normalizeOfficialActorAssetUri, storyboardAssetReadyWithOfficialActor } from "../utils/official-virtual-actors";
 import { buildScene360PromptNodes } from "../utils/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "../utils/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction } from "../utils/prompt-assistant";
@@ -185,8 +186,9 @@ JSON 格式必须为：
 2. videoMotionPrompt 必须按自然语言清楚写出：起始状态、动作过程、结束状态、镜头运动、情绪/节奏、音效/对白。
 3. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，并在两个提示词里显式使用 @资产名。
 4. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名。
-5. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
-6. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
+5. 如果角色资产写有“官方脸”，提示词必须把该官方虚拟演员作为角色脸部底座；只根据剧本改变服装、姿态、表情、动作、场景和镜头，不重新设计脸，也不要在提示词中写 asset ID。
+6. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
+7. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -1973,24 +1975,31 @@ function InfiniteCanvasPage() {
             }
             setStoryboardActionKey(`asset:${assetId}`);
             updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_LOADING, errorDetails: undefined });
+            const targetId = `storyboard-asset:${node.id}:${assetId}`;
+            const controller = startGenerationRequest(targetId, node.id, node.id);
             try {
-                const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 updateStoryboardAsset(node.id, assetId, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
                 message.success("资产图已生成");
             } catch (error) {
+                if (isGenerationCanceled(error)) {
+                    updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_IDLE, errorDetails: undefined });
+                    return;
+                }
                 updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
                 message.error(error instanceof Error ? error.message : "生成资产图失败");
             } finally {
+                finishGenerationRequest(targetId, controller);
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardAsset],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardAsset],
     );
 
     const batchGenerateStoryboardAssets = useCallback(
         async (node: CanvasNodeData) => {
-            const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !asset.imageUrl && !asset.storageKey);
+            const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !storyboardAssetReadyWithOfficialActor(asset));
             if (!assets.length) {
                 message.info("没有需要生成的资产图");
                 return;
@@ -2001,25 +2010,62 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey("asset:all");
+            let stopped = false;
+            const batchController = new AbortController();
             try {
                 await runLimited(assets, STORYBOARD_ASSET_BATCH_CONCURRENCY, async (asset) => {
+                    if (batchController.signal.aborted) {
+                        stopped = true;
+                        return;
+                    }
                     const prompt = storyboardAssetImagePrompt(asset);
                     if (!prompt) return;
+                    const targetId = `storyboard-asset:${node.id}:${asset.id}`;
+                    const controller = startGenerationRequest(targetId, node.id, node.id, batchController);
                     updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
                     try {
-                        const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
+                        const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                         const uploaded = await uploadImage(image.dataUrl);
                         updateStoryboardAsset(node.id, asset.id, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
                     } catch (error) {
+                        if (isGenerationCanceled(error)) {
+                            stopped = true;
+                            updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_IDLE, errorDetails: undefined });
+                            return;
+                        }
                         updateStoryboardAsset(node.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
+                    } finally {
+                        finishGenerationRequest(targetId, controller);
                     }
                 });
-                message.success("资产图批量生成完成");
+                if (!stopped && !batchController.signal.aborted) message.success("资产图批量生成完成");
             } finally {
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardAsset],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardAsset],
+    );
+
+    const stopStoryboardAssetGeneration = useCallback(
+        (node: CanvasNodeData) => {
+            stopGenerationByRunningId(node.id);
+            setStoryboardActionKey(null);
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === node.id
+                        ? {
+                              ...item,
+                              metadata: {
+                                  ...item.metadata,
+                                  storyboardAssets: (item.metadata?.storyboardAssets || []).map((asset) => (asset.status === NODE_STATUS_LOADING ? { ...asset, status: NODE_STATUS_IDLE, errorDetails: undefined } : asset)),
+                              },
+                          }
+                        : item,
+                ),
+            );
+            message.info("已停止生成");
+        },
+        [message, stopGenerationByRunningId],
     );
 
     const exportStoryboardAssetsToCanvas = useCallback(
@@ -2031,7 +2077,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
-            if (assets.some((asset) => !asset.imageUrl && !asset.storageKey) && !isAiConfigReady(generationConfig, generationConfig.model)) {
+            if (assets.some((asset) => !storyboardAssetReadyWithOfficialActor(asset)) && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
@@ -2213,10 +2259,10 @@ function InfiniteCanvasPage() {
             setStoryboardActionKey(`video:${rowIndex}`);
             const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
             const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodesRef.current).assetMentionLinks || [] : [];
-            const assetReferenceNodeIds = assetReferences.map((item) => item.node.id);
+            const assetReferenceNodeIds = assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id));
             const storyboardVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
             setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences } }]);
-            setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: childId }, ...assetReferences.map((item) => ({ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }))]));
+            setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: childId }, ...assetReferences.flatMap((item) => (item.node ? [{ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }] : []))]));
             const controller = startGenerationRequest(childId, scriptNode.id, childId);
             try {
                 const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal }));
@@ -2262,7 +2308,7 @@ function InfiniteCanvasPage() {
             const workspaceId = existingWorkspace?.id || nanoid();
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
             const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current));
-            const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length, 0);
+            const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + (videoNode.metadata?.storyboardVideoReferences?.length || storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length), 0);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, videoNodes, workspacePosition, "storyboard-videos");
             setNodes((prev) => {
                 const draftById = new Map([workspaceNode, ...videoNodes].map((item) => [item.id, item]));
@@ -3836,6 +3882,7 @@ function InfiniteCanvasPage() {
                     onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
                     onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
+                    onStopAssetGeneration={stopStoryboardAssetGeneration}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
                     onPromptDetailChange={updateStoryboardPromptDetail}
@@ -4581,7 +4628,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const mentionNodeIds = scriptNode.metadata?.storyboardAssetMentionNodeIds || {};
     const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
     const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
-    const resolved = new Map<string, { mention: string; node: CanvasNodeData; reference: ReferenceImage }>();
+    const resolved = new Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage }>();
     for (const link of storyboardPromptAssetLinks(detail)) {
         if (link.status !== "bound" || !link.nodeId) continue;
         const assetNode = nodes.find((node) => node.id === link.nodeId);
@@ -4594,6 +4641,19 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
         const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
         const reference = referenceImageFromCanvasNode(assetNode);
         if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
+        const assetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
+        if (!reference && isValidOfficialActorAssetUri(assetUri)) {
+            resolved.set(`official-${asset.id}`, {
+                mention,
+                reference: {
+                    id: `official-${asset.id}`,
+                    name: `${asset.officialActor?.name || asset.name}.png`,
+                    type: "image/png",
+                    dataUrl: assetUri,
+                    url: assetUri,
+                },
+            });
+        }
     }
     return Array.from(resolved.values()).slice(0, 9);
 }
@@ -4646,11 +4706,11 @@ function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnTyp
         mention: item.mention,
         name: item.mention.replace(/^@/, ""),
         status: "bound",
-        nodeId: item.node.id,
+        nodeId: item.node?.id,
         url: item.reference.url || item.reference.dataUrl,
         storageKey: item.reference.storageKey,
         role: "reference",
-        source: "script",
+        source: item.node ? "script" : "asset",
     }));
 }
 
@@ -4683,7 +4743,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
             storyboardRowIndex: rowIndex,
             storyboardAssetMentions: assetReferences.map((item) => item.mention),
             storyboardAssetMentionLinks: assetMentionLinks,
-            storyboardAssetReferenceNodeIds: assetReferences.map((item) => item.node.id),
+            storyboardAssetReferenceNodeIds: assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id)),
             storyboardVideoReferences: storyboardVideoReferencesFromAssetReferences(assetReferences),
         },
     };
@@ -4789,13 +4849,17 @@ function linkStoryboardPromptAssets(scriptNode: CanvasNodeData, detail: Storyboa
         const asset = assetByMention.get(mention);
         const nodeId = mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
         const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === normalizeAssetMention(String(node.metadata.storyboardAssetName)));
+        const officialAssetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
+        const officialBound = Boolean(!assetNode && isValidOfficialActorAssetUri(officialAssetUri));
         return {
             mention,
             name: asset?.name || mention.replace(/^@/, ""),
-            status: assetNode ? "bound" : "missing",
+            status: assetNode || officialBound ? "bound" : "missing",
             assetId: asset?.id,
             nodeId: assetNode?.id,
             kind: asset?.kind,
+            source: officialBound ? "officialActor" : assetNode ? "node" : undefined,
+            url: officialBound ? officialAssetUri : undefined,
         } satisfies NonNullable<StoryboardPromptDetail["assetMentionLinks"]>[number];
     });
     return { ...detail, assetMentions: mentions, assetMentionLinks: links };
@@ -4822,7 +4886,7 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     const row = rows[rowIndex] || [];
     const assets = node.metadata?.storyboardAssets || [];
     const assetLines = assets.length
-        ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}`).join("\n")
+        ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}${officialActorComposeNote(asset)}`).join("\n")
         : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
     const contextRows = rows
@@ -4838,6 +4902,13 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     ]
         .filter(Boolean)
         .join("\n\n");
+}
+
+function officialActorComposeNote(asset: StoryboardAsset) {
+    if (asset.kind !== "character" || !asset.officialActor) return "";
+    const uri = normalizeOfficialActorAssetUri(asset.officialActor.assetUri);
+    const state = isValidOfficialActorAssetUri(uri) ? `已绑定 ${uri}` : "待粘贴真实 asset:// 官方虚拟人像 ID";
+    return `｜官方脸：${asset.officialActor.name}（${state}）。合成提示词时把该官方脸视为 ${asset.name} 的演员底座，只改服装、状态、表演、场景和镜头，不重新设计脸。`;
 }
 
 function storyboardRowSummary(row: string[]) {
@@ -4909,7 +4980,8 @@ function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: S
     if (!kind || !name) return null;
     const description = readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim();
     const prompt = readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description;
-    return { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
+    const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
+    return kind === "character" ? { ...base, officialActor: matchOfficialVirtualActor(base) } : base;
 }
 
 function normalizeStoryboardAssetKind(value: unknown): StoryboardAssetKind | null {
