@@ -4629,31 +4629,26 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
     const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
     const resolved = new Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage }>();
-    for (const link of storyboardPromptAssetLinks(detail)) {
-        if (link.status !== "bound" || !link.nodeId) continue;
-        const assetNode = nodes.find((node) => node.id === link.nodeId);
-        const reference = referenceImageFromCanvasNode(assetNode);
-        if (assetNode && reference) resolved.set(assetNode.id, { mention: link.mention, node: assetNode, reference });
-    }
+    const linkByMention = new Map(storyboardPromptAssetLinks(detail).map((link) => [link.mention, link]));
     for (const mention of mentions) {
         const asset = assetByName.get(mention);
-        const nodeId = mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
-        const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
-        const reference = referenceImageFromCanvasNode(assetNode);
-        if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
         const assetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
-        if (!reference && isValidOfficialActorAssetUri(assetUri)) {
-            resolved.set(`official-${asset.id}`, {
+        if (isValidOfficialActorAssetUri(assetUri)) {
+            resolved.set(`official-${asset?.id || mention}`, {
                 mention,
                 reference: {
-                    id: `official-${asset.id}`,
-                    name: `${asset.officialActor?.name || asset.name}.png`,
+                    id: `official-${asset?.id || mention}`,
+                    name: `${asset?.officialActor?.name || asset?.name || mention.replace(/^@/, "")}.png`,
                     type: "image/png",
                     dataUrl: assetUri,
                     url: assetUri,
                 },
             });
         }
+        const nodeId = linkByMention.get(mention)?.nodeId || mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
+        const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
+        const reference = referenceImageFromCanvasNode(assetNode);
+        if (assetNode && reference) resolved.set(assetNode.id, { mention, node: assetNode, reference });
     }
     return Array.from(resolved.values()).slice(0, 9);
 }
@@ -4850,7 +4845,7 @@ function linkStoryboardPromptAssets(scriptNode: CanvasNodeData, detail: Storyboa
         const nodeId = mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
         const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === normalizeAssetMention(String(node.metadata.storyboardAssetName)));
         const officialAssetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
-        const officialBound = Boolean(!assetNode && isValidOfficialActorAssetUri(officialAssetUri));
+        const officialBound = isValidOfficialActorAssetUri(officialAssetUri);
         return {
             mention,
             name: asset?.name || mention.replace(/^@/, ""),
