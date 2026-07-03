@@ -19,6 +19,7 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType } from "../utils/canvas-multi-view";
 import { buildMangaCharacterPromptNodes } from "../utils/manga-character-card-import";
@@ -3016,8 +3017,9 @@ function InfiniteCanvasPage() {
                     const useMultiViewGrid = generationType === "generation" && shouldUseMultiViewGrid(effectivePrompt, sourceNode?.metadata);
                     const characterReferencePrompts = isConfigNode ? (sourceNode.metadata?.characterReferenceVariantPrompts || []).map((item) => item.trim()).filter(Boolean) : [];
                     const characterReferenceTitles = isConfigNode ? sourceNode.metadata?.characterReferenceVariantTitles || [] : [];
-                    const requestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : characterReferencePrompts[0] || effectivePrompt;
-                    const requestPrompts = characterReferencePrompts.length ? characterReferencePrompts : [requestPrompt];
+                    const baseRequestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : characterReferencePrompts[0] || effectivePrompt;
+                    const requestPrompt = withOfficialActorImagePrompt(baseRequestPrompt, sourceNode);
+                    const requestPrompts = characterReferencePrompts.length ? characterReferencePrompts.map((item) => withOfficialActorImagePrompt(item, sourceNode)) : [requestPrompt];
                     const requestConfig = useMultiViewGrid ? { ...generationConfig, count: "1", size: "16:9" } : generationConfig;
                     const count = useMultiViewGrid ? 1 : characterReferencePrompts.length || getGenerationCount(generationConfig.count);
                     const generationMetadata = buildImageGenerationMetadata(generationType, requestConfig, count, referenceImages);
@@ -3047,6 +3049,7 @@ function InfiniteCanvasPage() {
                             sceneViewRole: sourceNode?.metadata?.sceneViewRole,
                             sceneGroupId: sourceNode?.metadata?.sceneGroupId,
                             status: NODE_STATUS_LOADING,
+                            officialActor: sourceNode?.metadata?.officialActor,
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
@@ -3064,7 +3067,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: requestPrompts[index] || requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, characterReferenceRole: characterReferenceTitles[index], ...generationMetadata },
+                        metadata: { prompt: requestPrompts[index] || requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, officialActor: sourceNode?.metadata?.officialActor, batchRootId: count > 1 ? rootId : undefined, characterReferenceRole: characterReferenceTitles[index], ...generationMetadata },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -3238,6 +3241,7 @@ function InfiniteCanvasPage() {
                 if (mode === "video") {
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
+                    const videoReferenceImages = isSeedanceVideoConfig(generationConfig) ? expandOfficialActorVideoReferenceImages(generationContext.referenceImages) : generationContext.referenceImages;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
                     const parent = sourceNode?.position || { x: 0, y: 0 };
                     const videoNode: CanvasNodeData = {
@@ -3247,16 +3251,16 @@ function InfiniteCanvasPage() {
                         position: isEmptyVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: isEmptyVideoNode ? sourceNode.width : spec.width,
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls(generationContext) },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }) },
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }));
+                        const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, effectivePrompt, videoReferenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }));
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                        setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 }, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls(generationContext) } } : node)));
+                        setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 }, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages }) } } : node)));
                     } finally {
                         finishGenerationRequest(videoId, controller);
                     }
@@ -4222,6 +4226,23 @@ function referenceUrl(image: ReferenceImage) {
     return image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
 }
 
+function expandOfficialActorVideoReferenceImages(images: ReferenceImage[]): ReferenceImage[] {
+    return images.flatMap((image) => {
+        const officialAssetUri = normalizeOfficialActorAssetUri(image.officialAssetUri);
+        if (!isValidOfficialActorAssetUri(officialAssetUri)) return [image];
+        return [
+            {
+                id: `${image.id}:official`,
+                name: `${image.officialAssetName || image.name || "官方虚拟人像"}.png`,
+                type: "image/png",
+                dataUrl: officialAssetUri,
+                url: officialAssetUri,
+            },
+            { ...image, officialAssetUri: undefined, officialAssetName: undefined },
+        ];
+    });
+}
+
 function generationReferenceUrls(context: { referenceImages: ReferenceImage[]; referenceVideos: Array<{ storageKey?: string; url?: string }>; referenceAudios?: Array<{ storageKey?: string; url?: string }> }) {
     return [
         ...context.referenceImages.map(referenceUrl).filter((url): url is string => Boolean(url)),
@@ -4378,6 +4399,13 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
 
 function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) => (node.metadata?.status === "loading" ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } } : node));
+}
+
+function withOfficialActorImagePrompt(prompt: string, node?: CanvasNodeData | null) {
+    const officialActor = node?.type === CanvasNodeType.Image ? node.metadata?.officialActor : undefined;
+    const officialAssetUri = normalizeOfficialActorAssetUri(officialActor?.assetUri);
+    if (!isValidOfficialActorAssetUri(officialAssetUri)) return prompt;
+    return `${prompt}\n\n官方虚拟人像基座：${officialActor?.name || "自定义官方虚拟人像"}，素材 ID：${officialAssetUri}。请将该官方虚拟人像作为角色脸部细节和身份基座，先生成一张可预览的完整角色图；服装、体态、姿势、镜头、场景和画风按用户提示词执行。画面保持非真人虚拟角色/2.5D 数字角色质感，不要真实摄影皮肤毛孔，不要现实人物肖像。`;
 }
 
 function isGenerationCanceled(error: unknown) {
@@ -4620,6 +4648,10 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
     }
     if (asset.kind === "prop") {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
+    }
+    const officialUri = normalizeOfficialActorAssetUri(asset.officialActor?.assetUri);
+    if (asset.kind === "character" && isValidOfficialActorAssetUri(officialUri)) {
+        return `${prompt}\n\n官方虚拟人像基座：${asset.officialActor?.name || asset.name}，素材 ID：${officialUri}。请把这个官方虚拟人像理解为角色脸部基座，生成一张可预览的完整角色图；脸部方向、年龄气质和身份感向官方基座靠拢，但画面重点仍按本提示词生成服装、发型整理、体态、姿势、画风、光影和场景。生成结果必须是非真人虚拟角色/2.5D 数字角色质感，不要真实摄影皮肤毛孔，不要现实人物肖像。`;
     }
     return prompt;
 }

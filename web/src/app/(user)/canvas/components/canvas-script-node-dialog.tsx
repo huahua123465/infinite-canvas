@@ -237,7 +237,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
                                     <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
-                                    {editingAsset.kind === "character" ? <OfficialActorEditor asset={editingAsset} onChange={(patch) => onUpdateAsset(node.id, editingAsset.id, patch)} /> : null}
+                                    {editingAsset.kind === "character" ? <OfficialActorEditor asset={editingAsset} onChange={(patch) => onUpdateAsset(node.id, editingAsset.id, { ...patch, status: "idle", errorDetails: undefined })} /> : null}
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
                                 <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
