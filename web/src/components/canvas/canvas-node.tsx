@@ -13,13 +13,13 @@ import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardAudioReference, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
-const STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT: Record<StoryboardVideoReferenceRole, string> = { firstFrame: "首帧", reference: "参考", lastFrame: "尾帧" };
-const STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER: Record<StoryboardVideoReferenceRole, number> = { firstFrame: 0, reference: 1, lastFrame: 2 };
+const STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT: Record<StoryboardVideoReferenceRole, string> = { firstFrame: "首帧", sceneLock: "场景锁定", reference: "参考", lastFrame: "尾帧" };
+const STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER: Record<StoryboardVideoReferenceRole, number> = { firstFrame: 0, sceneLock: 1, reference: 2, lastFrame: 3 };
 export type StoryboardImportPreview = { rows: string[][]; raw: string; model: string };
 
 type CanvasNodeProps = {
@@ -805,6 +805,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
             const assetLinks = storyboardVideoAssetLinks(node);
             const assetPreviews = storyboardVideoAssetPreviews(node, assetLinks);
             const firstFrameSource = storyboardFirstFrameSourceText(assetPreviews);
+            const sceneLockCount = assetPreviews.filter((item) => item.role === "sceneLock").length;
             const continuityText = firstFrameSource ? `首帧来自 ${firstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "未接入上一镜尾帧" : "";
             const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
             const missingCount = assetLinks.filter((link) => link.status === "missing").length;
@@ -833,6 +834,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                     </div>
                     <div className="space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
+                        {sceneLockCount ? <div className="inline-flex w-fit rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">场景锁定 {sceneLockCount} 张</div> : null}
                         {continuityText ? <div className={`inline-flex w-fit rounded px-2 py-0.5 text-[10px] font-semibold ${firstFrameSource ? "bg-blue-500/15 text-blue-300" : "bg-amber-500/15 text-amber-300"}`}>{continuityText}</div> : null}
                         <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
                             <span className="min-w-0 truncate">{isError ? "请查看上方失败原因，调整参考或提示词后重试" : helperText}</span>
@@ -1014,9 +1016,9 @@ function StoryboardAssetPreviewStrip({ items }: { items: StoryboardVideoReferenc
             <div className="text-[10px] font-semibold tracking-[0.14em] opacity-50">参考资产</div>
             <div className="flex gap-1.5 overflow-hidden">
                 {ordered.slice(0, 5).map((item) => (
-                    <div key={item.mention} title={storyboardReferenceTitle(item)} className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: item.status === "bound" ? (item.role === "firstFrame" ? "#38bdf8" : selectionBlue) : "#f59e0b", background: item.status === "bound" ? `${selectionBlue}1a` : "rgba(245, 158, 11, .12)" }}>
+                    <div key={item.mention} title={storyboardReferenceTitle(item)} className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: item.status === "bound" ? storyboardReferenceRoleColor(item.role) : "#f59e0b", background: item.status === "bound" ? `${selectionBlue}1a` : "rgba(245, 158, 11, .12)" }}>
                         {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] leading-3 text-amber-200">未绑定</div>}
-                        <div className={`absolute left-0.5 top-0.5 rounded px-1 text-[9px] font-semibold text-white ${item.role === "firstFrame" ? "bg-sky-500/90" : "bg-black/70"}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
+                        <div className={`absolute left-0.5 top-0.5 rounded px-1 text-[9px] font-semibold text-white ${storyboardReferenceRoleBadgeClass(item.role)}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
                         <div className="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-white">{item.mention}</div>
                     </div>
                 ))}
@@ -1024,6 +1026,20 @@ function StoryboardAssetPreviewStrip({ items }: { items: StoryboardVideoReferenc
             </div>
         </div>
     );
+}
+
+function storyboardReferenceRoleColor(role?: StoryboardVideoReferenceRole) {
+    if (role === "firstFrame") return "#38bdf8";
+    if (role === "sceneLock") return "#22c55e";
+    if (role === "lastFrame") return "#a855f7";
+    return selectionBlue;
+}
+
+function storyboardReferenceRoleBadgeClass(role?: StoryboardVideoReferenceRole) {
+    if (role === "firstFrame") return "bg-sky-500/90";
+    if (role === "sceneLock") return "bg-emerald-500/90";
+    if (role === "lastFrame") return "bg-fuchsia-500/90";
+    return "bg-black/70";
 }
 
 function storyboardFirstFrameSourceText(items: StoryboardVideoReference[]) {
@@ -1034,13 +1050,14 @@ function storyboardFirstFrameSourceText(items: StoryboardVideoReference[]) {
 function storyboardReferenceTitle(item: StoryboardVideoReference) {
     const role = STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"];
     const status = item.status === "bound" ? "已绑定" : "未绑定";
-    return `${role}｜${item.mention} ${status}${item.role === "firstFrame" && item.mention.includes("尾帧") ? "，将作为本镜头起始画面" : ""}`;
+    return `${role}｜${item.mention} ${status}${item.role === "firstFrame" && item.mention.includes("尾帧") ? "，将作为本镜头起始画面" : ""}${item.role === "sceneLock" ? "，用于锁定同一地点的空间结构和光线" : ""}`;
 }
 
 function storyboardReferenceStatusText(item: StoryboardVideoReference) {
     if (item.status !== "bound") return "未绑定，生成时不会传入图片";
     if (item.role === "firstFrame" && item.mention.includes("尾帧")) return `作为首帧传入：${item.mention.replace(/^@/, "")}`;
     if (item.role === "firstFrame") return "已作为首帧参考图传入";
+    if (item.role === "sceneLock") return "已作为场景锁定参考图传入";
     if (item.role === "lastFrame") return "已作为尾帧参考图传入";
     return "已作为参考图传入";
 }
@@ -1132,7 +1149,9 @@ function StoryboardVideoPromptPreviewModal({
     const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
     const prompt = node.metadata?.prompt || "";
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
-    const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references);
+    const audioReferences = node.metadata?.storyboardVideoAudioReferences || [];
+    const audioContinuityPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
+    const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references, audioReferences);
     const referencesKey = references.map((item) => `${item.mention}:${item.role || "reference"}:${item.status}:${item.storageKey || item.url || ""}`).join("|");
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
     const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
@@ -1149,9 +1168,9 @@ function StoryboardVideoPromptPreviewModal({
     useEffect(() => {
         if (!open) return;
         setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
-        setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references));
+        setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences));
         setSaveHint("");
-    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, referencesKey]);
+    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, referencesKey, audioReferences]);
 
     useEffect(() => {
         return () => {
@@ -1236,7 +1255,7 @@ function StoryboardVideoPromptPreviewModal({
                 <section>
                     <div className="mb-2 flex items-center justify-between">
                         <div className="text-sm font-semibold">参考资产</div>
-                        <span className="text-xs text-stone-500">顺序：首帧 → 参考 → 尾帧</span>
+                        <span className="text-xs text-stone-500">顺序：首帧 → 场景锁定 → 参考 → 尾帧</span>
                     </div>
                     {orderedReferences.length ? (
                         <div className="grid grid-cols-3 gap-3">
@@ -1244,7 +1263,7 @@ function StoryboardVideoPromptPreviewModal({
                                 <div key={`${item.mention}-${index}`} className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
                                     <div className="relative aspect-[4/3] bg-stone-100 dark:bg-stone-800">
                                         {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full items-center justify-center text-xs text-amber-500">未绑定图片</div>}
-                                        <div className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${item.role === "firstFrame" ? "bg-sky-500/90" : "bg-black/70"}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
+                                        <div className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${storyboardReferenceRoleBadgeClass(item.role)}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
                                     </div>
                                     <div className="space-y-1 px-2 py-2 text-xs">
                                         <div className="truncate font-semibold">{item.mention}</div>
@@ -1261,6 +1280,20 @@ function StoryboardVideoPromptPreviewModal({
                     <section>
                         <div className="mb-2 text-sm font-semibold">首尾帧连续性补充</div>
                         <PromptPreviewBox>{renderStoryboardPromptMentions(continuityPrompt, assetLinks, theme)}</PromptPreviewBox>
+                    </section>
+                ) : null}
+                {audioContinuityPrompt ? (
+                    <section>
+                        <div className="mb-2 text-sm font-semibold">声音一致性补充</div>
+                        <div className="grid gap-2">
+                            {audioReferences.map((item) => (
+                                <div key={item.mention} className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs">
+                                    <div className="mb-1 font-semibold text-cyan-700 dark:text-cyan-200">{item.mention}</div>
+                                    {item.url || item.storageKey ? <audio src={item.url || item.storageKey} controls className="h-8 w-full" /> : <div className="text-amber-500">声音样本未绑定</div>}
+                                </div>
+                            ))}
+                            <PromptPreviewBox>{renderStoryboardPromptMentions(audioContinuityPrompt, assetLinks, theme)}</PromptPreviewBox>
+                        </div>
                     </section>
                 ) : null}
                 <section>
@@ -1403,21 +1436,34 @@ function storyboardVideoConfigPatch(config: AiConfig, prompt: string, finalPromp
     };
 }
 
-function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[]) {
+function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[], audioReferences?: StoryboardAudioReference[]) {
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
-    return continuityPrompt ? `${prompt}\n\n${continuityPrompt}`.trim() : prompt;
+    const audioPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
+    return [prompt, continuityPrompt, audioPrompt].filter(Boolean).join("\n\n").trim();
+}
+
+function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
+    const voiceLocks = (references || []).filter((item) => item.role === "voiceLock");
+    if (!voiceLocks.length) return "";
+    return [
+        "视频声音一致性要求：",
+        `- 参考角色声音样本锁定音色、年龄感、气息、语速和情绪强度：${voiceLocks.map((item) => item.mention).join("、")}。`,
+        "- 同一角色在不同镜头中不要突然改变音色、口音、语速或情绪强度；背景音乐和环境音不要盖过对白。",
+    ].join("\n");
 }
 
 function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[]) {
     if (!references?.length) return "";
     const firstFrames = references.filter((item) => item.role === "firstFrame");
+    const sceneLocks = references.filter((item) => item.role === "sceneLock");
     const lastFrames = references.filter((item) => item.role === "lastFrame");
-    if (!firstFrames.length && !lastFrames.length) return "";
+    if (!firstFrames.length && !sceneLocks.length && !lastFrames.length) return "";
     return [
         "视频连续性要求：",
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
+        sceneLocks.length ? `- 以场景锁定参考图统一同一地点的空间结构、门窗位置、材质、道具摆放、光线方向和时代质感：${sceneLocks.map((item) => item.mention).join("、")}；如果参考图是多角度 sheet，只用于理解空间关系，不要生成分屏、拼图或多宫格画面。` : "",
         lastFrames.length ? `- 视频动作和镜头运动需要自然过渡到尾帧参考图对应的结束状态：${lastFrames.map((item) => item.mention).join("、")}` : "",
-        "- 保持人物身份、服装、场景、光影和空间关系连续，不要突然切换角色外观或场景结构。",
+        "- 保持人物身份、服装、场景、光影和空间关系连续；同一镜头只使用一个主运镜，换角度时不要重塑场景结构。",
     ]
         .filter(Boolean)
         .join("\n");
@@ -1638,12 +1684,16 @@ function storyboardVideoReferencePatch(references: StoryboardVideoReference[]): 
 
 function storyboardVideoReferenceSavePatch(node: CanvasNodeData, references: StoryboardVideoReference[]): Partial<CanvasNodeMetadata> {
     const patch = storyboardVideoReferencePatch(references);
-    const basePrompt = stripStoryboardVideoFrameContinuityPrompt(node.metadata?.storyboardVideoFinalPrompt || node.metadata?.prompt || "");
-    return { ...patch, storyboardVideoFinalPrompt: storyboardVideoFinalPrompt(basePrompt, patch.storyboardVideoReferences || []) };
+    const basePrompt = stripStoryboardVideoAudioContinuityPrompt(stripStoryboardVideoFrameContinuityPrompt(node.metadata?.storyboardVideoFinalPrompt || node.metadata?.prompt || ""));
+    return { ...patch, storyboardVideoFinalPrompt: storyboardVideoFinalPrompt(basePrompt, patch.storyboardVideoReferences || [], node.metadata?.storyboardVideoAudioReferences) };
 }
 
 function stripStoryboardVideoFrameContinuityPrompt(prompt: string) {
     return prompt.split(/\n\n视频连续性要求：/)[0].trim();
+}
+
+function stripStoryboardVideoAudioContinuityPrompt(prompt: string) {
+    return prompt.split(/\n\n视频声音一致性要求：/)[0].trim();
 }
 
 function normalizeStoryboardMention(value: string) {

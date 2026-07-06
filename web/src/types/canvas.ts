@@ -24,6 +24,7 @@ export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
+export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 
 export type StoryboardAsset = {
     id: string;
@@ -35,6 +36,16 @@ export type StoryboardAsset = {
     storageKey?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
+    sceneSheetUrl?: string;
+    sceneSheetStorageKey?: string;
+    sceneSheetStatus?: CanvasNodeStatus;
+    sceneSheetError?: string;
+    voicePrompt?: string;
+    voiceAudioUrl?: string;
+    voiceAudioStorageKey?: string;
+    voiceAudioDurationMs?: number;
+    voiceAudioStatus?: CanvasNodeStatus;
+    voiceAudioError?: string;
 };
 
 export type StoryboardAssetMentionLink = {
@@ -48,13 +59,23 @@ export type StoryboardAssetMentionLink = {
     url?: string;
 };
 
-export type StoryboardVideoReferenceRole = "reference" | "firstFrame" | "lastFrame";
+export type StoryboardVideoReferenceRole = "reference" | "sceneLock" | "firstFrame" | "lastFrame";
 export const STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT = "infinite-canvas:storyboard-video-prompt-preview";
 
 export type StoryboardVideoReference = StoryboardAssetMentionLink & {
     url?: string;
     storageKey?: string;
     role?: StoryboardVideoReferenceRole;
+    sceneGroupId?: string;
+    sceneViewRole?: SceneViewRole;
+    source?: "script" | "asset" | "node";
+};
+
+export type StoryboardAudioReference = StoryboardAssetMentionLink & {
+    url?: string;
+    storageKey?: string;
+    durationMs?: number;
+    role?: "voiceLock" | "audioReference";
     source?: "script" | "asset" | "node";
 };
 
@@ -98,6 +119,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetMentionLinks?: StoryboardAssetMentionLink[];
     storyboardAssetReferenceNodeIds?: string[];
     storyboardVideoReferences?: StoryboardVideoReference[];
+    storyboardVideoAudioReferences?: StoryboardAudioReference[];
     storyboardVideoFinalPrompt?: string;
     storyboardVideoDraftNodeId?: string;
     storyboardVideoVariantIndex?: number;
@@ -152,7 +174,7 @@ export type CanvasNodeMetadata = {
     disableAutoMultiView?: boolean;
     multiViewRole?: "grid" | "front" | "top" | "left" | "right";
     multiViewSourceNodeId?: string;
-    sceneViewRole?: "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
+    sceneViewRole?: SceneViewRole;
     sceneGroupId?: string;
     requiredSceneViewRoles?: Array<"front" | "top">;
 };

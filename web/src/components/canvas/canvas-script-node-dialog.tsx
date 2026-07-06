@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, Dropdown, Modal } from "antd";
-import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Square, Upload, Video, X } from "lucide-react";
+import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -33,6 +33,8 @@ type CanvasScriptNodeDialogProps = {
     onUpdateAsset: (nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => void;
     onUploadAssetImage: (nodeId: string, assetId: string, file: File) => void;
     onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void;
+    onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void;
+    onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void;
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
     onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
@@ -45,7 +47,7 @@ type CanvasScriptNodeDialogProps = {
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -61,10 +63,12 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const hasPartialAssets = readyAssets > 0 && missingAssets > 0;
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+    const [previewSceneSheetAssetId, setPreviewSceneSheetAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
     const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
+    const previewSceneSheetAsset = assets.find((asset) => asset.id === previewSceneSheetAssetId) || null;
     const editingAssetHasImage = Boolean(editingAsset?.imageUrl || editingAsset?.storageKey);
     const editingAssetGenerating = Boolean(editingAsset && (actionKey === `asset:${editingAsset.id}` || editingAsset.status === "loading"));
     const assetActionBusy = Boolean(actionKey?.startsWith("asset:") && actionKey !== `asset:${editingAsset?.id}`);
@@ -192,6 +196,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onPrepareAssets={onPrepareAssets}
                             onSelectAsset={setEditingAssetId}
                             onGenerateAssetImage={onGenerateAssetImage}
+                            onGenerateSceneSheet={onGenerateSceneSheet}
+                            onGenerateAssetVoice={onGenerateAssetVoice}
+                            onPreviewSceneSheet={setPreviewSceneSheetAssetId}
                         />
                     ) : view === "prompts" ? (
                         <PromptComposeView
@@ -233,6 +240,24 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onClose={() => setPromptEditorRowIndex(null)}
                         />
                     ) : null}
+                    {previewSceneSheetAsset?.sceneSheetUrl ? (
+                        <Modal open centered footer={null} width="90vw" closeIcon={<X className="size-5" />} onCancel={() => setPreviewSceneSheetAssetId(null)} styles={{ content: { background: "#151515", padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
+                            <div className="flex h-[85vh] flex-col bg-[#151515]">
+                                <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[#2e2e2e] px-5 pr-12">
+                                    <div className="min-w-0">
+                                        <div className="truncate text-sm font-semibold text-[#f1f1f1]">{previewSceneSheetAsset.name} 多角度锁定图</div>
+                                        <div className="text-xs text-[#8b8b8b]">用于检查同一场景不同机位的一致性</div>
+                                    </div>
+                                    <Button type="primary" icon={<Sparkles className="size-4" />} disabled={Boolean(actionKey && actionKey !== `asset-sheet:${previewSceneSheetAsset.id}`)} onClick={() => node && onGenerateSceneSheet(node, previewSceneSheetAsset.id)}>
+                                        重做多角度锁定图
+                                    </Button>
+                                </div>
+                                <div className="grid min-h-0 flex-1 place-items-center bg-black/70 p-4">
+                                    <img src={previewSceneSheetAsset.sceneSheetUrl} alt={`${previewSceneSheetAsset.name} 多角度锁定图`} className="max-h-full max-w-full object-contain" />
+                                </div>
+                            </div>
+                        </Modal>
+                    ) : null}
                     {editingAsset ? (
                         <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setEditingAssetId(null)}>
                             <div className="absolute inset-y-0 right-0 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
@@ -269,6 +294,19 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
                                     <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
+                                    {editingAsset.kind === "character" ? (
+                                        <div className="mt-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-3">
+                                                <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-100"><Volume2 className="size-4" />角色声音</div>
+                                                <Button size="small" icon={editingAsset.voiceAudioStatus === "loading" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />} disabled={Boolean(actionKey && actionKey !== `asset-voice:${editingAsset.id}`)} onClick={() => onGenerateAssetVoice(node, editingAsset.id)}>
+                                                    {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? "重做声音" : "生成试听"}
+                                                </Button>
+                                            </div>
+                                            <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
+                                            {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? <audio src={editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey} controls className="mt-3 h-9 w-full" /> : <div className="mt-2 text-xs leading-5 text-cyan-100/70">生成后可在这里试听；后续视频会把这段声音作为角色音色参考。</div>}
+                                            {editingAsset.voiceAudioError ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.voiceAudioError}</div> : null}
+                                        </div>
+                                    ) : null}
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
                                 <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
@@ -724,7 +762,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, onPrepareAssets, onSelectAsset, onGenerateAssetImage }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void }) {
+function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onGenerateSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
     const progress = node.metadata?.storyboardAssetProgress;
     return (
@@ -740,7 +778,7 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, o
                     <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
                         {groupedAssets[kind].map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} />
+                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
                         ))}
                         <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
                             <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
@@ -802,11 +840,26 @@ function AssetRecognitionProgress({ progress }: { progress?: StoryboardAssetProg
     );
 }
 
-function AssetCard({ asset, actionKey, onSelect, onGenerate }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void }) {
+function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
     const hasImage = Boolean(asset.imageUrl || asset.storageKey);
+    const sheetLoading = actionKey === `asset-sheet:${asset.id}` || asset.sceneSheetStatus === "loading";
+    const hasSceneSheet = Boolean(asset.sceneSheetUrl || asset.sceneSheetStorageKey);
+    const voiceLoading = actionKey === `asset-voice:${asset.id}` || asset.voiceAudioStatus === "loading";
+    const hasVoice = Boolean(asset.voiceAudioUrl || asset.voiceAudioStorageKey);
     return (
-        <button className="group min-w-0 text-left" onClick={onSelect}>
+        <div
+            className="group min-w-0 cursor-pointer text-left"
+            role="button"
+            tabIndex={0}
+            onClick={onSelect}
+            onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect();
+                }
+            }}
+        >
             <div className="relative mb-2 grid aspect-[16/9] place-items-center overflow-hidden rounded-lg border border-dashed border-[#3f3f3f] bg-[#111] text-xs text-[#818181] transition group-hover:border-[#6a6a6a]">
                 {asset.imageUrl ? <img src={asset.imageUrl} alt={asset.name} className="size-full object-cover" /> : loading ? <LoaderCircle className="size-6 animate-spin" /> : `生成或上传${ASSET_KIND_LABEL[asset.kind]}图`}
                 <span
@@ -820,9 +873,66 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate }: { asset: Storyboa
                     <Sparkles className="size-3.5" />
                 </span>
             </div>
+            {asset.kind === "scene" ? (
+                <div className="mb-2 overflow-hidden rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+                    {hasSceneSheet ? (
+                        <div
+                            className="relative aspect-[16/9] bg-black"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                if (asset.sceneSheetUrl) onPreviewSceneSheet();
+                            }}
+                        >
+                            {asset.sceneSheetUrl ? <img src={asset.sceneSheetUrl} alt={`${asset.name} 多角度锁定图`} className="size-full object-contain" /> : <div className="grid size-full place-items-center text-[11px] text-emerald-200">多角度已锁定</div>}
+                            <span className="absolute left-2 top-2 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">多角度</span>
+                            {asset.sceneSheetUrl ? <span className="absolute right-2 top-2 grid size-7 place-items-center rounded bg-black/75 text-white"><Maximize2 className="size-3.5" /></span> : null}
+                        </div>
+                    ) : (
+                        <div className="grid min-h-16 place-items-center px-3 py-3 text-center text-[11px] leading-5 text-emerald-200/80">生成一张多角度锁定图，视频阶段用于理解同一地点不同机位</div>
+                    )}
+                    <button
+                        type="button"
+                        className="flex h-8 w-full items-center justify-center gap-1.5 border-t border-emerald-500/15 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-60"
+                        disabled={Boolean(actionKey && actionKey !== `asset-sheet:${asset.id}`)}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onGenerateSceneSheet();
+                        }}
+                    >
+                        {sheetLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                        {hasSceneSheet ? "重做多角度锁定图" : "生成多角度锁定图"}
+                    </button>
+                    {asset.sceneSheetError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.sceneSheetError}</div> : null}
+                </div>
+            ) : null}
+            {asset.kind === "character" ? (
+                <div className="mb-2 overflow-hidden rounded-lg border border-cyan-500/20 bg-cyan-500/5">
+                    <div className="px-2.5 py-2">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-cyan-100"><Volume2 className="size-3.5" />角色声音</div>
+                        {hasVoice ? (
+                            <audio src={asset.voiceAudioUrl || asset.voiceAudioStorageKey} controls className="h-8 w-full" onClick={(event) => event.stopPropagation()} />
+                        ) : (
+                            <div className="text-[11px] leading-5 text-cyan-100/75">生成一段试听声音，后续视频会用它锁定角色音色</div>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        className="flex h-8 w-full items-center justify-center gap-1.5 border-t border-cyan-500/15 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-60"
+                        disabled={Boolean(actionKey && actionKey !== `asset-voice:${asset.id}`)}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onGenerateAssetVoice();
+                        }}
+                    >
+                        {voiceLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />}
+                        {hasVoice ? "重做角色声音" : "生成角色声音"}
+                    </button>
+                    {asset.voiceAudioError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.voiceAudioError}</div> : null}
+                </div>
+            ) : null}
             <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
-        </button>
+        </div>
     );
 }
 
