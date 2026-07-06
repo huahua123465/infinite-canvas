@@ -216,7 +216,7 @@ JSON 格式必须为：
 2. 角色优先提炼姓名、年龄、体型、穿着、气质、情绪基调。
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
-5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词也必须使用同一风格，不要改成写实纪实、真人电影或其他风格。
+5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词必须以这些风格词开头，不要改成写实纪实、真实摄影、真人电影感或其他风格。
 6. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
 7. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
 8. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
@@ -1942,7 +1942,7 @@ function InfiniteCanvasPage() {
                     updateProgress(70, "模型返回中，整理角色与场景");
                 });
                 updateProgress(86, "解析角色、场景和道具");
-                const parsed = parseStoryboardAssetAnswer(answer);
+                const parsed = alignStoryboardAssetsWithSourceStyle(parseStoryboardAssetAnswer(answer), source);
                 updateProgress(96, "写入资产卡片");
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -5089,8 +5089,9 @@ function normalizeAssetMention(value: string) {
 
 function storyboardSourceTextForNode(node: CanvasNodeData) {
     const sourceText = node.metadata?.storyboardSourceText?.trim();
-    if (sourceText) return sourceText;
     const prompt = storyboardDirectorInstructionForNode(node);
+    if (sourceText && prompt && !sourceText.includes(prompt)) return `【整体要求/导演提示词】\n${prompt}\n\n${sourceText}`;
+    if (sourceText) return sourceText;
     if (prompt) return prompt;
     if (!node.metadata?.storyboardRows?.length) return node.metadata?.content?.trim() || "";
     return "";
@@ -5111,6 +5112,33 @@ function parseStoryboardAssetAnswer(content: string): { style: string; assets: S
         .slice(0, 30);
     if (!assets.length) throw new Error("没有识别到角色、场景或道具资产");
     return { style: !Array.isArray(data) && typeof data.style === "string" ? data.style.trim() : "", assets };
+}
+
+function alignStoryboardAssetsWithSourceStyle(parsed: { style: string; assets: StoryboardAsset[] }, source: string): { style: string; assets: StoryboardAsset[] } {
+    const style = storyboardExplicitStyleForSource(source);
+    if (!style) return parsed;
+    const cleanConflictStyle = (value: string) => value.replace(/写实电影感|写实风格|写实纪实|真实摄影|真人电影感|纪实摄影/g, "").replace(/\s+/g, " ").replace(/^，+|，+$/g, "").trim();
+    const withStyle = (value: string) => {
+        const clean = cleanConflictStyle(value);
+        if (!clean) return style;
+        return clean.includes(style) ? clean : `${style}，${clean}`;
+    };
+    return {
+        style: withStyle(parsed.style || style),
+        assets: parsed.assets.map((asset) => ({
+            ...asset,
+            prompt: withStyle(asset.prompt || asset.description),
+        })),
+    };
+}
+
+function storyboardExplicitStyleForSource(source: string) {
+    const bracketMatch = source.match(/整体风格(?:为|：|:)?[^\n]*((?:【[^】]+】)+)/);
+    if (bracketMatch?.[1]) {
+        const styles = Array.from(bracketMatch[1].matchAll(/【([^】]+)】/g)).map((match) => match[1].trim()).filter(Boolean);
+        if (styles.length) return styles.join("，");
+    }
+    return "";
 }
 
 function collectStoryboardAssetRecords(data: Record<string, unknown> | unknown[]): Array<{ item: unknown; kind?: StoryboardAssetKind }> {
