@@ -3506,6 +3506,7 @@ function InfiniteCanvasPage() {
                                 node.metadata?.storyboardSourceNodeId,
                                 node.metadata?.storyboardRowIndex,
                                 tailFrame,
+                                completedResult.metadata?.storyboardVideoVariantIndex,
                             ),
                         );
                         message.success("已生成一版视频");
@@ -3517,6 +3518,7 @@ function InfiniteCanvasPage() {
                             node.metadata?.storyboardSourceNodeId,
                             node.metadata?.storyboardRowIndex,
                             tailFrame,
+                            node.metadata?.storyboardVideoVariantIndex,
                         ),
                     );
                     return;
@@ -4914,8 +4916,8 @@ function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnTyp
     }));
 }
 
-function storyboardTailFrameReference(previousRowIndex: number, image: Pick<UploadedImage, "url" | "storageKey">): StoryboardVideoReference {
-    const name = `第${previousRowIndex + 1}镜尾帧`;
+function storyboardTailFrameReference(previousRowIndex: number, image: Pick<UploadedImage, "url" | "storageKey">, variantIndex?: number): StoryboardVideoReference {
+    const name = `第 ${previousRowIndex + 1} 镜${variantIndex ? ` v${variantIndex}` : ""} 尾帧`;
     return {
         mention: `@${name}`,
         name,
@@ -4933,7 +4935,7 @@ function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: nu
     const candidates = nodes.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1 && (node.metadata.storyboardVideoTailFrameStorageKey || node.metadata.storyboardVideoTailFrameUrl));
     const previous = candidates.find((node) => node.id === previousDraft?.metadata?.storyboardVideoLatestResultNodeId) || [...candidates].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))[0];
     if (!previous?.metadata?.storyboardVideoTailFrameStorageKey && !previous?.metadata?.storyboardVideoTailFrameUrl) return null;
-    return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" });
+    return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" }, previous.metadata.storyboardVideoVariantIndex);
 }
 
 function isStoryboardVideoDraftNode(node: CanvasNodeData) {
@@ -5020,9 +5022,9 @@ function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?
     return [extra, ...next];
 }
 
-function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null) {
+function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null, variantIndex?: number) {
     if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
-    const reference = storyboardTailFrameReference(rowIndex, tailFrame);
+    const reference = storyboardTailFrameReference(rowIndex, tailFrame, variantIndex);
     return nodes.map((node) => {
         if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content || node.metadata.storyboardVideoDraftNodeId) return node;
         const current = node.metadata.storyboardVideoReferences || [];

@@ -804,7 +804,8 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
         if (isStoryboardVideo) {
             const assetLinks = storyboardVideoAssetLinks(node);
             const assetPreviews = storyboardVideoAssetPreviews(node, assetLinks);
-            const hasPreviousTailFrame = assetPreviews.some((item) => item.role === "firstFrame" && item.mention.includes("尾帧"));
+            const firstFrameSource = storyboardFirstFrameSourceText(assetPreviews);
+            const continuityText = firstFrameSource ? `首帧来自 ${firstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "未接入上一镜尾帧" : "";
             const boundCount = node.metadata?.storyboardAssetReferenceNodeIds?.length || assetLinks.filter((link) => link.status === "bound").length || 0;
             const missingCount = assetLinks.filter((link) => link.status === "missing").length;
             const statusText = isLoading ? videoGenerationStatusText(videoProgress) : isError ? "生成失败" : "待审核";
@@ -832,7 +833,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                     </div>
                     <div className="space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
-                        {hasPreviousTailFrame ? <div className="inline-flex w-fit rounded bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-300">已使用上一镜尾帧作为首帧</div> : null}
+                        {continuityText ? <div className={`inline-flex w-fit rounded px-2 py-0.5 text-[10px] font-semibold ${firstFrameSource ? "bg-blue-500/15 text-blue-300" : "bg-amber-500/15 text-amber-300"}`}>{continuityText}</div> : null}
                         <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
                             <span className="min-w-0 truncate">{isError ? "请查看上方失败原因，调整参考或提示词后重试" : helperText}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
@@ -1013,9 +1014,9 @@ function StoryboardAssetPreviewStrip({ items }: { items: StoryboardVideoReferenc
             <div className="text-[10px] font-semibold tracking-[0.14em] opacity-50">参考资产</div>
             <div className="flex gap-1.5 overflow-hidden">
                 {ordered.slice(0, 5).map((item) => (
-                    <div key={item.mention} title={item.status === "bound" ? `${item.mention} 已绑定` : `${item.mention} 未绑定`} className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: item.status === "bound" ? selectionBlue : "#f59e0b", background: item.status === "bound" ? `${selectionBlue}1a` : "rgba(245, 158, 11, .12)" }}>
+                    <div key={item.mention} title={storyboardReferenceTitle(item)} className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border" style={{ borderColor: item.status === "bound" ? (item.role === "firstFrame" ? "#38bdf8" : selectionBlue) : "#f59e0b", background: item.status === "bound" ? `${selectionBlue}1a` : "rgba(245, 158, 11, .12)" }}>
                         {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] leading-3 text-amber-200">未绑定</div>}
-                        <div className="absolute left-0.5 top-0.5 rounded bg-black/70 px-1 text-[9px] font-semibold text-white">{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"].slice(0, 1)}</div>
+                        <div className={`absolute left-0.5 top-0.5 rounded px-1 text-[9px] font-semibold text-white ${item.role === "firstFrame" ? "bg-sky-500/90" : "bg-black/70"}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
                         <div className="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-white">{item.mention}</div>
                     </div>
                 ))}
@@ -1023,6 +1024,25 @@ function StoryboardAssetPreviewStrip({ items }: { items: StoryboardVideoReferenc
             </div>
         </div>
     );
+}
+
+function storyboardFirstFrameSourceText(items: StoryboardVideoReference[]) {
+    const firstFrame = sortStoryboardVideoReferences(items).find((item) => item.role === "firstFrame" && item.mention.includes("尾帧"));
+    return firstFrame ? firstFrame.mention.replace(/^@/, "") : "";
+}
+
+function storyboardReferenceTitle(item: StoryboardVideoReference) {
+    const role = STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"];
+    const status = item.status === "bound" ? "已绑定" : "未绑定";
+    return `${role}｜${item.mention} ${status}${item.role === "firstFrame" && item.mention.includes("尾帧") ? "，将作为本镜头起始画面" : ""}`;
+}
+
+function storyboardReferenceStatusText(item: StoryboardVideoReference) {
+    if (item.status !== "bound") return "未绑定，生成时不会传入图片";
+    if (item.role === "firstFrame" && item.mention.includes("尾帧")) return `作为首帧传入：${item.mention.replace(/^@/, "")}`;
+    if (item.role === "firstFrame") return "已作为首帧参考图传入";
+    if (item.role === "lastFrame") return "已作为尾帧参考图传入";
+    return "已作为参考图传入";
 }
 
 function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -1118,16 +1138,47 @@ function StoryboardVideoPromptPreviewModal({
     const orderedReferences = sortStoryboardVideoReferences(draftReferences);
     const mentionReferences = storyboardReferencesToCanvasResources([...referenceCandidates, ...draftReferences]);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
+    const [saveHint, setSaveHint] = useState("");
+    const saveHintTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         if (!open) return;
         setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
         setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references));
+        setSaveHint("");
     }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, referencesKey]);
 
-    const updateDraftConfig = (patch: Partial<AiConfig>) => {
-        setDraftConfig((current) => ({ ...current, ...patch }));
+    useEffect(() => {
+        return () => {
+            if (saveHintTimerRef.current) window.clearTimeout(saveHintTimerRef.current);
+        };
+    }, []);
+
+    const markAutoSaved = () => {
+        setSaveHint("已自动保存");
+        if (saveHintTimerRef.current) window.clearTimeout(saveHintTimerRef.current);
+        saveHintTimerRef.current = window.setTimeout(() => setSaveHint(""), 1800);
     };
+
+    const saveDraft = (config: AiConfig, finalPrompt: string) => {
+        const nextReferences = storyboardVideoReferencesFromPrompt(finalPrompt, references, referenceCandidates);
+        onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()) });
+        markAutoSaved();
+    };
+
+    const updateDraftConfig = (patch: Partial<AiConfig>) => {
+        setDraftConfig((current) => {
+            const next = { ...current, ...patch };
+            saveDraft(next, draftFinalPrompt);
+            return next;
+        });
+    };
+
+    const updateDraftFinalPrompt = (value: string) => {
+        setDraftFinalPrompt(value);
+        saveDraft(draftConfig, value);
+    };
+
     const generate = () => {
         const patch = { ...storyboardVideoReferencePatch(draftReferences), ...storyboardVideoConfigPatch(draftConfig, prompt, draftFinalPrompt.trim()) };
         onConfigChange(patch);
@@ -1154,7 +1205,10 @@ function StoryboardVideoPromptPreviewModal({
                     卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
                 </div>
                 <section className="rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-950/60">
-                    <div className="mb-2 text-sm font-semibold">视频生成设置</div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">视频生成设置</div>
+                        <span className={`text-xs ${saveHint ? "text-blue-500 dark:text-blue-300" : "text-stone-500"}`}>{saveHint || "修改会自动保存"}</span>
+                    </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={(model) => updateDraftConfig({ model })} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover
@@ -1182,11 +1236,11 @@ function StoryboardVideoPromptPreviewModal({
                                 <div key={`${item.mention}-${index}`} className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900">
                                     <div className="relative aspect-[4/3] bg-stone-100 dark:bg-stone-800">
                                         {item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : <div className="flex h-full items-center justify-center text-xs text-amber-500">未绑定图片</div>}
-                                        <div className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white">{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
+                                        <div className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${item.role === "firstFrame" ? "bg-sky-500/90" : "bg-black/70"}`}>{STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[item.role || "reference"]}</div>
                                     </div>
                                     <div className="space-y-1 px-2 py-2 text-xs">
                                         <div className="truncate font-semibold">{item.mention}</div>
-                                        <div className="truncate text-stone-500">{item.status === "bound" ? "已作为参考图传入" : "未绑定，生成时不会传入图片"}</div>
+                                        <div className="truncate text-stone-500">{storyboardReferenceStatusText(item)}</div>
                                     </div>
                                 </div>
                             ))}
@@ -1209,7 +1263,7 @@ function StoryboardVideoPromptPreviewModal({
                     <CanvasResourceMentionTextarea
                         value={draftFinalPrompt}
                         references={mentionReferences}
-                        onChange={setDraftFinalPrompt}
+                        onChange={updateDraftFinalPrompt}
                         className="thin-scrollbar h-40 w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200"
                         placeholder="请输入最终发送给视频模型的提示词"
                         data-canvas-no-zoom
