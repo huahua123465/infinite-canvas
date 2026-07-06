@@ -5117,14 +5117,19 @@ function parseStoryboardAssetAnswer(content: string): { style: string; assets: S
 function alignStoryboardAssetsWithSourceStyle(parsed: { style: string; assets: StoryboardAsset[] }, source: string): { style: string; assets: StoryboardAsset[] } {
     const style = storyboardExplicitStyleForSource(source);
     if (!style) return parsed;
-    const cleanConflictStyle = (value: string) => value.replace(/写实电影感|写实风格|写实纪实|真实摄影|真人电影感|纪实摄影/g, "").replace(/\s+/g, " ").replace(/^，+|，+$/g, "").trim();
+    const cleanConflictStyle = (value: string) =>
+        value
+            .replace(/[^，。；\n]*(?:写实电影感|写实风格|写实纪实|真实摄影|真人电影感|纪实摄影|农村纪实风)[^，。；\n]*[，,]?/g, "")
+            .replace(/\s+/g, " ")
+            .replace(/^，+|，+$/g, "")
+            .trim();
     const withStyle = (value: string) => {
         const clean = cleanConflictStyle(value);
         if (!clean) return style;
         return clean.includes(style) ? clean : `${style}，${clean}`;
     };
     return {
-        style: withStyle(parsed.style || style),
+        style,
         assets: parsed.assets.map((asset) => ({
             ...asset,
             prompt: withStyle(asset.prompt || asset.description),
@@ -5148,9 +5153,9 @@ function alignStoryboardNodeAssetsWithCurrentStyle(node: CanvasNodeData): Canvas
 }
 
 function storyboardExplicitStyleForSource(source: string) {
-    const bracketMatch = source.match(/整体风格(?:为|：|:)?[^\n]*((?:【[^】]+】)+)/);
-    if (bracketMatch?.[1]) {
-        const styles = Array.from(bracketMatch[1].matchAll(/【([^】]+)】/g)).map((match) => match[1].trim()).filter(Boolean);
+    const styleLine = source.match(/整体风格[^\n]*/)?.[0] || "";
+    if (styleLine) {
+        const styles = Array.from(styleLine.matchAll(/【([^】]+)】/g)).map((match) => match[1].trim()).filter(Boolean);
         if (styles.length) return styles.join("，");
     }
     return "";
