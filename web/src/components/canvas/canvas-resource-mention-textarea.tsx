@@ -28,6 +28,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [hasSelection, setHasSelection] = useState(false);
+    const [isFocused, setIsFocused] = useState(false);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
@@ -83,11 +84,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
     };
 
-    const showOverlay = Boolean(activeLabels.length && !hasSelection);
+    const showOverlay = Boolean(activeLabels.length && !hasSelection && !isFocused);
     const mergedStyle = {
         ...(style || {}),
         color: showOverlay ? "transparent" : style?.color,
-        caretColor: style?.color || theme.node.text,
+        caretColor: style?.caretColor || style?.color || theme.node.text,
         ...(showOverlay ? { background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
     const menu = mention && candidates.length && textareaRef.current ? <MentionMenu textarea={textareaRef.current} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null;
@@ -130,6 +131,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     updateSelectionState();
                     props.onPointerUp?.(event);
                 }}
+                onFocus={(event) => {
+                    setIsFocused(true);
+                    props.onFocus?.(event);
+                }}
                 onKeyDown={(event) => {
                     if (mention && candidates.length) {
                         if (event.key === "ArrowDown") {
@@ -165,6 +170,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     props.onScroll?.(event);
                 }}
                 onBlur={(event) => {
+                    setIsFocused(false);
                     setHasSelection(false);
                     window.setTimeout(closeMention, 120);
                     props.onBlur?.(event);
@@ -217,7 +223,7 @@ function MentionMenu({ textarea, references, activeIndex, theme, onSelect }: { t
     return createPortal(
         <div
             data-canvas-resource-mention-menu="true"
-            className="fixed z-[120] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
+            className="fixed z-[1300] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
             style={{ left, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={stopCanvasInteraction}
             onMouseDown={stopCanvasInteraction}

@@ -3,10 +3,11 @@ import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scis
 
 import type { CanvasNodeData } from "@/types/canvas";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
+export type ImageNodeActionToolId = "preset" | "copyPrompt" | "promptAssistant" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | "edit" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
+    onOpenPreset: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
@@ -17,6 +18,7 @@ export type ImageToolHandlers = {
     onAngle: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onCopyPrompt: (node: CanvasNodeData) => void;
+    onPromptAssistant: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
 };
 
@@ -36,11 +38,20 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v6";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
 
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
+    {
+        id: "preset",
+        defaultVisible: true,
+        panelLabel: "九宫格预设",
+        label: "九宫格",
+        title: "打开九宫格预设",
+        icon: () => <Grid2x2 className="size-4" />,
+        run: (node, handlers) => handlers.onOpenPreset(node),
+    },
     {
         id: "copyPrompt",
         defaultVisible: true,
@@ -49,6 +60,15 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         title: "复制生成该图片的提示词",
         icon: () => <Copy className="size-4" />,
         run: (node, handlers) => handlers.onCopyPrompt(node),
+    },
+    {
+        id: "promptAssistant",
+        defaultVisible: true,
+        panelLabel: "AI改提示词",
+        label: "AI改提示词",
+        title: "使用快捷模板或文本模型修改提示词",
+        icon: () => <Sparkles className="size-4" />,
+        run: (node, handlers) => handlers.onPromptAssistant(node),
     },
     {
         id: "reversePrompt",
@@ -143,7 +163,11 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
 ];
 
-export const defaultImageQuickToolIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.filter((tool) => tool.defaultVisible).map((tool) => tool.id)];
+export const defaultImageQuickToolIds: ImageQuickToolId[] = [
+    ...defaultBaseToolIds,
+    "preset",
+    ...imageToolDefinitions.filter((tool) => tool.defaultVisible && tool.id !== "preset").map((tool) => tool.id),
+];
 
 export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers) {
     return imageToolDefinitions.map((tool) => ({
@@ -156,22 +180,26 @@ export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageTool
     }));
 }
 
-export function normalizeImageQuickToolIds(value: unknown[]) {
+export function normalizeImageQuickToolIds(value: unknown[]): ImageQuickToolId[] {
     const allIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
     const ids = new Set(allIds);
-    return allIds.filter((id) => value.includes(id) && ids.has(id));
+    return allIds.filter((id): id is ImageQuickToolId => value.includes(id) && ids.has(id));
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: true };
+    if (Array.isArray(value)) return { ids: ensurePresetVisible(normalizeImageQuickToolIds(value)), showLabels: true };
     if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: true };
     const data = value as Partial<ImageQuickToolsConfig>;
     return {
-        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
+        ids: Array.isArray(data.ids) ? ensurePresetVisible(normalizeImageQuickToolIds(data.ids)) : defaultImageQuickToolIds,
         showLabels: data.showLabels !== false,
     };
 }
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {
     return typeof value === "function" ? value(node) : value;
+}
+
+function ensurePresetVisible(ids: ImageQuickToolId[]): ImageQuickToolId[] {
+    return ids.includes("preset") ? ids : ["preset", ...ids];
 }

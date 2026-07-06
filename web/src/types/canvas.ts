@@ -15,14 +15,113 @@ export enum CanvasNodeType {
     Config = "config",
     Video = "video",
     Audio = "audio",
+    Script = "script",
+    Workspace = "workspace",
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
+export type StoryboardAssetKind = "character" | "scene" | "prop";
+export type StoryboardStep = "shots" | "assets" | "prompts";
+
+export type OfficialVirtualActorBinding = {
+    id: string;
+    name: string;
+    description: string;
+    traits: string[];
+    assetUri?: string;
+    matchReason?: string;
+    confidence?: number;
+};
+
+export type StoryboardAsset = {
+    id: string;
+    kind: StoryboardAssetKind;
+    name: string;
+    description: string;
+    prompt: string;
+    imageUrl?: string;
+    storageKey?: string;
+    status?: CanvasNodeStatus;
+    errorDetails?: string;
+    officialActor?: OfficialVirtualActorBinding;
+};
+
+export type StoryboardAssetMentionLink = {
+    mention: string;
+    name: string;
+    status: "bound" | "missing";
+    assetId?: string;
+    nodeId?: string;
+    kind?: StoryboardAssetKind;
+    source?: "node" | "officialActor" | "script" | "asset";
+    url?: string;
+};
+
+export type StoryboardVideoReferenceRole = "reference" | "firstFrame" | "lastFrame";
+export const STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT = "infinite-canvas:storyboard-video-prompt-preview";
+
+export type StoryboardVideoReference = StoryboardAssetMentionLink & {
+    url?: string;
+    storageKey?: string;
+    role?: StoryboardVideoReferenceRole;
+    source?: "script" | "asset" | "node" | "officialActor";
+};
+
+export type StoryboardPromptDetail = {
+    storyboardPrompt: string;
+    videoMotionPrompt: string;
+    assetMentions?: string[];
+    assetMentionLinks?: StoryboardAssetMentionLink[];
+};
+
+export type StoryboardAssetProgress = {
+    percent: number;
+    text: string;
+};
+
+export type VideoGenerationProgress = {
+    percent: number;
+    text: string;
+    stage?: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed";
+    providerStatus?: string;
+};
 
 export type CanvasNodeMetadata = {
     content?: string;
+    storyboardSourceText?: string;
+    storyboardRows?: string[][];
+    storyboardStep?: StoryboardStep;
+    storyboardAssetStyle?: string;
+    storyboardAssetError?: string;
+    storyboardAssetProgress?: StoryboardAssetProgress;
+    storyboardAssets?: StoryboardAsset[];
+    storyboardAssetNodeIds?: Record<string, string>;
+    storyboardAssetMentionNodeIds?: Record<string, string>;
+    storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
+    storyboardSourceNodeId?: string;
+    storyboardAssetId?: string;
+    storyboardAssetKind?: StoryboardAssetKind;
+    storyboardAssetName?: string;
+    storyboardRowIndex?: number;
+    storyboardAssetMentions?: string[];
+    storyboardAssetMentionLinks?: StoryboardAssetMentionLink[];
+    storyboardAssetReferenceNodeIds?: string[];
+    storyboardVideoReferences?: StoryboardVideoReference[];
+    storyboardVideoFinalPrompt?: string;
+    storyboardVideoTailFrameUrl?: string;
+    storyboardVideoTailFrameStorageKey?: string;
+    videoGenerationProgress?: VideoGenerationProgress;
+    officialActor?: OfficialVirtualActorBinding;
+    workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
+    workspaceSourceNodeId?: string;
+    workspaceChildNodeIds?: string[];
+    workspaceTitle?: string;
+    characterReferenceRole?: string;
+    characterReferenceDescription?: string;
+    characterReferenceVariantPrompts?: string[];
+    characterReferenceVariantTitles?: string[];
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
@@ -56,6 +155,15 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    sourcePrompt?: string;
+    imagePreset?: "multi_view_grid" | "character_sheet" | "scene_sheet" | "character_three_view";
+    enableMultiViewGrid?: boolean;
+    disableAutoMultiView?: boolean;
+    multiViewRole?: "grid" | "front" | "top" | "left" | "right";
+    multiViewSourceNodeId?: string;
+    sceneViewRole?: "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
+    sceneGroupId?: string;
+    requiredSceneViewRoles?: Array<"front" | "top">;
 };
 
 export type CanvasNodeData = {

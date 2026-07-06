@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Trash2, Upload, Video } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { App, Button, Modal, Segmented, Tooltip } from "antd";
+import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
@@ -9,6 +9,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { canvasImagePresetOptions, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -24,6 +25,7 @@ type CanvasNodeHoverToolbarProps = {
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
+    onOpenPreset: (node: CanvasNodeData, preset: CanvasImagePresetId) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
@@ -31,7 +33,10 @@ type CanvasNodeHoverToolbarProps = {
     onSuperResolve: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
+    onPromptAssistant: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
+    onExportScriptAssets: (node: CanvasNodeData) => void;
+    onBatchGenerateScriptVideos: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
@@ -61,6 +66,7 @@ export function CanvasNodeHoverToolbar({
     onUpload,
     onDownload,
     onSaveAsset,
+    onOpenPreset,
     onMaskEdit,
     onCrop,
     onSplit,
@@ -68,7 +74,10 @@ export function CanvasNodeHoverToolbar({
     onSuperResolve,
     onAngle,
     onViewImage,
+    onPromptAssistant,
     onReversePrompt,
+    onExportScriptAssets,
+    onBatchGenerateScriptVideos,
     onRetry,
     onToggleFreeResize,
     onDelete,
@@ -78,8 +87,38 @@ export function CanvasNodeHoverToolbar({
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(true);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
+    const [presetPickerOpen, setPresetPickerOpen] = useState(false);
+    const toolbarRef = useRef<HTMLDivElement | null>(null);
+    const [windowSize, setWindowSize] = useState(() => ({
+        width: typeof window === "undefined" ? 1200 : window.innerWidth,
+        height: typeof window === "undefined" ? 800 : window.innerHeight,
+    }));
+    const [toolbarSize, setToolbarSize] = useState({ width: 0, height: 48 });
     const { message } = App.useApp();
     const copyText = useCopyText();
+
+    useEffect(() => {
+        const updateWindowSize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+        updateWindowSize();
+        window.addEventListener("resize", updateWindowSize);
+        return () => window.removeEventListener("resize", updateWindowSize);
+    }, []);
+
+    useLayoutEffect(() => {
+        const toolbar = toolbarRef.current;
+        if (!toolbar) return;
+        const updateToolbarSize = () => {
+            const rect = toolbar.getBoundingClientRect();
+            setToolbarSize((current) => {
+                const next = { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
+                return current.width === next.width && current.height === next.height ? current : next;
+            });
+        };
+        updateToolbarSize();
+        const resizeObserver = new ResizeObserver(updateToolbarSize);
+        resizeObserver.observe(toolbar);
+        return () => resizeObserver.disconnect();
+    }, [node?.id, viewport.k, showImageToolLabels, quickImageToolIds, imageToolSettingsOpen]);
 
     useEffect(() => {
         try {
@@ -96,13 +135,16 @@ export function CanvasNodeHoverToolbar({
 
     useEffect(() => {
         setImageToolSettingsOpen(false);
+        setPresetPickerOpen(false);
     }, [node?.id]);
 
     if (!node) return null;
 
-    const activeNode = node;
-    const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    const nodeScreenLeft = viewport.x + node.position.x * viewport.k;
+    const nodeScreenTop = viewport.y + node.position.y * viewport.k;
+    const nodeScreenWidth = node.width * viewport.k;
+    const nodeScreenHeight = node.height * viewport.k;
+    const nodeScreenCenterX = nodeScreenLeft + nodeScreenWidth / 2;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -110,9 +152,10 @@ export function CanvasNodeHoverToolbar({
     const hasVideo = isVideo && Boolean(node.metadata?.content);
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
+    const isScript = node.type === CanvasNodeType.Script;
     const isConfig = node.type === CanvasNodeType.Config;
-    const canOpenDialog = isText || hasImage || isVideo;
-    const canRetry = node.metadata?.status === "error";
+    const canOpenDialog = isText || isScript || hasImage || isVideo;
+    const canRetry = node.metadata?.status === "error" || (isVideo && !hasVideo && Boolean(node.metadata?.storyboardSourceNodeId) && Boolean(node.metadata?.prompt));
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {
         const prompt = target.metadata?.prompt?.trim();
@@ -122,10 +165,27 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, "提示词已复制");
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, {
+        onOpenPreset: () => {
+            onKeep(node.id);
+            setPresetPickerOpen(true);
+        },
+        onUpload,
+        onToggleFreeResize,
+        onMaskEdit,
+        onCrop,
+        onSplit,
+        onUpscale,
+        onSuperResolve,
+        onAngle,
+        onViewImage,
+        onCopyPrompt: copyImagePrompt,
+        onPromptAssistant,
+        onReversePrompt,
+    });
 
     function openImageToolSettings() {
-        onKeep(activeNode.id);
+        onKeep(node!.id);
         setDraftImageToolIds(quickImageToolIds);
         setDraftShowImageToolLabels(showImageToolLabels);
         setImageToolSettingsOpen(true);
@@ -140,9 +200,12 @@ export function CanvasNodeHoverToolbar({
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: "加入我的素材", label: "存素材", icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
+        ...(isScript ? [{ id: "exportScriptAssets", title: "批量生成并导出资产", label: "批量生成资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
+        ...(isScript ? [{ id: "batchScriptVideos", title: "按合成提示词批量生成视频", label: "批量生成视频", icon: <Video className="size-4" />, onClick: () => onBatchGenerateScriptVideos(node) }] : []),
         ...(isText ? [{ id: "editText", title: "编辑文本", label: "编辑文字", icon: <Pencil className="size-4" />, onClick: () => onEditText(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
+        ...(isConfig ? [{ id: "promptAssistant", title: "AI改提示词", label: "AI改提示词", icon: <Sparkles className="size-4" />, onClick: () => onPromptAssistant(node) }] : []),
         ...(isText ? [{ id: "decreaseFont", title: "减小字号", label: "缩小", icon: <Minus className="size-4" />, onClick: () => onDecreaseFont(node) }] : []),
         ...(isText ? [{ id: "increaseFont", title: "增大字号", label: "放大", icon: <Plus className="size-4" />, onClick: () => onIncreaseFont(node) }] : []),
         ...(isImage && !hasImage ? [{ id: "uploadImage", title: "上传图片", label: "上传图片", icon: <Upload className="size-4" />, onClick: () => onUpload(node) }] : []),
@@ -152,9 +215,23 @@ export function CanvasNodeHoverToolbar({
     ];
     const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
+    const viewportPadding = 12;
+    const toolbarGap = 14;
+    const toolbarMaxWidth = Math.max(260, windowSize.width - viewportPadding * 2);
+    const effectiveToolbarWidth = Math.min(toolbarSize.width || toolbarMaxWidth, toolbarMaxWidth);
+    const toolbarLeft = clamp(nodeScreenCenterX - effectiveToolbarWidth / 2, viewportPadding, Math.max(viewportPadding, windowSize.width - effectiveToolbarWidth - viewportPadding));
+    const toolbarHeight = toolbarSize.height || 48;
+    const canShowAbove = nodeScreenTop - toolbarGap - toolbarHeight >= viewportPadding;
+    const toolbarTop = canShowAbove ? nodeScreenTop - toolbarGap - toolbarHeight : clamp(nodeScreenTop + nodeScreenHeight + toolbarGap, viewportPadding, Math.max(viewportPadding, windowSize.height - toolbarHeight - viewportPadding));
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
+        onLeave();
+    };
+
+    const applyPreset = (preset: CanvasImagePresetId) => {
+        onOpenPreset(node, preset);
+        setPresetPickerOpen(false);
         onLeave();
     };
 
@@ -178,11 +255,12 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                style={{ left, top }}
+                ref={toolbarRef}
+                className="absolute z-[70] flex min-h-12 flex-wrap items-center overflow-visible rounded-[18px] border border-black/10 bg-white py-1 text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                style={{ left: toolbarLeft, top: toolbarTop, maxWidth: toolbarMaxWidth }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
-                    if (!imageToolSettingsOpen) onLeave();
+                    if (!imageToolSettingsOpen && !presetPickerOpen) onLeave();
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -203,6 +281,17 @@ export function CanvasNodeHoverToolbar({
                     onCancel={closeImageToolSettings}
                     onSave={saveImageToolSettings}
                 />
+            ) : null}
+            {hasImage ? (
+                <Modal title="九宫格预设" open={presetPickerOpen} onCancel={() => setPresetPickerOpen(false)} footer={null} centered width={420}>
+                    <div className="grid gap-2">
+                        {canvasImagePresetOptions.map((preset) => (
+                            <Button key={preset.value} className="!h-11 !justify-start" onClick={() => applyPreset(preset.value)}>
+                                {preset.label}
+                            </Button>
+                        ))}
+                    </div>
+                </Modal>
             ) : null}
         </>
     );
@@ -254,7 +343,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                     {view === "info" ? (
                         <div className="thin-scrollbar h-full space-y-3 overflow-auto pr-1">
                             <InfoRow label="ID" value={node.id} />
-                            <InfoRow label="类型" value={node.type === CanvasNodeType.Text ? "文本" : node.type === CanvasNodeType.Image ? "图片" : node.type === CanvasNodeType.Video ? "视频" : node.type === CanvasNodeType.Audio ? "音频" : "生成配置"} />
+                            <InfoRow label="类型" value={node.type === CanvasNodeType.Text ? "文本" : node.type === CanvasNodeType.Script ? "脚本节点" : node.type === CanvasNodeType.Image ? "图片" : node.type === CanvasNodeType.Video ? "视频" : node.type === CanvasNodeType.Audio ? "音频" : "生成配置"} />
                             <InfoRow label="尺寸" value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
                             <InfoRow label="位置" value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label="状态" value={node.metadata?.status || "idle"} />
@@ -290,6 +379,11 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
             </button>
         </Tooltip>
     );
+}
+
+function clamp(value: number, min: number, max: number) {
+    if (max < min) return min;
+    return Math.min(Math.max(value, min), max);
 }
 
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {

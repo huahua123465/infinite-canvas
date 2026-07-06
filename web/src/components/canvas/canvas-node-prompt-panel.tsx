@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, BadgeCheck, LoaderCircle, Sparkles, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -12,7 +12,8 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type OfficialVirtualActorBinding } from "@/types/canvas";
+import { isValidOfficialActorAssetUri, normalizeOfficialActorAssetUri } from "@/lib/canvas/official-virtual-actors";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -26,38 +27,66 @@ type CanvasNodePromptPanelProps = {
     onStop: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     onImageSettingsOpenChange?: (open: boolean) => void;
+    onPromptAssistant?: (node: CanvasNodeData) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = defaultMode(node.type);
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
+    const isScriptNode = node.type === CanvasNodeType.Script;
+    const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
-    const isEditingExistingContent = hasTextContent || hasImageContent;
-    const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
+    const [promptExpanded, setPromptExpanded] = useState(false);
+    const [officialAssetOpen, setOfficialAssetOpen] = useState(Boolean(node.metadata?.officialActor?.assetUri));
+    const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
 
     useEffect(() => {
-        setPrompt(isEditingExistingContent ? "" : node.metadata?.prompt || "");
-    }, [isEditingExistingContent, node.id]);
+        setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
+        setPromptExpanded(false);
+        setOfficialAssetOpen(Boolean(node.metadata?.officialActor?.assetUri));
+    }, [hasTextContent, node.id]);
+
+    useEffect(() => {
+        const nextPrompt = hasTextContent ? "" : node.metadata?.prompt || "";
+        setPrompt((current) => (current === nextPrompt ? current : nextPrompt));
+    }, [hasTextContent, node.metadata?.prompt]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
-        if (!isEditingExistingContent) onPromptChange(node.id, value);
+        if (!hasTextContent) onPromptChange(node.id, value);
     };
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if ((!text && !isScriptNode) || isRunning) return;
+        if (isStoryboardVideo) {
+            window.dispatchEvent(new CustomEvent(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, { detail: node.id }));
+            return;
+        }
         onGenerate(node.id, mode, text);
         setPrompt("");
     };
 
+    const collapsePromptEditorIfFocusLeft = () => {
+        window.setTimeout(() => {
+            const activeElement = document.activeElement;
+            if (activeElement && panelRef.current?.contains(activeElement)) return;
+            setPromptExpanded(false);
+        }, 0);
+    };
+
+    if (isStoryboardVideo) return null;
+
     return (
         <div
+            ref={panelRef}
             className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
             style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
@@ -69,45 +98,62 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 references={mentionReferences}
                 onChange={updatePrompt}
                 onSubmit={submit}
-                className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
-                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
-                placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
+                onFocus={() => setPromptExpanded(true)}
+                onBlur={collapsePromptEditorIfFocusLeft}
+                onWheel={(event) => {
+                    event.stopPropagation();
+                    if (!promptExpanded) return;
+                    const target = event.currentTarget;
+                    if (target.scrollHeight <= target.clientHeight) return;
+                    event.preventDefault();
+                    target.scrollTop += event.deltaY;
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
+                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
+                placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 
-            <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
+            <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    {isScriptNode ? null : <CanvasPromptLibrary onSelect={updatePrompt} />}
+                    {onPromptAssistant ? (
+                        <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
+                            AI改提示词
+                        </Button>
+                    ) : null}
                     {mode === "image" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
                             <CanvasImageSettingsPopover
                                 config={config}
                                 placement="topLeft"
-                                buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3"
+                                buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
+                            {node.type === CanvasNodeType.Image ? <OfficialAssetButton node={node} open={officialAssetOpen} onToggle={() => setOfficialAssetOpen((current) => !current)} /> : null}
                         </>
                     ) : mode === "video" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} />
-                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                         </>
                     ) : mode === "audio" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" onMissingConfig={() => openConfigDialog(true)} />
-                            <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                            <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                         </>
                     ) : (
-                        <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" onMissingConfig={() => openConfigDialog(true)} />
+                        <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
                     )}
                 </div>
                 <Button
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
+                    disabled={!isRunning && !prompt.trim() && !isScriptNode}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
                     aria-label={isRunning ? "停止生成" : "生成"}
                 >
@@ -130,12 +176,58 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     </span>
                 </Button>
             </div>
+            {node.type === CanvasNodeType.Image && officialAssetOpen ? <OfficialAssetEditor node={node} theme={theme} onChange={(officialActor) => onConfigChange(node.id, { officialActor })} /> : null}
+        </div>
+    );
+}
+
+function OfficialAssetButton({ node, open, onToggle }: { node: CanvasNodeData; open: boolean; onToggle: () => void }) {
+    const valid = isValidOfficialActorAssetUri(node.metadata?.officialActor?.assetUri);
+    return (
+        <Button className="!h-10 shrink-0 !rounded-full !px-3" type={open ? "primary" : "default"} icon={<BadgeCheck className="size-4" />} onClick={onToggle}>
+            <span className="text-xs">{valid ? "官方素材已填" : "官方素材"}</span>
+        </Button>
+    );
+}
+
+function OfficialAssetEditor({ node, theme, onChange }: { node: CanvasNodeData; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (officialActor: OfficialVirtualActorBinding) => void }) {
+    const actor = node.metadata?.officialActor;
+    const valid = isValidOfficialActorAssetUri(actor?.assetUri);
+    const inputStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
+    const update = (patch: Partial<OfficialVirtualActorBinding>) =>
+        onChange({
+            id: actor?.id || `custom-${node.id}`,
+            name: actor?.name || node.title || "自定义官方虚拟人像",
+            description: actor?.description || "",
+            traits: actor?.traits || [],
+            ...patch,
+        });
+    return (
+        <div className="mt-3 rounded-xl border p-3 text-xs" style={{ background: "rgba(6,182,212,.09)", borderColor: valid ? "rgba(16,185,129,.45)" : "rgba(34,211,238,.28)" }}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="font-semibold text-cyan-100">官方虚拟人像素材</div>
+                <div className={valid ? "text-emerald-200" : "text-amber-200"}>{valid ? "生图做造型预览，视频读官方脸" : "可粘贴 asset-... 或 asset://..."}</div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[1fr_1.25fr]">
+                <label className="block">
+                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">名称</span>
+                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.name || ""} placeholder="例如：官方女演员 A / 自定义角色脸" onChange={(event) => update({ name: event.target.value })} />
+                </label>
+                <label className="block">
+                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">官方 Asset URI</span>
+                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.assetUri || ""} placeholder="asset://asset-xxxxxxxx 或 asset-xxxxxxxx" onChange={(event) => update({ assetUri: normalizeOfficialActorAssetUri(event.target.value) })} />
+                </label>
+                <label className="block sm:col-span-2">
+                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">自定义说明/标签</span>
+                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.traits?.join("、") || ""} placeholder="例如：女、青年、古风、清冷；生图做造型预览，视频用官方脸基座" onChange={(event) => update({ traits: event.target.value.split(/[、,，\s]+/).map((item) => item.trim()).filter(Boolean), description: event.target.value })} />
+                </label>
+            </div>
         </div>
     );
 }
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
-    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
+    return type === CanvasNodeType.Text || type === CanvasNodeType.Script ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
@@ -162,6 +254,11 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: bool
     if (mode === "audio") return "描述要生成的音频内容";
     if (mode === "image") return hasImageContent ? "请输入你想要把这张图修改成什么" : "描述要生成的图片内容";
     return hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容";
+}
+
+function estimatePromptEditorHeight(prompt: string) {
+    const visualLines = (prompt || "").split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 42)), 0);
+    return Math.min(560, Math.max(260, visualLines * 22 + 36));
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
