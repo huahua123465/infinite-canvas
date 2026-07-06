@@ -2006,7 +2006,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(`asset:${assetId}`);
-            updateStoryboardAsset(node.id, assetId, { status: NODE_STATUS_LOADING, errorDetails: undefined });
+            updateStoryboardAsset(node.id, assetId, { imageUrl: undefined, storageKey: undefined, status: NODE_STATUS_LOADING, errorDetails: undefined });
             const targetId = `storyboard-asset:${node.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, node.id, node.id);
             try {
