@@ -1508,7 +1508,7 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                             })}
                         </div>
                     ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="上一镜还没有可用尾帧，先生成上一镜视频后再回来选择" />
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="上一镜还没有可用尾帧；生成上一镜视频后会自动截取，旧视频放在同一视频工作区内也会尝试识别" />
                     )}
                 </section>
                 <section>

@@ -4337,6 +4337,7 @@ function shouldBackfillStoryboardTailFrame(node: CanvasNodeData, pending: Set<st
 function isStoryboardLinkedVideo(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     if (node.metadata?.storyboardSourceNodeId && node.metadata.storyboardRowIndex !== undefined) return true;
     if (node.metadata?.storyboardVideoDraftNodeId) return true;
+    if (storyboardVideoWorkspaceForNode(node.id, nodes)) return true;
     return connections.some((connection) => {
         if (connection.toNodeId !== node.id) return false;
         const source = nodes.find((item) => item.id === connection.fromNodeId);
@@ -4935,7 +4936,7 @@ function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNod
 
     if (rowIndex !== undefined && rowIndex > 0) {
         nodes
-            .filter((item) => isPreviousStoryboardVideoResult(item, previousDraft, sourceId, rowIndex - 1, connections) && (item.metadata?.storyboardVideoTailFrameStorageKey || item.metadata?.storyboardVideoTailFrameUrl))
+            .filter((item) => isPreviousStoryboardVideoResult(item, previousDraft, sourceId, rowIndex - 1, nodes, connections) && (item.metadata?.storyboardVideoTailFrameStorageKey || item.metadata?.storyboardVideoTailFrameUrl))
             .sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))
             .forEach((item) => {
                 const name = `第 ${rowIndex} 镜${item.metadata?.storyboardVideoVariantIndex ? ` v${item.metadata.storyboardVideoVariantIndex}` : ""} 尾帧`;
@@ -4990,11 +4991,40 @@ function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNod
     return Array.from(references.values());
 }
 
-function isPreviousStoryboardVideoResult(node: CanvasNodeData, previousDraft: CanvasNodeData | undefined, sourceId: string, previousRowIndex: number, connections: CanvasConnection[]) {
+function isPreviousStoryboardVideoResult(node: CanvasNodeData, previousDraft: CanvasNodeData | undefined, sourceId: string, previousRowIndex: number, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     if (node.type !== CanvasNodeType.Video || (!node.metadata?.content && !node.metadata?.storageKey)) return false;
     if (node.metadata?.storyboardSourceNodeId === sourceId && node.metadata.storyboardRowIndex === previousRowIndex) return true;
-    if (!previousDraft) return false;
-    return connections.some((connection) => connection.fromNodeId === previousDraft.id && connection.toNodeId === node.id);
+    if (previousDraft && connections.some((connection) => connection.fromNodeId === previousDraft.id && connection.toNodeId === node.id)) return true;
+    const inferredDraft = inferStoryboardVideoResultDraft(node, sourceId, nodes);
+    return Boolean(inferredDraft && inferredDraft.metadata?.storyboardRowIndex === previousRowIndex);
+}
+
+function storyboardVideoWorkspaceForNode(nodeId: string, nodes: CanvasNodeData[]) {
+    const target = nodes.find((node) => node.id === nodeId);
+    return nodes.find((node) => node.type === CanvasNodeType.Workspace && node.metadata?.workspaceKind === "storyboard-videos" && (node.metadata.workspaceChildNodeIds?.includes(nodeId) || Boolean(target && isNodeInsideWorkspace(target, node))));
+}
+
+function inferStoryboardVideoResultDraft(node: CanvasNodeData, sourceId: string, nodes: CanvasNodeData[]) {
+    const workspace = storyboardVideoWorkspaceForNode(node.id, nodes);
+    if (!workspace || workspace.metadata?.workspaceSourceNodeId !== sourceId) return null;
+    const drafts = nodes.filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === sourceId);
+    if (!drafts.length) return null;
+    const centerY = node.position.y + node.height / 2;
+    const centerX = node.position.x + node.width / 2;
+    return drafts
+        .filter((draft) => centerX >= draft.position.x + draft.width * 0.6)
+        .sort((a, b) => {
+            const aY = Math.abs(centerY - (a.position.y + a.height / 2));
+            const bY = Math.abs(centerY - (b.position.y + b.height / 2));
+            if (Math.abs(aY - bY) > 24) return aY - bY;
+            return Math.abs(centerX - (a.position.x + a.width)) - Math.abs(centerX - (b.position.x + b.width));
+        })[0] || null;
+}
+
+function isNodeInsideWorkspace(node: CanvasNodeData, workspace: CanvasNodeData) {
+    const centerX = node.position.x + node.width / 2;
+    const centerY = node.position.y + node.height / 2;
+    return centerX >= workspace.position.x && centerX <= workspace.position.x + workspace.width && centerY >= workspace.position.y && centerY <= workspace.position.y + workspace.height;
 }
 
 function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnType<typeof storyboardVideoAssetReferences>): StoryboardVideoReference[] {
@@ -5026,7 +5056,7 @@ function storyboardTailFrameReference(previousRowIndex: number, image: Pick<Uplo
 function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: number, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     if (rowIndex <= 0) return null;
     const previousDraft = nodes.find((node) => isStoryboardVideoDraftNode(node) && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1);
-    const candidates = nodes.filter((node) => isPreviousStoryboardVideoResult(node, previousDraft, sourceNodeId, rowIndex - 1, connections) && (node.metadata?.storyboardVideoTailFrameStorageKey || node.metadata?.storyboardVideoTailFrameUrl));
+    const candidates = nodes.filter((node) => isPreviousStoryboardVideoResult(node, previousDraft, sourceNodeId, rowIndex - 1, nodes, connections) && (node.metadata?.storyboardVideoTailFrameStorageKey || node.metadata?.storyboardVideoTailFrameUrl));
     const previous = candidates.find((node) => node.id === previousDraft?.metadata?.storyboardVideoLatestResultNodeId) || [...candidates].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))[0];
     if (!previous?.metadata?.storyboardVideoTailFrameStorageKey && !previous?.metadata?.storyboardVideoTailFrameUrl) return null;
     return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" }, previous.metadata.storyboardVideoVariantIndex);
