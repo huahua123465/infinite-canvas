@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, BadgeCheck, LoaderCircle, Sparkles, Square } from "lucide-react";
+import { ArrowUp, LoaderCircle, Sparkles, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -12,8 +12,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type OfficialVirtualActorBinding } from "@/types/canvas";
-import { isValidOfficialActorAssetUri, normalizeOfficialActorAssetUri } from "@/lib/canvas/official-virtual-actors";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -43,14 +42,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const panelRef = useRef<HTMLDivElement | null>(null);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
     const [promptExpanded, setPromptExpanded] = useState(false);
-    const [officialAssetOpen, setOfficialAssetOpen] = useState(Boolean(node.metadata?.officialActor?.assetUri));
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
         setPromptExpanded(false);
-        setOfficialAssetOpen(Boolean(node.metadata?.officialActor?.assetUri));
     }, [hasTextContent, node.id]);
 
     useEffect(() => {
@@ -133,7 +130,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
-                            {node.type === CanvasNodeType.Image ? <OfficialAssetButton node={node} open={officialAssetOpen} onToggle={() => setOfficialAssetOpen((current) => !current)} /> : null}
                         </>
                     ) : mode === "video" ? (
                         <>
@@ -175,52 +171,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         )}
                     </span>
                 </Button>
-            </div>
-            {node.type === CanvasNodeType.Image && officialAssetOpen ? <OfficialAssetEditor node={node} theme={theme} onChange={(officialActor) => onConfigChange(node.id, { officialActor })} /> : null}
-        </div>
-    );
-}
-
-function OfficialAssetButton({ node, open, onToggle }: { node: CanvasNodeData; open: boolean; onToggle: () => void }) {
-    const valid = isValidOfficialActorAssetUri(node.metadata?.officialActor?.assetUri);
-    return (
-        <Button className="!h-10 shrink-0 !rounded-full !px-3" type={open ? "primary" : "default"} icon={<BadgeCheck className="size-4" />} onClick={onToggle}>
-            <span className="text-xs">{valid ? "官方素材已填" : "官方素材"}</span>
-        </Button>
-    );
-}
-
-function OfficialAssetEditor({ node, theme, onChange }: { node: CanvasNodeData; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (officialActor: OfficialVirtualActorBinding) => void }) {
-    const actor = node.metadata?.officialActor;
-    const valid = isValidOfficialActorAssetUri(actor?.assetUri);
-    const inputStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
-    const update = (patch: Partial<OfficialVirtualActorBinding>) =>
-        onChange({
-            id: actor?.id || `custom-${node.id}`,
-            name: actor?.name || node.title || "自定义官方虚拟人像",
-            description: actor?.description || "",
-            traits: actor?.traits || [],
-            ...patch,
-        });
-    return (
-        <div className="mt-3 rounded-xl border p-3 text-xs" style={{ background: "rgba(6,182,212,.09)", borderColor: valid ? "rgba(16,185,129,.45)" : "rgba(34,211,238,.28)" }}>
-            <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="font-semibold text-cyan-100">官方虚拟人像素材</div>
-                <div className={valid ? "text-emerald-200" : "text-amber-200"}>{valid ? "生图做造型预览，视频读官方脸" : "可粘贴 asset-... 或 asset://..."}</div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-[1fr_1.25fr]">
-                <label className="block">
-                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">名称</span>
-                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.name || ""} placeholder="例如：官方女演员 A / 自定义角色脸" onChange={(event) => update({ name: event.target.value })} />
-                </label>
-                <label className="block">
-                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">官方 Asset URI</span>
-                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.assetUri || ""} placeholder="asset://asset-xxxxxxxx 或 asset-xxxxxxxx" onChange={(event) => update({ assetUri: normalizeOfficialActorAssetUri(event.target.value) })} />
-                </label>
-                <label className="block sm:col-span-2">
-                    <span className="mb-1 block text-[11px] font-semibold text-cyan-50/90">自定义说明/标签</span>
-                    <input className="h-9 w-full rounded-lg border px-3 text-sm outline-none focus:border-cyan-200/60" style={inputStyle} value={actor?.traits?.join("、") || ""} placeholder="例如：女、青年、古风、清冷；生图做造型预览，视频用官方脸基座" onChange={(event) => update({ traits: event.target.value.split(/[、,，\s]+/).map((item) => item.trim()).filter(Boolean), description: event.target.value })} />
-                </label>
             </div>
         </div>
     );

@@ -4,7 +4,6 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
-import { isValidOfficialActorAssetUri, normalizeOfficialActorAssetUri } from "@/lib/canvas/official-virtual-actors";
 import { getGenerationResourceNodes } from "@/lib/canvas/canvas-resource-references";
 
 export type NodeGenerationContext = {
@@ -160,15 +159,12 @@ function generationLabel(type: NodeGenerationInput["type"], index: number) {
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
     if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
-    const officialAssetUri = normalizeOfficialActorAssetUri(node.metadata.officialActor?.assetUri);
     return {
         id: node.id,
-        name: `${node.metadata.officialActor?.name || node.title || node.id}.png`,
+        name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content,
         storageKey: node.metadata.storageKey,
-        officialAssetUri: isValidOfficialActorAssetUri(officialAssetUri) ? officialAssetUri : undefined,
-        officialAssetName: node.metadata.officialActor?.name,
     };
 }
 

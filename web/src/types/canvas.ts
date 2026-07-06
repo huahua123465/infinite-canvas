@@ -25,16 +25,6 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
 
-export type OfficialVirtualActorBinding = {
-    id: string;
-    name: string;
-    description: string;
-    traits: string[];
-    assetUri?: string;
-    matchReason?: string;
-    confidence?: number;
-};
-
 export type StoryboardAsset = {
     id: string;
     kind: StoryboardAssetKind;
@@ -45,7 +35,6 @@ export type StoryboardAsset = {
     storageKey?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
-    officialActor?: OfficialVirtualActorBinding;
 };
 
 export type StoryboardAssetMentionLink = {
@@ -55,7 +44,7 @@ export type StoryboardAssetMentionLink = {
     assetId?: string;
     nodeId?: string;
     kind?: StoryboardAssetKind;
-    source?: "node" | "officialActor" | "script" | "asset";
+    source?: "node" | "script" | "asset";
     url?: string;
 };
 
@@ -66,7 +55,7 @@ export type StoryboardVideoReference = StoryboardAssetMentionLink & {
     url?: string;
     storageKey?: string;
     role?: StoryboardVideoReferenceRole;
-    source?: "script" | "asset" | "node" | "officialActor";
+    source?: "script" | "asset" | "node";
 };
 
 export type StoryboardPromptDetail = {
@@ -113,7 +102,6 @@ export type CanvasNodeMetadata = {
     storyboardVideoTailFrameUrl?: string;
     storyboardVideoTailFrameStorageKey?: string;
     videoGenerationProgress?: VideoGenerationProgress;
-    officialActor?: OfficialVirtualActorBinding;
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];

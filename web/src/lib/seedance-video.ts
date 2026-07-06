@@ -175,4 +175,4 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
     return "";
 }
 
-export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；含真人人脸素材请使用火山授权 asset:// 素材。";
+export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；建议使用非写实虚拟角色参考图，避免写实真人脸素材。";

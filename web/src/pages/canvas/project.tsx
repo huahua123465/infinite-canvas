@@ -17,11 +17,9 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType } from "@/lib/canvas/canvas-multi-view";
 import { buildMangaCharacterPromptNodes } from "@/lib/canvas/manga-character-card-import";
-import { isValidOfficialActorAssetUri, matchOfficialVirtualActor, normalizeOfficialActorAssetUri, storyboardAssetReadyWithOfficialActor } from "@/lib/canvas/official-virtual-actors";
 import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction } from "@/lib/canvas/prompt-assistant";
@@ -194,7 +192,7 @@ JSON 格式必须为：
 6. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束。
 7. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，并在两个提示词里显式使用 @资产名。
 8. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名。
-9. 如果角色资产写有“官方脸”，提示词必须把该官方虚拟演员作为角色脸部底座；只根据剧本改变服装、姿态、表情、动作、场景和镜头，不重新设计脸，也不要在提示词中写 asset ID。
+9. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
 10. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
 11. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
 12. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
@@ -1862,6 +1860,7 @@ function InfiniteCanvasPage() {
                     .filter(Boolean)
                     .join("\n\n")
                     .trim() || storyboardSourceTextForNode(scriptNode);
+            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(sourceText);
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
                 return;
@@ -1873,7 +1872,7 @@ function InfiniteCanvasPage() {
             }
             setRunningNodeId(scriptNode.id);
             setStoryboardActionKey("shots:generate");
-            setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText } } : item)));
+            setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText } } : item)));
             try {
                 const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_TEXT_IMPORT_PROMPT}\n\n${sourceText}` }], () => {});
                 const rows = stripStoryboardHeader(parseStoryboardLoose(answer));
@@ -1890,6 +1889,7 @@ function InfiniteCanvasPage() {
                                       storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
                                       storyboardStep: "shots",
                                       storyboardSourceText: sourceText,
+                                      ...videoSettingsPatch,
                                       status: NODE_STATUS_SUCCESS,
                                       errorDetails: undefined,
                                   },
@@ -2031,7 +2031,7 @@ function InfiniteCanvasPage() {
 
     const batchGenerateStoryboardAssets = useCallback(
         async (node: CanvasNodeData) => {
-            const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !storyboardAssetReadyWithOfficialActor(asset));
+            const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !storyboardAssetReady(asset));
             if (!assets.length) {
                 message.info("没有需要生成的资产图");
                 return;
@@ -2109,7 +2109,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
-            if (assets.some((asset) => !storyboardAssetReadyWithOfficialActor(asset)) && !isAiConfigReady(generationConfig, generationConfig.model)) {
+            if (assets.some((asset) => !storyboardAssetReady(asset)) && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
@@ -2265,7 +2265,12 @@ function InfiniteCanvasPage() {
 
     const generateStoryboardVideo = useCallback(
         async (node: CanvasNodeData, rowIndex: number) => {
-            const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            let scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(storyboardSourceTextForNode(scriptNode));
+            if (Object.keys(videoSettingsPatch).length) {
+                scriptNode = { ...scriptNode, metadata: { ...scriptNode.metadata, ...videoSettingsPatch } };
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
+            }
             const row = parseStoryboardRows(scriptNode.metadata?.storyboardRows)[rowIndex];
             const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
             const prompt = detail?.videoMotionPrompt?.trim();
@@ -2329,7 +2334,12 @@ function InfiniteCanvasPage() {
 
     const batchGenerateStoryboardVideos = useCallback(
         async (node: CanvasNodeData) => {
-            const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            let scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(storyboardSourceTextForNode(scriptNode));
+            if (Object.keys(videoSettingsPatch).length) {
+                scriptNode = { ...scriptNode, metadata: { ...scriptNode.metadata, ...videoSettingsPatch } };
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
+            }
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
             const indexes = rows.map((_, index) => (scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() ? index : -1)).filter((index) => index >= 0);
             if (!indexes.length) {
@@ -3047,8 +3057,8 @@ function InfiniteCanvasPage() {
                     const characterReferencePrompts = isConfigNode ? (sourceNode.metadata?.characterReferenceVariantPrompts || []).map((item) => item.trim()).filter(Boolean) : [];
                     const characterReferenceTitles = isConfigNode ? sourceNode.metadata?.characterReferenceVariantTitles || [] : [];
                     const baseRequestPrompt = useMultiViewGrid ? prepareMultiViewPrompt(effectivePrompt) : characterReferencePrompts[0] || effectivePrompt;
-                    const requestPrompt = withOfficialActorImagePrompt(baseRequestPrompt, sourceNode);
-                    const requestPrompts = characterReferencePrompts.length ? characterReferencePrompts.map((item) => withOfficialActorImagePrompt(item, sourceNode)) : [requestPrompt];
+                    const requestPrompt = baseRequestPrompt;
+                    const requestPrompts = characterReferencePrompts.length ? characterReferencePrompts : [requestPrompt];
                     const requestConfig = useMultiViewGrid ? { ...generationConfig, count: "1", size: "16:9" } : generationConfig;
                     const count = useMultiViewGrid ? 1 : characterReferencePrompts.length || getGenerationCount(generationConfig.count);
                     const generationMetadata = buildImageGenerationMetadata(generationType, requestConfig, count, referenceImages);
@@ -3078,7 +3088,6 @@ function InfiniteCanvasPage() {
                             sceneViewRole: sourceNode?.metadata?.sceneViewRole,
                             sceneGroupId: sourceNode?.metadata?.sceneGroupId,
                             status: NODE_STATUS_LOADING,
-                            officialActor: sourceNode?.metadata?.officialActor,
                             isBatchRoot: count > 1,
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
@@ -3096,7 +3105,7 @@ function InfiniteCanvasPage() {
                         },
                         width: imageConfig.width,
                         height: imageConfig.height,
-                        metadata: { prompt: requestPrompts[index] || requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, officialActor: sourceNode?.metadata?.officialActor, batchRootId: count > 1 ? rootId : undefined, characterReferenceRole: characterReferenceTitles[index], ...generationMetadata },
+                        metadata: { prompt: requestPrompts[index] || requestPrompt, sourcePrompt: useMultiViewGrid ? effectivePrompt : undefined, sceneViewRole: sourceNode?.metadata?.sceneViewRole, sceneGroupId: sourceNode?.metadata?.sceneGroupId, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, characterReferenceRole: characterReferenceTitles[index], ...generationMetadata },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -3270,7 +3279,7 @@ function InfiniteCanvasPage() {
                 if (mode === "video") {
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
-                    const videoReferenceImages = isSeedanceVideoConfig(generationConfig) ? expandOfficialActorVideoReferenceImages(generationContext.referenceImages) : generationContext.referenceImages;
+                    const videoReferenceImages = generationContext.referenceImages;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
                     const parent = sourceNode?.position || { x: 0, y: 0 };
                     const videoNode: CanvasNodeData = {
@@ -4305,27 +4314,6 @@ function referenceUrl(image: ReferenceImage) {
     return image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
 }
 
-function expandOfficialActorVideoReferenceImages(images: ReferenceImage[]): ReferenceImage[] {
-    const officialImages: ReferenceImage[] = [];
-    const localImages: ReferenceImage[] = [];
-    images.forEach((image) => {
-        const officialAssetUri = normalizeOfficialActorAssetUri(image.officialAssetUri);
-        if (isValidOfficialActorAssetUri(officialAssetUri)) {
-            officialImages.push({
-                id: `${image.id}:official`,
-                name: `${image.officialAssetName || image.name || "官方虚拟人像"}.png`,
-                type: "image/png",
-                dataUrl: officialAssetUri,
-                url: officialAssetUri,
-            });
-            localImages.push({ ...image, officialAssetUri: undefined, officialAssetName: undefined });
-            return;
-        }
-        localImages.push(image);
-    });
-    return [...officialImages, ...localImages];
-}
-
 function generationReferenceUrls(context: { referenceImages: ReferenceImage[]; referenceVideos: Array<{ storageKey?: string; url?: string }>; referenceAudios?: Array<{ storageKey?: string; url?: string }> }) {
     return [
         ...context.referenceImages.map(referenceUrl).filter((url): url is string => Boolean(url)),
@@ -4375,7 +4363,7 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
 
 function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
     const order = { firstFrame: 0, reference: 1, lastFrame: 2 };
-    return [...references].sort((a, b) => Number(b.source === "officialActor") - Number(a.source === "officialActor") || order[a.role || "reference"] - order[b.role || "reference"]);
+    return [...references].sort((a, b) => order[a.role || "reference"] - order[b.role || "reference"]);
 }
 
 async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
@@ -4424,6 +4412,87 @@ async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
 
 function getGenerationCount(count: string) {
     return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
+}
+
+function storyboardVideoSettingsPatchFromText(text: string): Partial<CanvasNodeMetadata> {
+    const source = storyboardVideoSettingsSource(text);
+    if (!source) return {};
+    const patch: Partial<CanvasNodeMetadata> = {};
+    const resolution = parseStoryboardVideoResolution(source);
+    const ratio = parseStoryboardVideoRatio(source);
+    const seconds = parseStoryboardVideoSeconds(source);
+    const generateAudio = parseStoryboardVideoBoolean(source, /(生成声音|生成音频|generate_audio|audio)/i);
+    const watermark = parseStoryboardVideoBoolean(source, /(水印|watermark)/i);
+    if (resolution) patch.vquality = resolution;
+    if (ratio) patch.size = ratio;
+    if (seconds) patch.seconds = seconds;
+    if (generateAudio !== undefined) patch.generateAudio = String(generateAudio);
+    if (watermark !== undefined) patch.watermark = String(watermark);
+    return patch;
+}
+
+function storyboardVideoSettingsSource(text: string) {
+    const lines = (text || "").split(/\r?\n/);
+    const chunks: string[] = [];
+    const headerPattern = /(视频生成设置|视频设置|视频参数|视频规格|生成视频设置|video\s*(settings?|config|params?|parameters?)?\s*[:：])/i;
+    const inlinePattern = /(视频|video|seedance).*(分辨率|清晰度|比例|尺寸|时长|秒数|resolution|aspect|ratio|duration)/i;
+    lines.forEach((line, index) => {
+        if (!headerPattern.test(line) && !inlinePattern.test(line)) return;
+        chunks.push(lines.slice(index, index + 5).join("\n"));
+    });
+    return chunks.join("\n").trim();
+}
+
+function parseStoryboardVideoResolution(source: string) {
+    const match = source.match(/\b(480|720|1080)\s*p\b/i) || source.match(/(?:分辨率|清晰度|resolution)[^\d]*(480|720|1080)/i);
+    return match ? `${match[1]}p` : "";
+}
+
+function parseStoryboardVideoRatio(source: string) {
+    const compact = source.replace(/\s+/g, "");
+    const ratioMatch = compact.match(/(21:9|16:9|9:16|4:3|3:4|1:1)/);
+    if (ratioMatch) return ratioMatch[1];
+    const sizeMatch = compact.match(/(\d{3,4})[x×*](\d{3,4})/i);
+    if (sizeMatch) return ratioFromDimensions(Number(sizeMatch[1]), Number(sizeMatch[2]));
+    if (/自适应|adaptive/i.test(source)) return "adaptive";
+    if (/标准横屏/.test(source)) return "4:3";
+    if (/标准竖屏/.test(source)) return "3:4";
+    if (/宽银幕|超宽|cinema|widescreen/i.test(source)) return "21:9";
+    if (/方形|正方形|square/i.test(source)) return "1:1";
+    if (/竖屏|竖版|portrait/i.test(source)) return "9:16";
+    if (/横屏|横版|landscape/i.test(source)) return "16:9";
+    return "";
+}
+
+function ratioFromDimensions(width: number, height: number) {
+    if (!width || !height) return "";
+    const ratio = width / height;
+    const options = [
+        ["16:9", 16 / 9],
+        ["4:3", 4 / 3],
+        ["1:1", 1],
+        ["3:4", 3 / 4],
+        ["9:16", 9 / 16],
+        ["21:9", 21 / 9],
+    ] as const;
+    return options.reduce((best, item) => (Math.abs(item[1] - ratio) < Math.abs(best[1] - ratio) ? item : best), options[0])[0];
+}
+
+function parseStoryboardVideoSeconds(source: string) {
+    if (/(智能|auto|adaptive)/i.test(source) && /(时长|秒数|duration)/i.test(source)) return "-1";
+    const labeled = source.match(/(?:时长|秒数|duration)[^\d-]*(1[0-5]|[4-9])\s*(?:s|秒)?/i);
+    const compact = source.match(/\b(1[0-5]|[4-9])\s*(?:s|秒)\b/i);
+    return labeled?.[1] || compact?.[1] || "";
+}
+
+function parseStoryboardVideoBoolean(source: string, keyPattern: RegExp) {
+    const line = source
+        .split(/\r?\n|[，,；;]/)
+        .find((item) => keyPattern.test(item));
+    if (!line) return undefined;
+    if (/(false|off|关闭|不要|不生成|无|否)/i.test(line)) return false;
+    if (/(true|on|开启|打开|生成|需要|是)/i.test(line)) return true;
+    return undefined;
 }
 
 function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
@@ -4482,13 +4551,6 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
 
 function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) => (node.metadata?.status === "loading" ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } } : node));
-}
-
-function withOfficialActorImagePrompt(prompt: string, node?: CanvasNodeData | null) {
-    const officialActor = node?.type === CanvasNodeType.Image ? node.metadata?.officialActor : undefined;
-    const officialAssetUri = normalizeOfficialActorAssetUri(officialActor?.assetUri);
-    if (!isValidOfficialActorAssetUri(officialAssetUri)) return prompt;
-    return `${prompt}\n\n官方虚拟人像视频基座：${officialActor?.name || "自定义官方虚拟人像"}，素材 ID：${officialAssetUri}。当前生图模型无法直接读取该 asset:// 的真实脸，因此本图只生成服装、体态、姿势、镜头、场景和画风的可视造型预览；不要把脸作为最终一致性依据，不要生成写实真人脸部特写。后续生成视频时会把该官方 asset:// 作为第一参考图传给 Seedance 来决定角色脸部基座。画面保持非真人虚拟角色/2.5D 数字角色质感。`;
 }
 
 function isGenerationCanceled(error: unknown) {
@@ -4735,9 +4797,8 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
     if (asset.kind === "prop") {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
     }
-    const officialUri = normalizeOfficialActorAssetUri(asset.officialActor?.assetUri);
-    if (asset.kind === "character" && isValidOfficialActorAssetUri(officialUri)) {
-        return `${prompt}\n\n官方虚拟人像视频基座：${asset.officialActor?.name || asset.name}，素材 ID：${officialUri}。当前生图模型无法直接读取该 asset:// 的真实脸，因此本图只生成服装、体态、发型整理、姿势、画风、光影和场景的可视造型参考；不要生成写实真人脸部特写，不要把脸作为最终一致性依据。后续生成视频时会把该官方 asset:// 作为第一参考图传给 Seedance 来决定角色脸部基座。画面保持非真人虚拟角色/2.5D 数字角色质感。`;
+    if (asset.kind === "character") {
+        return `${prompt}\n\n资产类型：非写实虚拟角色设定图。保持 2.5D、动画或漫画质感，角色脸型、发型、体态、服装和画风清晰稳定；避免写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；不要添加文字、Logo、水印或边框。`;
     }
     return prompt;
 }
@@ -4754,20 +4815,6 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const linkByMention = new Map(storyboardPromptAssetLinks(detail).map((link) => [link.mention, link]));
     for (const mention of mentions) {
         const asset = assetByName.get(mention);
-        const assetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
-        if (isValidOfficialActorAssetUri(assetUri)) {
-            resolved.set(`official-${asset?.id || mention}`, {
-                mention,
-                source: "officialActor",
-                reference: {
-                    id: `official-${asset?.id || mention}`,
-                    name: `${asset?.officialActor?.name || asset?.name || mention.replace(/^@/, "")}.png`,
-                    type: "image/png",
-                    dataUrl: assetUri,
-                    url: assetUri,
-                },
-            });
-        }
         const nodeId = linkByMention.get(mention)?.nodeId || mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
         const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
         const reference = referenceImageFromCanvasNode(assetNode);
@@ -4877,6 +4924,12 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
     const baseVideoReferences = existing?.metadata?.storyboardVideoReferences?.length ? existing.metadata.storyboardVideoReferences : storyboardVideoReferencesFromAssetReferences(assetReferences);
     const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes);
+    const videoModel = existing?.metadata?.model || generationConfig.model;
+    const videoSize = existing?.metadata?.size || generationConfig.size;
+    const videoSeconds = existing?.metadata?.seconds || generationConfig.videoSeconds;
+    const videoQuality = existing?.metadata?.vquality || generationConfig.vquality;
+    const videoGenerateAudio = existing?.metadata?.generateAudio || generationConfig.videoGenerateAudio;
+    const videoWatermark = existing?.metadata?.watermark || generationConfig.videoWatermark;
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,
@@ -4888,12 +4941,12 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
             ...existing?.metadata,
             prompt,
             status: NODE_STATUS_IDLE,
-            model: generationConfig.model,
-            size: generationConfig.size,
-            seconds: generationConfig.videoSeconds,
-            vquality: generationConfig.vquality,
-            generateAudio: generationConfig.videoGenerateAudio,
-            watermark: generationConfig.videoWatermark,
+            model: videoModel,
+            size: videoSize,
+            seconds: videoSeconds,
+            vquality: videoQuality,
+            generateAudio: videoGenerateAudio,
+            watermark: videoWatermark,
             references: referenceUrls,
             storyboardSourceNodeId: scriptNode.id,
             storyboardRowIndex: rowIndex,
@@ -4968,7 +5021,7 @@ function buildCharacterReferencePrompt(variant: CharacterReferenceVariant, descr
         "不要改变年龄、性别、脸型、发色、服装款式、服装颜色、画面风格；不要出现多人；不要添加文字、水印、边框或拼贴排版。",
         `角色补充：${detail}`,
         `目标画面：${variant.target}`,
-        "画面主体完整清晰，背景简洁干净，适合后续作为官方素材库上传的角色参考图。",
+        "画面主体完整清晰，背景简洁干净，适合后续作为角色资产图、首帧图或视频参考图。",
     ].join("\n");
 }
 
@@ -5005,17 +5058,14 @@ function linkStoryboardPromptAssets(scriptNode: CanvasNodeData, detail: Storyboa
         const asset = assetByMention.get(mention);
         const nodeId = mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
         const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === normalizeAssetMention(String(node.metadata.storyboardAssetName)));
-        const officialAssetUri = normalizeOfficialActorAssetUri(asset?.officialActor?.assetUri);
-        const officialBound = isValidOfficialActorAssetUri(officialAssetUri);
         return {
             mention,
             name: asset?.name || mention.replace(/^@/, ""),
-            status: assetNode || officialBound ? "bound" : "missing",
+            status: assetNode ? "bound" : "missing",
             assetId: asset?.id,
             nodeId: assetNode?.id,
             kind: asset?.kind,
-            source: officialBound ? "officialActor" : assetNode ? "node" : undefined,
-            url: officialBound ? officialAssetUri : undefined,
+            source: assetNode ? "node" : undefined,
         } satisfies NonNullable<StoryboardPromptDetail["assetMentionLinks"]>[number];
     });
     return { ...detail, assetMentions: mentions, assetMentionLinks: links };
@@ -5038,12 +5088,14 @@ function referenceImageFromCanvasNode(node?: CanvasNodeData | null): ReferenceIm
     };
 }
 
+function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storageKey">) {
+    return Boolean(asset.imageUrl || asset.storageKey);
+}
+
 function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
     const row = rows[rowIndex] || [];
     const assets = node.metadata?.storyboardAssets || [];
-    const assetLines = assets.length
-        ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}${officialActorComposeNote(asset)}`).join("\n")
-        : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
+    const assetLines = assets.length ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}`).join("\n") : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
     const contextRows = rows
         .slice(contextStart, Math.min(rows.length, rowIndex + 2))
@@ -5058,13 +5110,6 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     ]
         .filter(Boolean)
         .join("\n\n");
-}
-
-function officialActorComposeNote(asset: StoryboardAsset) {
-    if (asset.kind !== "character" || !asset.officialActor) return "";
-    const uri = normalizeOfficialActorAssetUri(asset.officialActor.assetUri);
-    const state = isValidOfficialActorAssetUri(uri) ? `已绑定 ${uri}` : "待粘贴真实 asset:// 官方虚拟人像 ID";
-    return `｜官方脸：${asset.officialActor.name}（${state}）。合成提示词时把该官方脸视为 ${asset.name} 的演员底座，只改服装、状态、表演、场景和镜头，不重新设计脸。`;
 }
 
 function storyboardRowSummary(row: string[]) {
@@ -5190,7 +5235,7 @@ function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: S
     const description = readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim();
     const prompt = readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description;
     const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
-    return kind === "character" ? { ...base, officialActor: matchOfficialVirtualActor(base) } : base;
+    return base;
 }
 
 function normalizeStoryboardAssetKind(value: unknown): StoryboardAssetKind | null {

@@ -5,6 +5,4 @@ export type ReferenceImage = {
     dataUrl: string;
     url?: string;
     storageKey?: string;
-    officialAssetUri?: string;
-    officialAssetName?: string;
 };

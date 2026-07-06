@@ -4,7 +4,6 @@ import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Plus, Sparkles, Squar
 
 import { ModelPicker } from "@/components/model-picker";
 import type { AiConfig } from "@/stores/use-config-store";
-import { OFFICIAL_VIRTUAL_ACTORS, isValidOfficialActorAssetUri, normalizeOfficialActorAssetUri, officialActorBinding, officialActorById, storyboardAssetReadyWithOfficialActor } from "@/lib/canvas/official-virtual-actors";
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
@@ -19,6 +18,10 @@ const ASSET_SECTIONS: Array<{ kind: StoryboardAssetKind; title: string }> = [
     { kind: "scene", title: "场景" },
     { kind: "prop", title: "道具" },
 ];
+
+function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storageKey">) {
+    return Boolean(asset.imageUrl || asset.storageKey);
+}
 
 type CanvasScriptNodeDialogProps = {
     node: CanvasNodeData | null;
@@ -51,18 +54,17 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const promptCount = rows.filter((_, index) => hasComposedPrompt(promptDetails[String(index)])).length;
     const videoPromptCount = rows.filter((_, index) => hasVideoPrompt(promptDetails[String(index)])).length;
-    const readyAssets = assets.filter(storyboardAssetReadyWithOfficialActor).length;
+    const readyAssets = assets.filter(storyboardAssetReady).length;
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
     const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
-    const editingAssetUsesOfficialActor = isValidOfficialActorAssetUri(editingAsset?.officialActor?.assetUri);
     const editingAssetHasImage = Boolean(editingAsset?.imageUrl || editingAsset?.storageKey);
+    const editingAssetGenerating = Boolean(editingAsset && (actionKey === `asset:${editingAsset.id}` || editingAsset.status === "loading"));
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
-    const editingAssetGenerating = Boolean(editingAsset && (actionKey === `asset:${editingAsset.id}` || editingAsset.status === "loading"));
 
     useEffect(() => {
         if (!node) return;
@@ -224,7 +226,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             trigger={["click"]}
                                             menu={{
                                                 items: [
-                                                    { key: "generate", label: editingAssetHasImage ? (editingAssetUsesOfficialActor ? "重新生成造型图" : "重新生成图片") : editingAssetUsesOfficialActor ? "生成造型图" : "生成图片", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "generate", label: editingAssetHasImage ? "重新生成图片" : "生成图片", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "upload", label: "上传图片", icon: <Upload className="size-3.5" /> },
                                                     ...(editingAssetHasImage ? [{ key: "clear", label: "清除当前图片", danger: true }] : []),
                                                 ],
@@ -245,7 +247,6 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
                                     <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
-                                    {editingAsset.kind === "character" ? <OfficialActorEditor asset={editingAsset} onChange={(patch) => onUpdateAsset(node.id, editingAsset.id, { ...patch, status: "idle", errorDetails: undefined })} /> : null}
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
                                 <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
@@ -261,7 +262,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         </Button>
                                     ) : (
                                         <Button type="primary" icon={<Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
-                                            {editingAssetHasImage ? (editingAssetUsesOfficialActor ? "重新生成造型图" : "重新生成图片") : editingAssetUsesOfficialActor ? "生成造型图" : "生成图片"}
+                                            {editingAssetHasImage ? "重新生成图片" : "生成图片"}
                                         </Button>
                                     )}
                                 </div>
@@ -588,7 +589,7 @@ function renderPromptMentionPreview(text: string, mentions: string[], links: Sto
 
 function PromptAssetChip({ link, inline }: { link: StoryboardAssetMentionLink; inline?: boolean }) {
     const bound = link.status === "bound";
-    const title = bound ? (link.source === "officialActor" ? `已绑定官方虚拟演员：${link.url || link.name}` : `已绑定到资产节点：${link.name}`) : "未绑定，请先批量生成资产、粘贴官方 asset://，或检查资产名称";
+    const title = bound ? `已绑定到资产节点：${link.name}` : "未绑定，请先批量生成或上传资产图，并检查资产名称";
     return (
         <span
             title={title}
@@ -722,9 +723,6 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, r
                 </div>
                 {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
                 {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
-                <div className="mb-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-xs leading-6 text-cyan-50">
-                    官方虚拟演员模式：角色设定仍由剧本生成，脸部来源绑定到方舟预置虚拟人像。点开角色卡后可替换候选演员，并粘贴从方舟 API 面板复制的 <span className="font-semibold">asset://asset-...</span>。
-                </div>
                 {ASSET_SECTIONS.map(({ kind, title }) => (
                     <section key={kind} className="mb-7">
                         <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
@@ -779,12 +777,11 @@ function AssetRecognitionProgress({ progress }: { progress?: StoryboardAssetProg
 
 function AssetCard({ asset, actionKey, onSelect, onGenerate }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
-    const officialReady = isValidOfficialActorAssetUri(asset.officialActor?.assetUri);
     const hasImage = Boolean(asset.imageUrl || asset.storageKey);
     return (
         <button className="group min-w-0 text-left" onClick={onSelect}>
             <div className="relative mb-2 grid aspect-[16/9] place-items-center overflow-hidden rounded-lg border border-dashed border-[#3f3f3f] bg-[#111] text-xs text-[#818181] transition group-hover:border-[#6a6a6a]">
-                {asset.imageUrl ? <img src={asset.imageUrl} alt={asset.name} className="size-full object-cover" /> : loading ? <LoaderCircle className="size-6 animate-spin" /> : asset.officialActor ? <OfficialActorPlaceholder asset={asset} /> : `生成或上传${ASSET_KIND_LABEL[asset.kind]}图`}
+                {asset.imageUrl ? <img src={asset.imageUrl} alt={asset.name} className="size-full object-cover" /> : loading ? <LoaderCircle className="size-6 animate-spin" /> : `生成或上传${ASSET_KIND_LABEL[asset.kind]}图`}
                 <span
                     className="absolute right-2 top-2 grid size-7 place-items-center rounded bg-[#050505]/85 text-[#f1f1f1] opacity-0 transition group-hover:opacity-100"
                     title={hasImage ? "重新生成" : "生成图片"}
@@ -797,26 +794,8 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate }: { asset: Storyboa
                 </span>
             </div>
             <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
-            {asset.officialActor ? (
-                <div className={`mt-1 inline-flex max-w-full items-center rounded px-2 py-0.5 text-[11px] font-semibold ${officialReady ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
-                    <span className="truncate">官方脸：{asset.officialActor.name}</span>
-                    <span className="ml-1 opacity-75">{officialReady ? "可用" : "待填ID"}</span>
-                </div>
-            ) : null}
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
         </button>
-    );
-}
-
-function OfficialActorPlaceholder({ asset }: { asset: StoryboardAsset }) {
-    const actor = asset.officialActor;
-    const label = actor?.name.replace(/^官方/, "").slice(0, 6) || "官方脸";
-    return (
-        <div className="flex size-full flex-col items-center justify-center bg-[linear-gradient(135deg,#151515,#242424_48%,#111)] px-4 text-center">
-            <div className="grid size-16 place-items-center rounded-full border border-cyan-200/35 bg-cyan-200/10 text-lg font-semibold text-cyan-100">{label.slice(0, 2)}</div>
-            <div className="mt-3 line-clamp-1 max-w-full text-xs font-semibold text-[#e8f7ff]">{actor?.name}</div>
-            <div className="mt-1 text-[11px] text-[#8fb9c7]">剧本角色绑定官方脸</div>
-        </div>
     );
 }
 
@@ -826,40 +805,6 @@ function AssetEditorField({ label, value, textarea, tall, onChange }: { label: s
             <span className="mb-2 block text-xs font-semibold text-[#f0f0f0]">{label}</span>
             {textarea ? <textarea className={`block w-full resize-none rounded-lg border border-[#383838] bg-[#303030] px-3 py-3 text-sm leading-6 text-[#f5f5f5] outline-none focus:border-[#777] ${tall ? "h-56" : "h-28"}`} value={value} onChange={(event) => onChange(event.target.value)} /> : <input className="block h-10 w-full rounded-lg border border-[#383838] bg-[#303030] px-3 text-sm text-[#f5f5f5] outline-none focus:border-[#777]" value={value} onChange={(event) => onChange(event.target.value)} />}
         </label>
-    );
-}
-
-function OfficialActorEditor({ asset, onChange }: { asset: StoryboardAsset; onChange: (patch: Partial<StoryboardAsset>) => void }) {
-    const actor = asset.officialActor;
-    const valid = isValidOfficialActorAssetUri(actor?.assetUri);
-    const selectActor = (actorId: string) => {
-        const nextActor = officialActorById(actorId);
-        if (!nextActor) return;
-        onChange({ officialActor: officialActorBinding(nextActor, { assetUri: actor?.id === nextActor.id ? actor?.assetUri || "" : nextActor.assetUri || "", matchReason: `手动选择为 ${asset.name} 的官方演员底座。` }) });
-    };
-    return (
-        <section className="mb-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-3">
-            <div className="mb-2 text-xs font-semibold text-cyan-100">官方虚拟演员绑定</div>
-            <select className="mb-3 block h-10 w-full rounded-lg border border-[#3b5360] bg-[#23313a] px-3 text-sm text-[#f5f5f5] outline-none focus:border-cyan-300" value={actor?.id || OFFICIAL_VIRTUAL_ACTORS[0].id} onChange={(event) => selectActor(event.target.value)}>
-                {OFFICIAL_VIRTUAL_ACTORS.map((item) => (
-                    <option key={item.id} value={item.id}>
-                        {item.name}
-                    </option>
-                ))}
-            </select>
-            <label className="block">
-                <span className="mb-2 block text-xs font-semibold text-[#d8f7ff]">官方 Asset URI</span>
-                <input
-                    className="block h-10 w-full rounded-lg border border-[#3b5360] bg-[#17252c] px-3 text-sm text-[#f5f5f5] outline-none focus:border-cyan-300"
-                    value={actor?.assetUri || ""}
-                    placeholder="可直接粘贴方舟复制的 asset-xxxxxxxx"
-                    onChange={(event) => onChange({ officialActor: { ...(actor || officialActorBinding(OFFICIAL_VIRTUAL_ACTORS[0])), assetUri: normalizeOfficialActorAssetUri(event.target.value) } })}
-                />
-            </label>
-            <div className={`mt-2 rounded px-2 py-1 text-[11px] ${valid ? "bg-emerald-500/15 text-emerald-200" : "bg-amber-500/15 text-amber-100"}`}>{valid ? "已填入合法官方素材地址：生图只生成服装/造型预览，视频会优先把该 asset:// 作为脸部基座传给 Seedance。" : "还未填入可用官方素材 ID；可直接粘贴方舟复制的 asset-...，系统会自动补成 asset://asset-...。"}</div>
-            {actor?.matchReason ? <div className="mt-2 text-[11px] leading-5 text-[#a5ddeb]">{actor.matchReason}</div> : null}
-            {actor?.traits?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{actor.traits.map((trait) => <span key={trait} className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-[#d8f7ff]">{trait}</span>)}</div> : null}
-        </section>
     );
 }
 

@@ -222,27 +222,27 @@ async function buildSeedanceContent(config: AiConfig, prompt: string, references
 
 async function resolveSeedanceImageUrl(config: AiConfig, image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
-    if (isPublicMediaUrl(directUrl) || directUrl.startsWith("asset://")) return directUrl;
+    if (isPublicMediaUrl(directUrl)) return directUrl;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
     return dataUrl;
 }
 
 async function resolveSeedanceVideoUrl(video: ReferenceVideo) {
-    if (isPublicMediaUrl(video.url) || video.url.startsWith("asset://")) return video.url;
+    if (isPublicMediaUrl(video.url)) return video.url;
     let blob: Blob | null = null;
     if (video.storageKey) blob = await getMediaBlob(video.storageKey);
     if (!blob && video.url?.startsWith("blob:")) blob = await (await fetch(video.url)).blob();
-    if (!blob) throw new Error("参考视频必须是公网 URL、素材 ID，或本地已保存的视频");
+    if (!blob) throw new Error("参考视频必须是公网 URL，或本地已保存的视频");
     return blobToDataUrl(blob);
 }
 
 async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
-    if (isPublicMediaUrl(audio.url) || audio.url.startsWith("asset://")) return audio.url;
+    if (isPublicMediaUrl(audio.url)) return audio.url;
     let blob: Blob | null = null;
     if (audio.storageKey) blob = await getMediaBlob(audio.storageKey);
     if (!blob && audio.url?.startsWith("blob:")) blob = await (await fetch(audio.url)).blob();
-    if (!blob) throw new Error("参考音频必须是公网 URL、素材 ID，或本地已保存的音频");
+    if (!blob) throw new Error("参考音频必须是公网 URL，或本地已保存的音频");
     return blobToDataUrl(blob);
 }
 
@@ -353,7 +353,7 @@ function safeJsonPreview(value: unknown) {
 
 function normalizeVideoErrorMessage(message: string) {
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
-        return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发官方真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通、非真人虚拟角色，或使用方舟授权素材。\n\n原始错误：${message}`;
+        return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。\n\n原始错误：${message}`;
     }
     if (/input\.media|aspect_ratio|parameters\.(resolution|duration|generate_audio|watermark)|resolution|duration|generate_audio|watermark/i.test(message)) {
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;

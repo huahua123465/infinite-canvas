@@ -1381,8 +1381,8 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                 <Alert
                     showIcon
                     type="warning"
-                    message="方舟 Seedance 对真人脸参考图限制较严"
-                    description="AI 生成图如果高度写实、像真人演员定妆照，也可能被识别为真人脸并拒绝生成。建议换成更明显的二次元、3D 卡通、非真人虚拟角色，或使用方舟授权素材。"
+                    message="建议使用非写实虚拟角色参考图"
+                    description="AI 生成图如果高度写实、像真人演员定妆照，也可能被识别为真人脸并拒绝生成。建议换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。"
                 />
                 <section>
                     <div className="mb-2 text-sm font-semibold">当前参考图</div>
@@ -1523,7 +1523,7 @@ function uniqueStoryboardMention(mention: string, current: StoryboardVideoRefere
 }
 
 function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
-    return [...references].sort((a, b) => Number(b.source === "officialActor") - Number(a.source === "officialActor") || STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[a.role || "reference"] - STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[b.role || "reference"]);
+    return [...references].sort((a, b) => STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[a.role || "reference"] - STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[b.role || "reference"]);
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
