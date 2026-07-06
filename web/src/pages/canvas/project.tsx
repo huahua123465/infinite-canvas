@@ -454,6 +454,7 @@ function InfiniteCanvasPage() {
     const agentCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const tailFrameBackfillRef = useRef(new Set<string>());
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -634,6 +635,28 @@ function InfiniteCanvasPage() {
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const targets = nodes.filter((node) => shouldBackfillStoryboardTailFrame(node, tailFrameBackfillRef.current));
+        targets.forEach((node) => {
+            tailFrameBackfillRef.current.add(node.id);
+            void extractVideoLastFrame({
+                url: node.metadata?.content || "",
+                storageKey: node.metadata?.storageKey,
+                width: node.metadata?.naturalWidth || node.width,
+                height: node.metadata?.naturalHeight || node.height,
+                bytes: node.metadata?.bytes || 0,
+                mimeType: node.metadata?.mimeType || "video/mp4",
+                durationMs: node.metadata?.durationMs,
+            })
+                .then((tailFrame) => {
+                    if (!tailFrame) return;
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...storyboardTailFrameMetadata(tailFrame) } } : item)));
+                })
+                .catch(() => undefined);
+        });
+    }, [nodes, projectLoaded]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -4289,6 +4312,18 @@ function storyboardTailFrameMetadata(image: UploadedImage | null): Partial<Canva
     return { storyboardVideoTailFrameUrl: image.url, storyboardVideoTailFrameStorageKey: image.storageKey };
 }
 
+function shouldBackfillStoryboardTailFrame(node: CanvasNodeData, pending: Set<string>) {
+    return (
+        node.type === CanvasNodeType.Video &&
+        Boolean(node.metadata?.content || node.metadata?.storageKey) &&
+        Boolean(node.metadata?.storyboardSourceNodeId) &&
+        node.metadata?.storyboardRowIndex !== undefined &&
+        !node.metadata?.storyboardVideoTailFrameUrl &&
+        !node.metadata?.storyboardVideoTailFrameStorageKey &&
+        !pending.has(node.id)
+    );
+}
+
 async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedImage | null> {
     const url = await resolveMediaUrl(videoFile.storageKey, videoFile.url);
     if (!url) return null;
@@ -4865,6 +4900,27 @@ function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNod
     const sourceId = node.metadata.storyboardSourceNodeId;
     const scriptNode = nodes.find((item) => item.id === sourceId);
     const references = new Map<string, StoryboardVideoReference>();
+    const rowIndex = node.metadata.storyboardRowIndex;
+
+    if (rowIndex !== undefined && rowIndex > 0) {
+        nodes
+            .filter((item) => item.type === CanvasNodeType.Video && item.metadata?.storyboardSourceNodeId === sourceId && item.metadata.storyboardRowIndex === rowIndex - 1 && (item.metadata.storyboardVideoTailFrameStorageKey || item.metadata.storyboardVideoTailFrameUrl))
+            .sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))
+            .forEach((item) => {
+                const name = `第 ${rowIndex} 镜${item.metadata?.storyboardVideoVariantIndex ? ` v${item.metadata.storyboardVideoVariantIndex}` : ""} 尾帧`;
+                const mention = `@${name}`;
+                references.set(mention, {
+                    mention,
+                    name,
+                    status: "bound",
+                    nodeId: item.id,
+                    url: item.metadata?.storyboardVideoTailFrameUrl,
+                    storageKey: item.metadata?.storyboardVideoTailFrameStorageKey,
+                    role: "firstFrame",
+                    source: "script",
+                });
+            });
+    }
 
     nodes.forEach((item) => {
         const name = item.metadata?.storyboardAssetName;

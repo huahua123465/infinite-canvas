@@ -867,7 +867,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                             onConfigChange={(patch) => onMetadataChange(node.id, patch)}
                             onGenerate={(patch) => onRetry?.(node, patch)}
                         />
-                        <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferencePatch(references))} />
+                        <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferenceSavePatch(node, references))} />
                     </div>
                 </div>
             );
@@ -1045,6 +1045,10 @@ function storyboardReferenceStatusText(item: StoryboardVideoReference) {
     return "已作为参考图传入";
 }
 
+function isStoryboardTailFrameReference(item: StoryboardVideoReference) {
+    return item.role === "firstFrame" && item.mention.includes("尾帧");
+}
+
 function StoryboardAssetPreviewImage({ src, alt }: { src: string; alt: string }) {
     const [resolvedSrc, setResolvedSrc] = useState(src.startsWith("image:") ? "" : src);
 
@@ -1136,6 +1140,7 @@ function StoryboardVideoPromptPreviewModal({
     const draftReferences = storyboardVideoReferencesFromPrompt(draftFinalPrompt, references, referenceCandidates);
     const draftAssetLinks = draftReferences.map(storyboardReferenceToMentionLink);
     const orderedReferences = sortStoryboardVideoReferences(draftReferences);
+    const modalFirstFrameSource = storyboardFirstFrameSourceText(draftReferences);
     const mentionReferences = storyboardReferencesToCanvasResources([...referenceCandidates, ...draftReferences]);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
     const [saveHint, setSaveHint] = useState("");
@@ -1203,6 +1208,9 @@ function StoryboardVideoPromptPreviewModal({
             <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
                     卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
+                </div>
+                <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${modalFirstFrameSource ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"}`}>
+                    {modalFirstFrameSource ? `当前首帧来自：${modalFirstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "当前未接入上一镜尾帧，可在“编辑参考”里手动添加上一镜尾帧。" : "第一镜通常不需要接入上一镜尾帧。"}
                 </div>
                 <section className="rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-950/60">
                     <div className="mb-2 flex items-center justify-between gap-3">
@@ -1419,6 +1427,9 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
     const assets = useAssetStore((state) => state.assets);
     const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
     const [draft, setDraft] = useState<StoryboardVideoReference[]>(references);
+    const tailFrameReferences = scriptReferences.filter(isStoryboardTailFrameReference);
+    const scriptAssetReferences = scriptReferences.filter((item) => !isStoryboardTailFrameReference(item));
+    const activeTailFrame = sortStoryboardVideoReferences(draft).find(isStoryboardTailFrameReference);
 
     useEffect(() => {
         if (open) setDraft(references);
@@ -1435,6 +1446,16 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
             const mention = uniqueStoryboardMention(normalizeStoryboardMention(reference.mention || reference.name), current);
             return [...current, { ...reference, mention, name: mention.replace(/^@/, ""), role, status: "bound" }];
         });
+    };
+    const setFirstFrameReference = (reference: StoryboardVideoReference) => {
+        setDraft((current) => {
+            const next = current.filter((item) => !isStoryboardTailFrameReference(item));
+            const mention = normalizeStoryboardMention(reference.mention || reference.name);
+            return [...next, { ...reference, mention, name: mention.replace(/^@/, ""), role: "firstFrame", status: "bound" }];
+        });
+    };
+    const clearTailFrameReference = () => {
+        setDraft((current) => current.filter((item) => !isStoryboardTailFrameReference(item)));
     };
     const addAsset = (asset: ImageAsset, role: StoryboardVideoReferenceRole) => {
         addReference({ mention: normalizeStoryboardMention(asset.title), name: asset.title, status: "bound", assetId: asset.id, url: asset.data.dataUrl, storageKey: asset.data.storageKey, source: "asset" }, role);
@@ -1461,6 +1482,35 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                     message="建议使用非写实虚拟角色参考图"
                     description="AI 生成图如果高度写实、像真人演员定妆照，也可能被识别为真人脸并拒绝生成。建议换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。"
                 />
+                <section className="rounded-xl border border-stone-200 p-3 dark:border-stone-700">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">连续性首帧</div>
+                        <span className={`text-xs ${activeTailFrame ? "text-sky-500" : "text-stone-500"}`}>{activeTailFrame ? `当前：${activeTailFrame.mention.replace(/^@/, "")}` : "未接入上一镜尾帧"}</span>
+                    </div>
+                    {tailFrameReferences.length ? (
+                        <div className="grid grid-cols-2 gap-3">
+                            {tailFrameReferences.map((item) => {
+                                const active = activeTailFrame?.mention === item.mention;
+                                return (
+                                    <div key={item.mention} className={`overflow-hidden rounded-lg border ${active ? "border-sky-400" : "border-stone-200 dark:border-stone-700"}`}>
+                                        <div className="relative aspect-[4/3] bg-stone-100 dark:bg-stone-800">{item.url || item.storageKey ? <StoryboardAssetPreviewImage src={item.storageKey || item.url || ""} alt={item.name || item.mention} /> : null}</div>
+                                        <div className="space-y-2 px-2 py-2 text-xs">
+                                            <div className="truncate font-semibold">{item.mention}</div>
+                                            <div className="flex gap-1.5">
+                                                <Button size="small" type={active ? "primary" : "default"} onClick={() => setFirstFrameReference(item)}>
+                                                    {active ? "已设为首帧" : "设为首帧"}
+                                                </Button>
+                                                {active ? <Button size="small" onClick={clearTailFrameReference}>移除</Button> : null}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="上一镜还没有可用尾帧，先生成上一镜视频后再回来选择" />
+                    )}
+                </section>
                 <section>
                     <div className="mb-2 text-sm font-semibold">当前参考图</div>
                     {draft.length ? (
@@ -1489,8 +1539,8 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                         <div className="text-sm font-semibold">从当前剧本资产添加</div>
                         <span className="text-xs text-stone-500">优先使用脚本节点已生成或导出的资产图</span>
                     </div>
-                    {scriptReferences.length ? (
-                        <ReferenceSourceGrid items={scriptReferences} onAdd={addReference} />
+                    {scriptAssetReferences.length ? (
+                        <ReferenceSourceGrid items={scriptAssetReferences} onAdd={addReference} />
                     ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前剧本还没有可用资产图，请先准备或导出资产" />
                     )}
@@ -1584,6 +1634,16 @@ function storyboardVideoReferencePatch(references: StoryboardVideoReference[]): 
         storyboardAssetReferenceNodeIds: next.map((item) => item.nodeId).filter((id): id is string => Boolean(id)),
         references: next.map((item) => item.storageKey || item.url).filter((url): url is string => Boolean(url)),
     };
+}
+
+function storyboardVideoReferenceSavePatch(node: CanvasNodeData, references: StoryboardVideoReference[]): Partial<CanvasNodeMetadata> {
+    const patch = storyboardVideoReferencePatch(references);
+    const basePrompt = stripStoryboardVideoFrameContinuityPrompt(node.metadata?.storyboardVideoFinalPrompt || node.metadata?.prompt || "");
+    return { ...patch, storyboardVideoFinalPrompt: storyboardVideoFinalPrompt(basePrompt, patch.storyboardVideoReferences || []) };
+}
+
+function stripStoryboardVideoFrameContinuityPrompt(prompt: string) {
+    return prompt.split(/\n\n视频连续性要求：/)[0].trim();
 }
 
 function normalizeStoryboardMention(value: string) {
