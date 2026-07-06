@@ -3922,7 +3922,7 @@ function InfiniteCanvasPage() {
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 
                 <CanvasScriptNodeDialog
-                    node={scriptNode}
+                    node={scriptNode ? alignStoryboardNodeAssetsWithCurrentStyle(scriptNode) : null}
                     open={Boolean(scriptNode)}
                     actionKey={storyboardActionKey}
                     onClose={() => setScriptNodeId(null)}
@@ -5129,6 +5129,21 @@ function alignStoryboardAssetsWithSourceStyle(parsed: { style: string; assets: S
             ...asset,
             prompt: withStyle(asset.prompt || asset.description),
         })),
+    };
+}
+
+function alignStoryboardNodeAssetsWithCurrentStyle(node: CanvasNodeData): CanvasNodeData {
+    const assets = node.metadata?.storyboardAssets || [];
+    if (!assets.length && !node.metadata?.storyboardAssetStyle) return node;
+    const aligned = alignStoryboardAssetsWithSourceStyle({ style: node.metadata?.storyboardAssetStyle || "", assets }, storyboardSourceTextForNode(node));
+    if (aligned.style === node.metadata?.storyboardAssetStyle && aligned.assets === assets) return node;
+    return {
+        ...node,
+        metadata: {
+            ...node.metadata,
+            storyboardAssetStyle: aligned.style,
+            storyboardAssets: aligned.assets,
+        },
     };
 }
 
