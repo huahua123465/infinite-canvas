@@ -198,7 +198,8 @@ JSON 格式必须为：
 12. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
 13. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
 14. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。
-15. 输出前自检并修正：主体是否绑定清楚、动作是否有起点/过程/终点、运镜是否唯一、资产是否真实存在、提示词是否去掉空泛堆词。`;
+15. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
+16. 输出前自检并修正：主体是否绑定清楚、动作是否有起点/过程/终点、运镜是否唯一、资产是否真实存在、提示词是否去掉空泛堆词和安全高风险表述。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -222,7 +223,8 @@ JSON 格式必须为：
 6. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
 7. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
 8. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
-9. 不要编造与剧本冲突的人物关系和物件。`;
+9. 角色资产安全改写：如果剧本里写“少女、十几岁、未成年、小孩”等，prompt 统一改成“年轻角色/年轻女性角色/年少时期的虚拟角色”；如果写“残疾、残废、瘸、断腿”等，统一改成“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，统一改成“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或痛苦细节。
+10. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -2050,8 +2052,9 @@ function InfiniteCanvasPage() {
                     updateStoryboardAsset(scriptNode.id, assetId, { status: NODE_STATUS_IDLE, errorDetails: undefined });
                     return;
                 }
-                updateStoryboardAsset(scriptNode.id, assetId, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
-                message.error(error instanceof Error ? error.message : "生成资产图失败");
+                const errorDetails = friendlyGenerationError(error, "生成资产图失败");
+                updateStoryboardAsset(scriptNode.id, assetId, { status: NODE_STATUS_ERROR, errorDetails });
+                message.error(errorDetails);
             } finally {
                 finishGenerationRequest(targetId, controller);
                 setStoryboardActionKey(null);
@@ -2098,7 +2101,7 @@ function InfiniteCanvasPage() {
                             updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_IDLE, errorDetails: undefined });
                             return;
                         }
-                        updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成资产图失败" });
+                        updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: friendlyGenerationError(error, "生成资产图失败") });
                     } finally {
                         finishGenerationRequest(targetId, controller);
                     }
@@ -2253,7 +2256,7 @@ function InfiniteCanvasPage() {
                 }
                 message.success(rowIndex === undefined ? "合成提示词已批量生成" : "合成提示词已生成");
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "合成提示词失败");
+                message.error(friendlyGenerationError(error, "合成提示词失败"));
             } finally {
                 setStoryboardActionKey(null);
             }
@@ -2266,7 +2269,7 @@ function InfiniteCanvasPage() {
             const scriptNode = withStoryboardVideoSettings(node);
             if (scriptNode !== node) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
             const row = parseStoryboardRows(scriptNode.metadata?.storyboardRows)[rowIndex];
-            const prompt = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.storyboardPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim();
+            const prompt = safetyNeutralStoryboardPrompt(scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)]?.storyboardPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "");
             if (!row || !prompt) {
                 message.warning("请先填写分镜画面提示词或合成提示词");
                 return;
@@ -2291,7 +2294,7 @@ function InfiniteCanvasPage() {
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...metadata } } : item)));
             } catch (error) {
-                if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成分镜图失败" } } : item)));
+                if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: friendlyGenerationError(error, "生成分镜图失败") } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
                 setStoryboardActionKey(null);
@@ -2310,7 +2313,7 @@ function InfiniteCanvasPage() {
             }
             const row = parseStoryboardRows(scriptNode.metadata?.storyboardRows)[rowIndex];
             const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
-            const prompt = detail?.videoMotionPrompt?.trim();
+            const prompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || "");
             if (!row || !prompt) {
                 message.warning("请先到第三步合成视频运动提示词");
                 return;
@@ -2905,7 +2908,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
-                const errorDetails = error instanceof Error ? error.message : "生成失败";
+                const errorDetails = friendlyGenerationError(error, "生成失败");
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
@@ -4895,7 +4898,7 @@ async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Pro
 
 function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
     if (!asset) return "";
-    const prompt = asset.prompt.trim() || asset.description.trim();
+    const prompt = safetyNeutralStoryboardPrompt(asset.prompt.trim() || asset.description.trim());
     if (!prompt) return "";
     if (asset.kind === "scene") {
         return `${prompt}\n\n资产类型：纯场景空镜。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影、路人或任何活人；只呈现场景空间、环境陈设、道具位置、光线、材质和地域时代质感。`;
@@ -4904,9 +4907,31 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
     }
     if (asset.kind === "character") {
-        return `${prompt}\n\n资产类型：非写实虚拟角色设定图。保持 2.5D、动画或漫画质感，角色脸型、发型、体态、服装和画风清晰稳定；避免写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；不要添加文字、Logo、水印或边框。`;
+        return `${prompt}\n\n资产类型：非写实虚拟角色设定图。角色按年轻成年虚拟形象呈现，行动不便、朴素衣着和生活处境只作为温和视觉特征；保持 2.5D、动画或漫画质感，角色脸型、发型、体态、服装和画风清晰稳定；避免低龄化、伤害细节、暴力痕迹、暴露画面、写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；不要添加文字、Logo、水印或边框。`;
     }
     return prompt;
+}
+
+function safetyNeutralStoryboardPrompt(text: string) {
+    return text
+        .replace(/十[几来]岁|未成年(?:人)?/g, "年轻")
+        .replace(/小女孩|幼女|儿童|小孩/g, "年轻角色")
+        .replace(/少女/g, "年轻女性角色")
+        .replace(/左腿残疾|左腿明显不便|腿部残疾|残疾|残废|瘸(?:腿)?|跛脚|断腿/g, "行动不便")
+        .replace(/瘦小|瘦弱|营养不良/g, "身形单薄")
+        .replace(/破旧|破烂|衣衫褴褛/g, "朴素旧衣")
+        .replace(/草鞋/g, "旧布鞋")
+        .replace(/受虐|虐待|伤痕|血迹|流血|伤口/g, "生活艰难")
+        .replace(/痛苦|苦难|可怜/g, "克制坚韧")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function friendlyGenerationError(error: unknown, fallback: string) {
+    const raw = error instanceof Error ? error.message : fallback;
+    if (!/safety system|rejected by the safety|safety/i.test(raw)) return raw;
+    const requestId = raw.match(/request id[:：]\s*([^)。；;\s]+)/i)?.[1];
+    return `请求被安全系统拦截，请检查提示词或参考图是否包含未成年人、伤残、血腥、受害或极端困境等敏感描述${requestId ? `（request id: ${requestId}）` : ""}`;
 }
 
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
@@ -5162,7 +5187,7 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId);
     const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
-    const prompt = detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "";
+    const prompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "");
     const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
     const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
@@ -5387,8 +5412,8 @@ function storyboardRowSummary(row: string[]) {
 function parseStoryboardPromptDetailAnswer(content: string, assets: StoryboardAsset[] = []): StoryboardPromptDetail {
     const data = parseJsonObject(content) as Record<string, unknown>;
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("模型没有返回可用的提示词 JSON");
-    const storyboardPrompt = readStringField(data, ["storyboardPrompt", "分镜提示词", "imagePrompt", "prompt"]).trim();
-    const videoMotionPrompt = readStringField(data, ["videoMotionPrompt", "视频运动提示词", "videoPrompt", "motionPrompt"]).trim();
+    const storyboardPrompt = safetyNeutralStoryboardPrompt(readStringField(data, ["storyboardPrompt", "分镜提示词", "imagePrompt", "prompt"]).trim());
+    const videoMotionPrompt = safetyNeutralStoryboardPrompt(readStringField(data, ["videoMotionPrompt", "视频运动提示词", "videoPrompt", "motionPrompt"]).trim());
     const mentionValue = data.assetMentions ?? data.assets ?? data["资产引用"];
     const assetMentions = (Array.isArray(mentionValue) ? mentionValue.map((item) => String(item || "")) : typeof mentionValue === "string" ? mentionValue.split(/[，,、\n]/) : []).map(normalizeAssetMention).filter(Boolean);
     if (!storyboardPrompt && !videoMotionPrompt) throw new Error("模型没有返回分镜提示词或视频运动提示词");
@@ -5510,8 +5535,8 @@ function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: S
     const kind = normalizeStoryboardAssetKind(record.kind) || fallbackKind || null;
     const name = readStringField(record, ["name", "名称", "角色名", "场景名", "道具名", "title"]).trim();
     if (!kind || !name) return null;
-    const description = readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim();
-    const prompt = readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description;
+    const description = safetyNeutralStoryboardPrompt(readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim());
+    const prompt = safetyNeutralStoryboardPrompt(readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description);
     const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
     return base;
 }
