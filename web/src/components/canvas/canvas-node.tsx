@@ -1523,7 +1523,7 @@ function uniqueStoryboardMention(mention: string, current: StoryboardVideoRefere
 }
 
 function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
-    return [...references].sort((a, b) => STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[a.role || "reference"] - STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[b.role || "reference"]);
+    return [...references].sort((a, b) => Number(b.source === "officialActor") - Number(a.source === "officialActor") || STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[a.role || "reference"] - STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER[b.role || "reference"]);
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {

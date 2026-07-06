@@ -11,6 +11,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 分镜资产准备：迁入角色/场景/道具识别、阶段型进度条、精简分镜表请求、资产卡片编辑、上传资产图、单个/批量生成资产图和暂停生成，需验证不会把第 9 列提示词发送给资产识别。
 - 官方素材与虚拟演员：迁入角色自动匹配官方虚拟演员、`asset-xxx` 自动补全为 `asset://asset-xxx`、普通图片节点官方素材绑定、官方素材仅作为视频脸部基座且生图只做造型预览的逻辑，需用真实方舟素材 ID 验证 Seedance 参考图顺序。
 - Seedance 视频提示词：迁入第三步 `storyboardPrompt` / `videoMotionPrompt` 双提示词、@ 资产引用解析高亮、最终视频提示词确认与可编辑入口，需验证单镜头和批量视频生成都优先使用 `videoMotionPrompt`，不退回第一步画面提示词。
+- Seedance 视频审核：单镜头“生成视频”改为先创建待审核视频节点并打开最终提示词确认页；官方 `asset://` 素材在普通视频和分镜视频参考图中都应排在第一位，需用绑定官方素材的角色实测。
+- Seedance 提示词技能：恢复 `.agents/skills/seedance-video-prompting`，需确认 Codex 后续生成/审查 Seedance 视频提示词时能继续读取该 skill。
 - 视频工作区与连续性：迁入待审核视频节点、参考资产编辑、首帧/参考/尾帧角色、真人脸风控中文提示、视频阶段式进度条、成功后提取尾帧并传给下一镜首帧，需验证节点显示“已使用上一镜尾帧作为首帧”。
 - Seedance REST 接口：保留 custom/jt 的官方接口修正，需用方舟环境验证 `POST /contents/generations/tasks`、`GET /contents/generations/tasks/{id}`、`content` 数组、`aspect_ratio`、大写 `480P/720P/1080P`、30 秒轮询、9 张参考图上限和 400 原始错误展示。
 - Gemini 渠道：保留官方 v0.5.0 的 Gemini 调用格式、模型渠道配置和 Gemini 生图入口，需验证本次 Seedance/Script 迁移没有覆盖 `use-config-store`、image API 和模型选择器里的 Gemini 支持。

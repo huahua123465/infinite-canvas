@@ -58,6 +58,7 @@ import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib
 import type { CanvasAgentMode } from "@/components/canvas/canvas-agent-chat-ui";
 import {
     CanvasNodeType,
+    STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT,
     type CanvasAssistantImage,
     type CanvasAssistantSession,
     type CanvasConnection,
@@ -2284,37 +2285,31 @@ function InfiniteCanvasPage() {
                 return;
             }
             const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
-            const childId = nanoid();
-            const x = scriptNode.position.x + scriptNode.width + 96 + (rowIndex % 3) * (spec.width + 32);
-            const y = scriptNode.position.y + Math.floor(rowIndex / 3) * (spec.height + 42);
+            const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === scriptNode.id);
+            const workspaceId = existingWorkspace?.id || nanoid();
+            const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
+            const draftNode = buildStoryboardVideoDraftNode(scriptNode, row, rowIndex, rowIndex, spec, generationConfig, workspacePosition, nodesRef.current);
+            const existingDraftNodes = nodesRef.current.filter((item) => item.type === CanvasNodeType.Video && item.id !== draftNode.id && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardRowIndex !== undefined && !item.metadata.content);
+            const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, [...existingDraftNodes, draftNode], workspacePosition, "storyboard-videos");
             setStoryboardActionKey(`video:${rowIndex}`);
-            const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
-            const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodesRef.current).assetMentionLinks || [] : [];
-            const assetReferenceNodeIds = assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id));
-            const storyboardVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
-            setNodes((prev) => [...prev, { id: childId, type: CanvasNodeType.Video, title: `分镜视频 ${row[0] || rowIndex + 1}`, position: { x, y }, width: spec.width, height: spec.height, metadata: { prompt, status: NODE_STATUS_LOADING, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences, videoGenerationProgress: initialVideoGenerationProgress() } }]);
-            setConnections((prev) => addUniqueConnections(prev, [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: childId }, ...assetReferences.flatMap((item) => (item.node ? [{ id: nanoid(), fromNodeId: item.node.id, toNodeId: childId }] : []))]));
-            const controller = startGenerationRequest(childId, scriptNode.id, childId);
-            try {
-                const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, assetReferences.map((item) => item.reference), [], [], { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))) }));
-                const size = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                const tailFrame = await extractVideoLastFrame(video).catch(() => null);
-                setNodes((prev) =>
-                    applyStoryboardTailFrameToNextVideo(
-                        prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: referenceUrls, storyboardSourceNodeId: scriptNode.id, storyboardRowIndex: rowIndex, storyboardAssetMentions: assetReferences.map((item) => item.mention), storyboardAssetMentionLinks: assetMentionLinks, storyboardAssetReferenceNodeIds: assetReferenceNodeIds, storyboardVideoReferences, videoGenerationProgress: undefined } } : item)),
-                        scriptNode.id,
-                        rowIndex,
-                        tailFrame,
-                    ),
-                );
-            } catch (error) {
-                if (!isGenerationCanceled(error)) setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "生成视频失败" } } : item)));
-            } finally {
-                finishGenerationRequest(childId, controller);
-                setStoryboardActionKey(null);
-            }
+            setNodes((prev) => {
+                const draftById = new Map([workspaceNode, draftNode].map((item) => [item.id, item]));
+                const updated = prev.map((item) => draftById.get(item.id) || item);
+                const existingIds = new Set(prev.map((item) => item.id));
+                return [...updated, ...[workspaceNode, draftNode].filter((item) => !existingIds.has(item.id))];
+            });
+            setConnections((prev) =>
+                addUniqueConnections(prev, [
+                    { id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id },
+                    ...storyboardVideoAssetReferenceNodes(draftNode, nodesRef.current).map((assetNode) => ({ id: nanoid(), fromNodeId: assetNode.id, toNodeId: draftNode.id })),
+                ]),
+            );
+            setStoryboardActionKey(null);
+            setScriptNodeId(null);
+            window.setTimeout(() => window.dispatchEvent(new CustomEvent(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, { detail: draftNode.id })), 120);
+            message.success("已创建待审核视频节点，请确认最终提示词后生成");
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
     );
 
     const batchGenerateStoryboardImages = useCallback(
@@ -4311,20 +4306,24 @@ function referenceUrl(image: ReferenceImage) {
 }
 
 function expandOfficialActorVideoReferenceImages(images: ReferenceImage[]): ReferenceImage[] {
-    return images.flatMap((image) => {
+    const officialImages: ReferenceImage[] = [];
+    const localImages: ReferenceImage[] = [];
+    images.forEach((image) => {
         const officialAssetUri = normalizeOfficialActorAssetUri(image.officialAssetUri);
-        if (!isValidOfficialActorAssetUri(officialAssetUri)) return [image];
-        return [
-            {
+        if (isValidOfficialActorAssetUri(officialAssetUri)) {
+            officialImages.push({
                 id: `${image.id}:official`,
                 name: `${image.officialAssetName || image.name || "官方虚拟人像"}.png`,
                 type: "image/png",
                 dataUrl: officialAssetUri,
                 url: officialAssetUri,
-            },
-            { ...image, officialAssetUri: undefined, officialAssetName: undefined },
-        ];
+            });
+            localImages.push({ ...image, officialAssetUri: undefined, officialAssetName: undefined });
+            return;
+        }
+        localImages.push(image);
     });
+    return [...officialImages, ...localImages];
 }
 
 function generationReferenceUrls(context: { referenceImages: ReferenceImage[]; referenceVideos: Array<{ storageKey?: string; url?: string }>; referenceAudios?: Array<{ storageKey?: string; url?: string }> }) {
@@ -4376,7 +4375,7 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
 
 function sortStoryboardVideoReferences(references: StoryboardVideoReference[]) {
     const order = { firstFrame: 0, reference: 1, lastFrame: 2 };
-    return [...references].sort((a, b) => order[a.role || "reference"] - order[b.role || "reference"]);
+    return [...references].sort((a, b) => Number(b.source === "officialActor") - Number(a.source === "officialActor") || order[a.role || "reference"] - order[b.role || "reference"]);
 }
 
 async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
@@ -4751,7 +4750,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const mentionNodeIds = scriptNode.metadata?.storyboardAssetMentionNodeIds || {};
     const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
     const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
-    const resolved = new Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage }>();
+    const resolved = new Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"] }>();
     const linkByMention = new Map(storyboardPromptAssetLinks(detail).map((link) => [link.mention, link]));
     for (const mention of mentions) {
         const asset = assetByName.get(mention);
@@ -4759,6 +4758,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
         if (isValidOfficialActorAssetUri(assetUri)) {
             resolved.set(`official-${asset?.id || mention}`, {
                 mention,
+                source: "officialActor",
                 reference: {
                     id: `official-${asset?.id || mention}`,
                     name: `${asset?.officialActor?.name || asset?.name || mention.replace(/^@/, "")}.png`,
@@ -4828,7 +4828,7 @@ function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnTyp
         url: item.reference.url || item.reference.dataUrl,
         storageKey: item.reference.storageKey,
         role: "reference",
-        source: item.node ? "script" : "asset",
+        source: item.source || (item.node ? "script" : "asset"),
     }));
 }
 

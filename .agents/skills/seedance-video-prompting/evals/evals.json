@@ -1,0 +1,23 @@
+{
+  "skill_name": "seedance-video-prompting",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "把这个短剧第 12 镜的画面描述、运镜、对白和 @ 资产整理成第三步合成提示词，输出 storyboardPrompt、videoMotionPrompt、assetMentions。",
+      "expected_output": "返回严格 JSON；视频运动提示词包含起始状态、动作过程、结束状态、单一主运镜、对白/音效和稳定性约束；assetMentions 只使用原始 @ 资产名。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我有 图片1 的角色、图片2 的老房子场景、视频1 的缓慢推进运镜，帮我写一段 Seedance 2.0 视频提示词。",
+      "expected_output": "提示词明确参考图片/视频维度，绑定主体和场景，按主体动作、环境、光影、运镜、风格、画质、约束组织。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "严格编辑 视频1，把桌面上的香水换成 图片1 的面霜，动作和镜头不变，帮我优化提示词。",
+      "expected_output": "提示词使用“严格编辑 视频1”，不误写成参考视频；清楚描述替换对象、保持不变的动作/运镜/环境和必要约束。",
+      "files": []
+    }
+  ]
+}
