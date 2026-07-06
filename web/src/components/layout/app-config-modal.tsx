@@ -6,7 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { audioFormatOptions, normalizeAudioVoiceValue, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
@@ -346,7 +346,7 @@ export function AppConfigModal() {
                                         />
                                     </Form.Item>
                                     <Form.Item label="默认音频声音" className="mb-4">
-                                        <Select value={config.audioVoice} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
+                                        <Input value={config.audioVoice} placeholder="OpenAI voice 或火山 speaker ID，例如 zh_female_..._bigtts" onChange={(event) => updateConfig("audioVoice", event.target.value)} onBlur={(event) => updateConfig("audioVoice", normalizeAudioVoiceValue(event.target.value))} />
                                     </Form.Item>
                                     <Form.Item label="默认音频格式" className="mb-4">
                                         <Select value={config.audioFormat} options={audioFormatOptions} onChange={(value) => updateConfig("audioFormat", value)} />

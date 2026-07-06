@@ -2128,8 +2128,9 @@ function InfiniteCanvasPage() {
                 message.warning("只有角色资产可以生成声音");
                 return;
             }
-            const prompt = storyboardAssetVoicePrompt(asset, scriptNode.metadata?.storyboardAssetStyle);
-            if (!prompt) {
+            const voicePrompt = storyboardAssetVoicePrompt(asset, scriptNode.metadata?.storyboardAssetStyle);
+            const sampleText = storyboardAssetVoiceSampleText(asset);
+            if (!voicePrompt || !sampleText) {
                 message.warning("请先填写角色描述或提示词");
                 return;
             }
@@ -2139,12 +2140,12 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt: prompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined });
+            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, prompt, { signal: controller.signal }), generationConfig.audioFormat);
-                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt: prompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined });
+                const audio = await storeGeneratedAudio(await requestAudioGeneration({ ...generationConfig, audioInstructions: [generationConfig.audioInstructions, voicePrompt].filter(Boolean).join("\n\n") }, sampleText, { signal: controller.signal }), generationConfig.audioFormat);
+                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
                     setNodes((prev) =>
@@ -5135,6 +5136,13 @@ function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string) {
     ]
         .filter(Boolean)
         .join("\n");
+}
+
+function storyboardAssetVoiceSampleText(asset: StoryboardAsset) {
+    const source = [asset.description, asset.prompt].join("\n");
+    const quoted = source.match(/[“"{｛]([^”"}｝]{4,40})[”"}｝]/)?.[1]?.trim();
+    if (quoted) return quoted;
+    return "我知道了，我们继续吧。";
 }
 
 function storyboardSceneSheetPrompt(asset: StoryboardAsset) {

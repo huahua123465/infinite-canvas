@@ -14,6 +14,8 @@ export const audioVoiceOptions = [
     { value: "cedar", label: "Cedar" },
 ];
 
+const defaultAudioVoice = "alloy";
+
 export const audioFormatOptions = [
     { value: "mp3", label: "MP3" },
     { value: "wav", label: "WAV" },
@@ -24,7 +26,7 @@ export const audioFormatOptions = [
 ];
 
 export function normalizeAudioVoiceValue(value: string) {
-    return audioVoiceOptions.some((item) => item.value === value) ? value : "alloy";
+    return value.trim() || defaultAudioVoice;
 }
 
 export function normalizeAudioFormatValue(value: string) {
@@ -53,7 +55,7 @@ export function audioSpeedLabel(value: string) {
 
 export function audioMimeType(format: string) {
     if (format === "wav") return "audio/wav";
-    if (format === "opus") return "audio/opus";
+    if (format === "opus" || format === "ogg_opus") return "audio/ogg";
     if (format === "aac") return "audio/aac";
     if (format === "flac") return "audio/flac";
     if (format === "pcm") return "audio/pcm";

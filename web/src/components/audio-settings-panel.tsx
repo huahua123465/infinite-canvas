@@ -34,6 +34,15 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                     </div>
+                    <input
+                        className="h-9 w-full rounded-full border bg-transparent px-3 text-sm outline-none"
+                        style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
+                        value={config.audioVoice || ""}
+                        placeholder="OpenAI voice 或火山 speaker ID，例如 zh_female_..._bigtts"
+                        onChange={(event) => onConfigChange("audioVoice", event.target.value)}
+                        onBlur={(event) => onConfigChange("audioVoice", normalizeAudioVoiceValue(event.target.value))}
+                        onMouseDown={(event) => event.stopPropagation()}
+                    />
                 </SettingGroup>
                 <SettingGroup title="格式" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
