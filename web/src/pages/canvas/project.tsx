@@ -638,7 +638,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded) return;
-        const targets = nodes.filter((node) => shouldBackfillStoryboardTailFrame(node, tailFrameBackfillRef.current));
+        const targets = nodes.filter((node) => shouldBackfillStoryboardTailFrame(node, tailFrameBackfillRef.current, nodes, connections));
         targets.forEach((node) => {
             tailFrameBackfillRef.current.add(node.id);
             void extractVideoLastFrame({
@@ -656,7 +656,7 @@ function InfiniteCanvasPage() {
                 })
                 .catch(() => undefined);
         });
-    }, [nodes, projectLoaded]);
+    }, [connections, nodes, projectLoaded]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -2316,7 +2316,7 @@ function InfiniteCanvasPage() {
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === scriptNode.id);
             const workspaceId = existingWorkspace?.id || nanoid();
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
-            const draftNode = buildStoryboardVideoDraftNode(scriptNode, row, rowIndex, rowIndex, spec, generationConfig, workspacePosition, nodesRef.current);
+            const draftNode = buildStoryboardVideoDraftNode(scriptNode, row, rowIndex, rowIndex, spec, generationConfig, workspacePosition, nodesRef.current, connectionsRef.current);
             const existingDraftNodes = nodesRef.current.filter((item) => item.type === CanvasNodeType.Video && item.id !== draftNode.id && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardRowIndex !== undefined && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, [...existingDraftNodes, draftNode], workspacePosition, "storyboard-videos");
             setStoryboardActionKey(`video:${rowIndex}`);
@@ -2374,7 +2374,7 @@ function InfiniteCanvasPage() {
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === scriptNode.id);
             const workspaceId = existingWorkspace?.id || nanoid();
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
-            const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current));
+            const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current, connectionsRef.current));
             const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + (videoNode.metadata?.storyboardVideoReferences?.length || storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length), 0);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, videoNodes, workspacePosition, "storyboard-videos");
             setNodes((prev) => {
@@ -3799,7 +3799,7 @@ function InfiniteCanvasPage() {
                             showImageInfo={showImageInfo}
                             resourceLabel={resourceReferenceByNodeId.get(node.id)}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
-                            storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes)}
+                            storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes, connections)}
                             renderPanel={(panelNode) =>
                                 panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
@@ -4312,16 +4312,25 @@ function storyboardTailFrameMetadata(image: UploadedImage | null): Partial<Canva
     return { storyboardVideoTailFrameUrl: image.url, storyboardVideoTailFrameStorageKey: image.storageKey };
 }
 
-function shouldBackfillStoryboardTailFrame(node: CanvasNodeData, pending: Set<string>) {
+function shouldBackfillStoryboardTailFrame(node: CanvasNodeData, pending: Set<string>, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return (
         node.type === CanvasNodeType.Video &&
         Boolean(node.metadata?.content || node.metadata?.storageKey) &&
-        Boolean(node.metadata?.storyboardSourceNodeId) &&
-        node.metadata?.storyboardRowIndex !== undefined &&
+        isStoryboardLinkedVideo(node, nodes, connections) &&
         !node.metadata?.storyboardVideoTailFrameUrl &&
         !node.metadata?.storyboardVideoTailFrameStorageKey &&
         !pending.has(node.id)
     );
+}
+
+function isStoryboardLinkedVideo(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    if (node.metadata?.storyboardSourceNodeId && node.metadata.storyboardRowIndex !== undefined) return true;
+    if (node.metadata?.storyboardVideoDraftNodeId) return true;
+    return connections.some((connection) => {
+        if (connection.toNodeId !== node.id) return false;
+        const source = nodes.find((item) => item.id === connection.fromNodeId);
+        return Boolean(source && isStoryboardVideoDraftNode(source));
+    });
 }
 
 async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedImage | null> {
@@ -4895,16 +4904,17 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     return Array.from(resolved.values()).slice(0, 9);
 }
 
-function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNodeData[]): StoryboardVideoReference[] {
+function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): StoryboardVideoReference[] {
     if (node.type !== CanvasNodeType.Video || !node.metadata?.storyboardSourceNodeId) return [];
     const sourceId = node.metadata.storyboardSourceNodeId;
     const scriptNode = nodes.find((item) => item.id === sourceId);
     const references = new Map<string, StoryboardVideoReference>();
     const rowIndex = node.metadata.storyboardRowIndex;
+    const previousDraft = rowIndex !== undefined ? nodes.find((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === sourceId && item.metadata.storyboardRowIndex === rowIndex - 1) : undefined;
 
     if (rowIndex !== undefined && rowIndex > 0) {
         nodes
-            .filter((item) => item.type === CanvasNodeType.Video && item.metadata?.storyboardSourceNodeId === sourceId && item.metadata.storyboardRowIndex === rowIndex - 1 && (item.metadata.storyboardVideoTailFrameStorageKey || item.metadata.storyboardVideoTailFrameUrl))
+            .filter((item) => isPreviousStoryboardVideoResult(item, previousDraft, sourceId, rowIndex - 1, connections) && (item.metadata?.storyboardVideoTailFrameStorageKey || item.metadata?.storyboardVideoTailFrameUrl))
             .sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))
             .forEach((item) => {
                 const name = `第 ${rowIndex} 镜${item.metadata?.storyboardVideoVariantIndex ? ` v${item.metadata.storyboardVideoVariantIndex}` : ""} 尾帧`;
@@ -4959,6 +4969,13 @@ function storyboardReferenceAssetsForNode(node: CanvasNodeData, nodes: CanvasNod
     return Array.from(references.values());
 }
 
+function isPreviousStoryboardVideoResult(node: CanvasNodeData, previousDraft: CanvasNodeData | undefined, sourceId: string, previousRowIndex: number, connections: CanvasConnection[]) {
+    if (node.type !== CanvasNodeType.Video || (!node.metadata?.content && !node.metadata?.storageKey)) return false;
+    if (node.metadata?.storyboardSourceNodeId === sourceId && node.metadata.storyboardRowIndex === previousRowIndex) return true;
+    if (!previousDraft) return false;
+    return connections.some((connection) => connection.fromNodeId === previousDraft.id && connection.toNodeId === node.id);
+}
+
 function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnType<typeof storyboardVideoAssetReferences>): StoryboardVideoReference[] {
     return assetReferences.map((item) => ({
         mention: item.mention,
@@ -4985,10 +5002,10 @@ function storyboardTailFrameReference(previousRowIndex: number, image: Pick<Uplo
     };
 }
 
-function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: number, nodes: CanvasNodeData[]) {
+function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: number, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     if (rowIndex <= 0) return null;
     const previousDraft = nodes.find((node) => isStoryboardVideoDraftNode(node) && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1);
-    const candidates = nodes.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1 && (node.metadata.storyboardVideoTailFrameStorageKey || node.metadata.storyboardVideoTailFrameUrl));
+    const candidates = nodes.filter((node) => isPreviousStoryboardVideoResult(node, previousDraft, sourceNodeId, rowIndex - 1, connections) && (node.metadata?.storyboardVideoTailFrameStorageKey || node.metadata?.storyboardVideoTailFrameUrl));
     const previous = candidates.find((node) => node.id === previousDraft?.metadata?.storyboardVideoLatestResultNodeId) || [...candidates].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))[0];
     if (!previous?.metadata?.storyboardVideoTailFrameStorageKey && !previous?.metadata?.storyboardVideoTailFrameUrl) return null;
     return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" }, previous.metadata.storyboardVideoVariantIndex);
@@ -5088,7 +5105,7 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
     });
 }
 
-function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[]): CanvasNodeData {
+function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId);
     const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
     const prompt = detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "";
@@ -5096,7 +5113,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
     const baseVideoReferences = existing?.metadata?.storyboardVideoReferences?.length ? existing.metadata.storyboardVideoReferences : storyboardVideoReferencesFromAssetReferences(assetReferences);
-    const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes);
+    const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections);
     const videoModel = existing?.metadata?.model || generationConfig.model;
     const videoSize = existing?.metadata?.size || generationConfig.size;
     const videoSeconds = existing?.metadata?.seconds || generationConfig.videoSeconds;
