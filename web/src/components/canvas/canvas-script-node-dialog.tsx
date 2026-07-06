@@ -55,6 +55,10 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const promptCount = rows.filter((_, index) => hasComposedPrompt(promptDetails[String(index)])).length;
     const videoPromptCount = rows.filter((_, index) => hasVideoPrompt(promptDetails[String(index)])).length;
     const readyAssets = assets.filter(storyboardAssetReady).length;
+    const missingAssets = assets.length - readyAssets;
+    const preparingAssets = actionKey === "asset:prepare";
+    const generatingAssets = actionKey === "asset:all" || assets.some((asset) => asset.status === "loading");
+    const hasPartialAssets = readyAssets > 0 && missingAssets > 0;
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
@@ -151,14 +155,31 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         >
             {node ? (
                 <div className="flex h-full flex-col bg-[#101010] text-[#f1f1f1]">
-                    <div className="grid h-20 grid-cols-[1fr_1fr_1fr_auto_auto] items-center gap-6 border-b border-[#303030] bg-[#070707] px-8">
-                        <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
-                        <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(assets.length - readyAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
-                        <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={view === "prompts"} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
-                        <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
-                            批量合成提示词
-                        </Button>
-                        <div className="text-sm font-semibold">{videoPromptCount}/{rows.length} 完成后可批量生视频</div>
+                    <div className="flex min-h-20 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3">
+                        <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
+                            <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
+                            <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
+                            <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={view === "prompts"} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
+                        </div>
+                        {view === "assets" ? (
+                            <AssetPrepToolbar
+                                node={node}
+                                actionKey={actionKey}
+                                assets={assets}
+                                groupedAssets={groupedAssets}
+                                missingCount={missingAssets}
+                                preparing={preparingAssets}
+                                generatingAssets={generatingAssets}
+                                hasPartialAssets={hasPartialAssets}
+                                readyAssets={readyAssets}
+                                onPrepareAssets={onPrepareAssets}
+                                onBatchGenerateAssets={onBatchGenerateAssets}
+                                onStopAssetGeneration={onStopAssetGeneration}
+                            />
+                        ) : null}
+                        {view === "prompts" ? (
+                            <PromptStepToolbar node={node} rows={rows} actionKey={actionKey} videoPromptCount={videoPromptCount} onComposeFinalPrompt={onComposeFinalPrompt} />
+                        ) : null}
                     </div>
                     {view === "assets" ? (
                         <AssetPrepView
@@ -168,12 +189,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             groupedAssets={groupedAssets}
                             style={style}
                             error={assetError}
-                            readyAssets={readyAssets}
                             onPrepareAssets={onPrepareAssets}
                             onSelectAsset={setEditingAssetId}
                             onGenerateAssetImage={onGenerateAssetImage}
-                            onBatchGenerateAssets={onBatchGenerateAssets}
-                            onStopAssetGeneration={onStopAssetGeneration}
                         />
                     ) : view === "prompts" ? (
                         <PromptComposeView
@@ -706,55 +724,66 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
-    const missingCount = assets.length - readyAssets;
+function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, onPrepareAssets, onSelectAsset, onGenerateAssetImage }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
-    const generatingAssets = actionKey === "asset:all" || assets.some((asset) => asset.status === "loading");
-    const hasPartialAssets = readyAssets > 0 && missingCount > 0;
     const progress = node.metadata?.storyboardAssetProgress;
     return (
-        <>
-            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-8 py-5">
-                <div className="mb-5 flex items-start gap-2 text-sm leading-7 text-[#d6d6d6]">
-                    <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
-                    <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
-                </div>
-                {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
-                {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
-                {ASSET_SECTIONS.map(({ kind, title }) => (
-                    <section key={kind} className="mb-7">
-                        <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
-                            {groupedAssets[kind].map((asset) => (
-                                <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} />
-                            ))}
-                            <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
-                                <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
-                            </button>
-                        </div>
-                    </section>
-                ))}
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-8 py-5">
+            <div className="mb-5 flex items-start gap-2 text-sm leading-7 text-[#d6d6d6]">
+                <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
+                <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
             </div>
-            <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#202020] px-8">
-                <div className="text-xs text-[#c6c6c6]">
-                    {generatingAssets ? "正在批量生成资产；可以随时暂停，已完成的会保留，暂停后可修改提示词或重新生成单张。" : `检测到 ${groupedAssets.character.length} 个角色、${groupedAssets.scene.length} 个场景、${groupedAssets.prop.length} 个道具，其中 ${Math.max(missingCount, 0)} 个还没有可用参考。`}
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button disabled={actionKey !== null} icon={preparing ? <LoaderCircle className="size-4 animate-spin" /> : undefined} onClick={() => onPrepareAssets(node)}>
-                        {assets.length ? "重新识别" : "开始识别"}
+            {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
+            {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
+            {ASSET_SECTIONS.map(({ kind, title }) => (
+                <section key={kind} className="mb-7">
+                    <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
+                        {groupedAssets[kind].map((asset) => (
+                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} />
+                        ))}
+                        <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
+                            <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
+                        </button>
+                    </div>
+                </section>
+            ))}
+        </div>
+    );
+}
+
+function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount, preparing, generatingAssets, hasPartialAssets, readyAssets, onPrepareAssets, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; missingCount: number; preparing: boolean; generatingAssets: boolean; hasPartialAssets: boolean; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
+    return (
+        <div className="flex shrink-0 items-center gap-4">
+            <div className="max-w-[430px] text-right text-xs leading-5 text-[#c6c6c6]">
+                {generatingAssets ? "正在批量生成资产；可以随时暂停，已完成的会保留。" : `检测到 ${groupedAssets.character.length} 个角色、${groupedAssets.scene.length} 个场景、${groupedAssets.prop.length} 个道具，其中 ${Math.max(missingCount, 0)} 个还没有可用参考。`}
+            </div>
+            <div className="flex items-center gap-2">
+                <Button disabled={actionKey !== null} icon={preparing ? <LoaderCircle className="size-4 animate-spin" /> : undefined} onClick={() => onPrepareAssets(node)}>
+                    {assets.length ? "重新识别" : "开始识别"}
+                </Button>
+                {generatingAssets ? (
+                    <Button danger className="!h-10 !rounded-lg !px-8" icon={<Square className="size-4" />} onClick={() => onStopAssetGeneration(node)}>
+                        暂停生成
                     </Button>
-                    {generatingAssets ? (
-                        <Button danger className="!h-10 !rounded-lg !px-8" icon={<Square className="size-4" />} onClick={() => onStopAssetGeneration(node)}>
-                            暂停生成
-                        </Button>
-                    ) : (
-                        <Button type="primary" className="!h-10 !rounded-lg !px-8" icon={<Sparkles className="size-4" />} disabled={!assets.length || readyAssets === assets.length || actionKey !== null} onClick={() => onBatchGenerateAssets(node)}>
-                            {hasPartialAssets ? "继续生成剩余资产" : "一键生成所有资产"}
-                        </Button>
-                    )}
-                </div>
+                ) : (
+                    <Button type="primary" className="!h-10 !rounded-lg !px-8" icon={<Sparkles className="size-4" />} disabled={!assets.length || readyAssets === assets.length || actionKey !== null} onClick={() => onBatchGenerateAssets(node)}>
+                        {hasPartialAssets ? "继续生成剩余资产" : "一键生成所有资产"}
+                    </Button>
+                )}
             </div>
-        </>
+        </div>
+    );
+}
+
+function PromptStepToolbar({ node, rows, actionKey, videoPromptCount, onComposeFinalPrompt }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; videoPromptCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void }) {
+    return (
+        <div className="flex shrink-0 items-center gap-4">
+            <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!rows.length || actionKey !== null} icon={actionKey === "prompt:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
+                批量合成提示词
+            </Button>
+            <div className="text-sm font-semibold">{videoPromptCount}/{rows.length} 完成后可批量生视频</div>
+        </div>
     );
 }
 
