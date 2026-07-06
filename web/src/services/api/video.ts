@@ -16,6 +16,15 @@ type SeedanceTask = {
     error?: { code?: string; message?: string } | null;
     content?: { video_url?: string; last_frame_url?: string } | null;
 };
+type SeedancePayload = {
+    model: string;
+    content: Array<Record<string, unknown>>;
+    aspect_ratio: string;
+    resolution: string;
+    duration: number;
+    generate_audio: boolean;
+    watermark: boolean;
+};
 type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
@@ -129,14 +138,7 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
     assertSeedanceAudioReferences(audioReferences);
     const content = await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
-    const payload = {
-        model: modelOptionName(model),
-        content,
-        aspect_ratio: normalizeSeedanceRatio(config.size),
-        resolution: normalizeSeedanceApiResolution(config.vquality, modelOptionName(model)),
-        duration: normalizeSeedanceDuration(config.videoSeconds),
-        watermark: boolConfig(config.videoWatermark, false),
-    };
+    const payload = buildSeedancePayload(config, model, content);
 
     try {
         const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
@@ -161,6 +163,19 @@ async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, opt
     } catch (error) {
         throw new Error(readAxiosError(error, "Seedance 任务查询失败"));
     }
+}
+
+function buildSeedancePayload(config: AiConfig, model: string, content: Array<Record<string, unknown>>): SeedancePayload {
+    const modelName = modelOptionName(model);
+    return {
+        model: modelName,
+        content,
+        aspect_ratio: normalizeSeedanceRatio(config.size),
+        resolution: normalizeSeedanceApiResolution(config.vquality, modelName),
+        duration: normalizeSeedanceDuration(config.videoSeconds),
+        generate_audio: boolConfig(config.videoGenerateAudio, true),
+        watermark: boolConfig(config.videoWatermark, false),
+    };
 }
 
 function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
@@ -340,7 +355,7 @@ function normalizeVideoErrorMessage(message: string) {
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
         return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发官方真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通、非真人虚拟角色，或使用方舟授权素材。\n\n原始错误：${message}`;
     }
-    if (/input\.media|aspect_ratio|parameters\.resolution|resolution/i.test(message)) {
+    if (/input\.media|aspect_ratio|parameters\.(resolution|duration|generate_audio|watermark)|resolution|duration|generate_audio|watermark/i.test(message)) {
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;
     }
     return message;
