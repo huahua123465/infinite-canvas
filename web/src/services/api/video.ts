@@ -273,7 +273,16 @@ function normalizeVideoSize(value: string) {
     if (value === "auto") return null;
     const size = value || "1280x720";
     if (/^\d+x\d+$/.test(size)) return size;
-    return ["9:16", "2:3", "3:4"].includes(size) ? "720x1280" : "1280x720";
+    const ratioSizes: Record<string, string> = {
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "4:3": "1024x768",
+        "3:4": "768x1024",
+        "1:1": "1024x1024",
+        "21:9": "1344x576",
+        "2:3": "832x1248",
+    };
+    return ratioSizes[size] || "1280x720";
 }
 
 function normalizeVideoResolution(value: string) {
