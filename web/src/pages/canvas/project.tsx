@@ -2294,7 +2294,7 @@ function InfiniteCanvasPage() {
             const workspaceId = existingWorkspace?.id || nanoid();
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
             const draftNode = buildStoryboardVideoDraftNode(scriptNode, row, rowIndex, rowIndex, spec, generationConfig, workspacePosition, nodesRef.current);
-            const existingDraftNodes = nodesRef.current.filter((item) => item.type === CanvasNodeType.Video && item.id !== draftNode.id && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardRowIndex !== undefined && !item.metadata.content);
+            const existingDraftNodes = nodesRef.current.filter((item) => item.type === CanvasNodeType.Video && item.id !== draftNode.id && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardRowIndex !== undefined && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, [...existingDraftNodes, draftNode], workspacePosition, "storyboard-videos");
             setStoryboardActionKey(`video:${rowIndex}`);
             setNodes((prev) => {
@@ -3453,10 +3453,28 @@ function InfiniteCanvasPage() {
                 return;
             }
             const retryImages: ReferenceImage[] = storyboardVideoReferences.length ? storyboardVideoReferences : retryReferenceImages || [];
+            const storyboardDraftVideo = isStoryboardVideoDraftNode(node);
+            const videoPrompt = node.type === CanvasNodeType.Video ? storyboardVideoFinalPrompt || (storyboardVideoFramePrompt ? `${prompt}\n\n${storyboardVideoFramePrompt}` : prompt) : "";
+            let generationTargetNode = node;
+            let generationTargetId = node.id;
+            let generationRunningId = node.id;
+            if (storyboardDraftVideo) {
+                generationTargetNode = buildStoryboardVideoResultNode(node, generationConfig, videoPrompt, nodesRef.current);
+                generationTargetId = generationTargetNode.id;
+                generationRunningId = generationTargetId;
+                setNodes((prev) => upsertStoryboardVideoResultNode(prev, node, generationTargetNode));
+                setConnections((prev) =>
+                    addUniqueConnections(prev, [
+                        { id: nanoid(), fromNodeId: node.id, toNodeId: generationTargetId },
+                        ...storyboardVideoAssetReferenceNodes(node, nodesRef.current).map((assetNode) => ({ id: nanoid(), fromNodeId: assetNode.id, toNodeId: generationTargetId })),
+                    ]),
+                );
+            } else {
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, videoGenerationProgress: node.type === CanvasNodeType.Video ? initialVideoGenerationProgress() : item.metadata?.videoGenerationProgress } } : item)));
+            }
 
-            setRunningNodeId(node.id);
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, videoGenerationProgress: node.type === CanvasNodeType.Video ? initialVideoGenerationProgress() : item.metadata?.videoGenerationProgress } } : item)));
-            const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
+            setRunningNodeId(generationRunningId);
+            const controller = startGenerationRequest(generationTargetId, sourceNode.id, generationRunningId);
 
             try {
                 if (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) {
@@ -3472,10 +3490,27 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const videoPrompt = storyboardVideoFinalPrompt || (storyboardVideoFramePrompt ? `${prompt}\n\n${storyboardVideoFramePrompt}` : prompt);
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))) }));
-                    const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal, onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))) }));
+                    const videoSize = fitNodeSize(video.width || generationTargetNode.width, video.height || generationTargetNode.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     const tailFrame = await extractVideoLastFrame(video).catch(() => null);
+                    if (storyboardDraftVideo) {
+                        const completedResult: CanvasNodeData = {
+                            ...generationTargetNode,
+                            width: videoSize.width,
+                            height: videoSize.height,
+                            metadata: { ...generationTargetNode.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt: videoPrompt, storyboardVideoFinalPrompt: videoPrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, videoGenerationProgress: undefined },
+                        };
+                        setNodes((prev) =>
+                            applyStoryboardTailFrameToNextVideo(
+                                upsertStoryboardVideoResultNode(prev, node, completedResult),
+                                node.metadata?.storyboardSourceNodeId,
+                                node.metadata?.storyboardRowIndex,
+                                tailFrame,
+                            ),
+                        );
+                        message.success("已生成一版视频");
+                        return;
+                    }
                     setNodes((prev) =>
                         applyStoryboardTailFrameToNextVideo(
                             prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, videoGenerationProgress: undefined } } : item)),
@@ -3516,10 +3551,10 @@ function InfiniteCanvasPage() {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 message.error(errorDetails);
-                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
-                finishGenerationRequest(node.id, controller);
-                setRunningNodeId(null);
+                finishGenerationRequest(generationTargetId, controller);
+                setRunningNodeId((current) => (current === generationRunningId ? null : current));
             }
         },
         [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
@@ -4894,9 +4929,89 @@ function storyboardTailFrameReference(previousRowIndex: number, image: Pick<Uplo
 
 function previousStoryboardTailFrameReference(sourceNodeId: string, rowIndex: number, nodes: CanvasNodeData[]) {
     if (rowIndex <= 0) return null;
-    const previous = nodes.find((node) => node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1 && (node.metadata.storyboardVideoTailFrameStorageKey || node.metadata.storyboardVideoTailFrameUrl));
+    const previousDraft = nodes.find((node) => isStoryboardVideoDraftNode(node) && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1);
+    const candidates = nodes.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId === sourceNodeId && node.metadata.storyboardRowIndex === rowIndex - 1 && (node.metadata.storyboardVideoTailFrameStorageKey || node.metadata.storyboardVideoTailFrameUrl));
+    const previous = candidates.find((node) => node.id === previousDraft?.metadata?.storyboardVideoLatestResultNodeId) || [...candidates].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))[0];
     if (!previous?.metadata?.storyboardVideoTailFrameStorageKey && !previous?.metadata?.storyboardVideoTailFrameUrl) return null;
     return storyboardTailFrameReference(rowIndex - 1, { url: previous.metadata.storyboardVideoTailFrameUrl || "", storageKey: previous.metadata.storyboardVideoTailFrameStorageKey || "" });
+}
+
+function isStoryboardVideoDraftNode(node: CanvasNodeData) {
+    return node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId;
+}
+
+function buildStoryboardVideoResultNode(draft: CanvasNodeData, config: AiConfig, prompt: string, nodes: CanvasNodeData[]): CanvasNodeData {
+    const variantIndex = nodes.filter((node) => node.metadata?.storyboardVideoDraftNodeId === draft.id).length + 1;
+    const gap = 34;
+    const columns = 2;
+    const position = {
+        x: draft.position.x + draft.width + 42 + ((variantIndex - 1) % columns) * (draft.width + gap),
+        y: draft.position.y + Math.floor((variantIndex - 1) / columns) * (draft.height + 74),
+    };
+    return {
+        id: `storyboard-video-result-${draft.id}-${nanoid()}`,
+        type: CanvasNodeType.Video,
+        title: `${draft.title || `第 ${(draft.metadata?.storyboardRowIndex || 0) + 1} 镜视频`} v${variantIndex}`,
+        position,
+        width: draft.width,
+        height: draft.height,
+        metadata: {
+            ...draft.metadata,
+            content: undefined,
+            storageKey: undefined,
+            naturalWidth: undefined,
+            naturalHeight: undefined,
+            bytes: undefined,
+            mimeType: undefined,
+            durationMs: undefined,
+            status: NODE_STATUS_LOADING,
+            errorDetails: undefined,
+            videoGenerationProgress: initialVideoGenerationProgress(),
+            prompt,
+            storyboardVideoFinalPrompt: prompt,
+            storyboardVideoDraftNodeId: draft.id,
+            storyboardVideoVariantIndex: variantIndex,
+            model: config.model,
+            size: config.size,
+            seconds: config.videoSeconds,
+            vquality: config.vquality,
+            generateAudio: config.videoGenerateAudio,
+            watermark: config.videoWatermark,
+        },
+    };
+}
+
+function upsertStoryboardVideoResultNode(nodes: CanvasNodeData[], draft: CanvasNodeData, result: CanvasNodeData) {
+    let hasResult = false;
+    const next = nodes.map((node) => {
+        if (node.id === draft.id) {
+            return {
+                ...node,
+                metadata: {
+                    ...node.metadata,
+                    status: NODE_STATUS_IDLE,
+                    errorDetails: undefined,
+                    videoGenerationProgress: undefined,
+                    storyboardVideoLatestResultNodeId: result.id,
+                },
+            };
+        }
+        if (node.id === result.id) {
+            hasResult = true;
+            return result;
+        }
+        if (node.type === CanvasNodeType.Workspace && node.metadata?.workspaceKind === "storyboard-videos" && node.metadata.workspaceSourceNodeId === draft.metadata?.storyboardSourceNodeId) {
+            const childIds = Array.from(new Set([...(node.metadata.workspaceChildNodeIds || []), result.id]));
+            return {
+                ...node,
+                width: Math.max(node.width, result.position.x + result.width - node.position.x + 36),
+                height: Math.max(node.height, result.position.y + result.height - node.position.y + 36),
+                metadata: { ...node.metadata, workspaceChildNodeIds: childIds },
+            };
+        }
+        return node;
+    });
+    return hasResult ? next : [...next, result];
 }
 
 function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?: StoryboardVideoReference | null) {
@@ -4909,14 +5024,14 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
     if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
     const reference = storyboardTailFrameReference(rowIndex, tailFrame);
     return nodes.map((node) => {
-        if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content) return node;
+        if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content || node.metadata.storyboardVideoDraftNodeId) return node;
         const current = node.metadata.storyboardVideoReferences || [];
         return { ...node, metadata: { ...node.metadata, storyboardVideoReferences: mergeStoryboardVideoReferences(current, reference) } };
     });
 }
 
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[]): CanvasNodeData {
-    const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content);
+    const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId);
     const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
     const prompt = detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "";
     const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);

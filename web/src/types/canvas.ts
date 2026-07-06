@@ -99,6 +99,9 @@ export type CanvasNodeMetadata = {
     storyboardAssetReferenceNodeIds?: string[];
     storyboardVideoReferences?: StoryboardVideoReference[];
     storyboardVideoFinalPrompt?: string;
+    storyboardVideoDraftNodeId?: string;
+    storyboardVideoVariantIndex?: number;
+    storyboardVideoLatestResultNodeId?: string;
     storyboardVideoTailFrameUrl?: string;
     storyboardVideoTailFrameStorageKey?: string;
     videoGenerationProgress?: VideoGenerationProgress;
