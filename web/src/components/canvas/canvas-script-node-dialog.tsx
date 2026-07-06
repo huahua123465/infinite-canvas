@@ -59,6 +59,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
     const editingAssetUsesOfficialActor = isValidOfficialActorAssetUri(editingAsset?.officialActor?.assetUri);
+    const editingAssetHasImage = Boolean(editingAsset?.imageUrl || editingAsset?.storageKey);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
 
@@ -122,6 +123,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const uploadEditingAsset = (file?: File) => {
         if (!node || !editingAsset || !file) return;
         onUploadAssetImage(node.id, editingAsset.id, file);
+    };
+
+    const clearEditingAssetImage = () => {
+        if (!node || !editingAsset) return;
+        onUpdateAsset(node.id, editingAsset.id, { imageUrl: undefined, storageKey: undefined, status: "idle", errorDetails: undefined });
     };
 
     return (
@@ -217,13 +223,15 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             trigger={["click"]}
                                             menu={{
                                                 items: [
-                                                    { key: "generate", label: editingAssetUsesOfficialActor ? "生成造型图" : "生成图片", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "generate", label: editingAssetHasImage ? (editingAssetUsesOfficialActor ? "重新生成造型图" : "重新生成图片") : editingAssetUsesOfficialActor ? "生成造型图" : "生成图片", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "upload", label: "上传图片", icon: <Upload className="size-3.5" /> },
+                                                    ...(editingAssetHasImage ? [{ key: "clear", label: "清除当前图片", danger: true }] : []),
                                                 ],
                                                 onClick: ({ key, domEvent }) => {
                                                     domEvent.stopPropagation();
                                                     if (key === "generate") onGenerateAssetImage(node, editingAsset.id);
                                                     if (key === "upload") uploadInputRef.current?.click();
+                                                    if (key === "clear") clearEditingAssetImage();
                                                 },
                                             }}
                                         >
@@ -240,6 +248,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
                                 <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
+                                    {editingAssetHasImage ? (
+                                        <Button danger onClick={clearEditingAssetImage}>
+                                            清除图片
+                                        </Button>
+                                    ) : null}
                                     <Button onClick={() => uploadInputRef.current?.click()}>上传图片</Button>
                                     {actionKey === `asset:${editingAsset.id}` ? (
                                         <Button danger icon={<Square className="size-4" />} onClick={() => onStopAssetGeneration(node)}>
@@ -247,7 +260,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         </Button>
                                     ) : (
                                         <Button type="primary" icon={<Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
-                                            {editingAssetUsesOfficialActor ? "生成造型图" : "生成图片"}
+                                            {editingAssetHasImage ? (editingAssetUsesOfficialActor ? "重新生成造型图" : "重新生成图片") : editingAssetUsesOfficialActor ? "生成造型图" : "生成图片"}
                                         </Button>
                                     )}
                                 </div>
@@ -762,12 +775,14 @@ function AssetRecognitionProgress({ progress }: { progress?: StoryboardAssetProg
 function AssetCard({ asset, actionKey, onSelect, onGenerate }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
     const officialReady = isValidOfficialActorAssetUri(asset.officialActor?.assetUri);
+    const hasImage = Boolean(asset.imageUrl || asset.storageKey);
     return (
         <button className="group min-w-0 text-left" onClick={onSelect}>
             <div className="relative mb-2 grid aspect-[16/9] place-items-center overflow-hidden rounded-lg border border-dashed border-[#3f3f3f] bg-[#111] text-xs text-[#818181] transition group-hover:border-[#6a6a6a]">
                 {asset.imageUrl ? <img src={asset.imageUrl} alt={asset.name} className="size-full object-cover" /> : loading ? <LoaderCircle className="size-6 animate-spin" /> : asset.officialActor ? <OfficialActorPlaceholder asset={asset} /> : `生成或上传${ASSET_KIND_LABEL[asset.kind]}图`}
                 <span
                     className="absolute right-2 top-2 grid size-7 place-items-center rounded bg-[#050505]/85 text-[#f1f1f1] opacity-0 transition group-hover:opacity-100"
+                    title={hasImage ? "重新生成" : "生成图片"}
                     onClick={(event) => {
                         event.stopPropagation();
                         onGenerate();
