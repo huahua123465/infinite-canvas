@@ -1,0 +1,64 @@
+---
+title: custom/jt-vite-merge 融合记录
+description: 记录 custom/jt 定制能力迁移到官方 Vite 结构后的关键变更、验证重点和后续读取线索。
+---
+
+# custom/jt-vite-merge 融合记录
+
+本文用于后续快速理解 `custom/jt-vite-merge` 分支做过什么。正式功能说明仍等人工测试确认后再更新到 features 文档。
+
+## 当前分支定位
+
+- 稳定旧分支仍是 `custom/jt`，不要直接在旧分支上改。
+- 迁移分支是 `custom/jt-vite-merge`，以官方 Vite + React Router 结构为底座。
+- 目标是同时保留官方 Gemini 渠道能力、Vite 静态前端结构，以及 `custom/jt` 的脚本节点、分镜短剧、Seedance 视频工作流。
+
+## 已同步的主要能力
+
+- 脚本节点与分镜三步流程：保留 Script Node、分镜大表格、导入 TXT/MD/CSV/截图识别、连接剧本文本生成分镜、120 行上限、确认镜头、准备资产、合成提示词三步流程。
+- 第一人称与整体要求传递：脚本节点整体提示词会作为导演要求继续传入分镜生成、资产识别、第三步合成提示词和视频提示词；第一人称 POV、画风、镜头禁忌等要求需要贯穿后续流程。
+- 第三步提示词体系：继续生成 `storyboardPrompt` 和 `videoMotionPrompt`；分镜图/首帧图走 `storyboardPrompt`，视频生成必须优先走 `videoMotionPrompt`。
+- 视频最终提示词审核：单镜头生成视频会先创建待审核视频节点并打开最终提示词确认页，最终提示词可编辑，待审核节点统一从“查看提示词”进入。
+- 视频格式统一：脚本整体提示词里的“视频生成设置 / 视频设置 / video:”参数块可解析分辨率、比例/尺寸、时长、生成声音和水印，并同步到单镜头和批量视频草稿；已经手动改过的视频节点设置优先。
+- Seedance REST 修正：保留方舟 Seedance 官方任务接口路径、`content` 数组、`aspect_ratio`、大写分辨率、`generate_audio`、30 秒轮询、阶段式进度和 9 张参考图上限。
+- 视频连续性：分镜视频成功后提取尾帧，保存为本地图片引用，下一镜可自动把上一镜尾帧作为首帧参考，并在最终提示词中补充连续性要求。
+- 资产准备流程：保留角色、场景、道具识别，阶段型进度条，精简分镜表请求，资产卡片编辑、上传、单个生成、一键生成和暂停生成。
+- 资产生成体验：资产重新生成前会清理旧图，批量生成时可以暂停，暂停后保留已完成资产，继续生成时只补剩余资产。
+- 非写实角色策略：已移除官方素材/虚拟演员 ID 绑定入口；角色资产统一按非写实虚拟角色、2.5D、动画或漫画质感生成，不再要求手动填写官方 asset ID。
+- 配置渠道：配置弹窗保留官方 Gemini，并补回 `custom/jt` 的方舟 Ark 调用格式；调用格式应显示 OpenAI / Gemini / 方舟 Ark。
+- 方舟 Ark 配置：选择方舟 Ark 时默认 Base URL 为 `https://ark.cn-beijing.volces.com/api/v3`；模型列表可填写 Seedance 模型 ID 或 Endpoint ID（`ep-xxxx`），方舟 Endpoint ID 可进入视频模型可选项。
+- Seedance 提示词 skill：`.agents/skills/seedance-video-prompting` 已保留，用于后续生成、审查和改写 Seedance 视频提示词。
+
+## 已移除或暂不做
+
+- 不再做官方虚拟演员候选匹配。
+- 不再显示“官方虚拟演员绑定”“官方素材”“官方脸”标记。
+- 普通图片节点不再提供官方素材 URI 输入。
+- 视频参考图不再把官方 `asset://` 素材作为第一参考图。
+- 底层视频参考资源解析不再把 `asset://` 当作可直传资源。
+- 当前方向不考虑写实真人脸工作流，提示词和错误提示都倾向引导到非写实虚拟角色参考图。
+
+## 重点待测
+
+- 打开配置弹窗，确认渠道调用格式包含 OpenAI、Gemini、方舟 Ark。
+- 新增方舟 Ark 渠道，确认默认 Base URL、模型 ID 和 `ep-xxxx` Endpoint ID 输入可用。
+- 在“模型”Tab 中确认方舟 `ep-xxxx` 能进入视频模型可选项。
+- 创建脚本节点，连接剧本文本生成分镜，确认整体提示词里的第一人称 POV 或画风要求能贯穿三步流程。
+- 在脚本整体提示词中写入视频设置块，确认比例、分辨率、时长、生成声音、水印能同步到视频草稿。
+- 打开第二步资产准备，确认只显示普通角色/场景/道具资产卡片，不再出现官方素材 ID 或官方脸绑定入口。
+- 生成角色资产图，确认提示词倾向非写实虚拟角色、2.5D、动画或漫画质感。
+- 第三步合成提示词，确认保存 `storyboardPrompt` 和 `videoMotionPrompt`，视频生成优先使用 `videoMotionPrompt`。
+- 单镜头生成视频，确认先创建待审核视频节点并打开最终提示词确认页。
+- 视频生成中确认阶段式进度条显示 queued/running/succeeded/failed 对应阶段。
+- 视频成功后确认尾帧提取、下一镜首帧继承和“已使用上一镜尾帧作为首帧”提示。
+- 使用 Gemini 生图渠道做一次基础图片生成，确认 Gemini 支持没有被 Ark/Seedance 逻辑覆盖。
+
+## 相关提交线索
+
+- `7826491 Restore Ark channel format option`
+- `98ddd55 feat: sync storyboard video settings from prompts`
+- `701d3a0 clear storyboard asset image while regenerating`
+- `17fde82 show pause while storyboard assets are generating`
+- `4c1443e fix: complete seedance video payload settings`
+- `e6fc6b0 Polish storyboard video review flow`
+

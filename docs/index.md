@@ -33,6 +33,7 @@
 ## 项目进度
 
 - [更新日志](/docs/progress/changelog)
+- [custom/jt-vite-merge 融合记录](/docs/progress/jt-vite-merge-notes)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
 
