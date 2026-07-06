@@ -166,7 +166,11 @@ const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚�
 表格列必须严格为：
 | 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |
 
-要求：如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜；只输出 Markdown 表格，不要解释，不要标题。`;
+要求：
+1. 如果文本里包含【整体要求/导演提示词】、风格、视角、输出规则等约束，必须把这些约束作为最高优先级执行，并贯穿到每个镜头。
+2. 如果文本里已有分镜表格就按原内容整理；如果是普通剧本文本，就拆成可拍摄分镜。
+3. 当整体要求指定第一人称、POV、固定画风或镜头限制时，画面描述、运镜和分镜画面提示词都必须继承，不要退回第三人称旁观视角或其他画风。
+4. 只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const ASSET_KIND_TEXT: Record<StoryboardAssetKind, string> = { character: "人物", scene: "场景", prop: "道具" };
 const STORYBOARD_FINAL_PROMPT_PROMPT = `你是短剧分镜与视频运动提示词专家。请把单个镜头、第二步资产和全局风格整合成第三步“合成提示词”。
@@ -181,7 +185,7 @@ JSON 格式必须为：
 }
 
 要求：
-1. storyboardPrompt 必须综合画面描述、景别、光影、对白旁白、音效、运镜、全局风格和相关资产。
+1. storyboardPrompt 必须综合画面描述、景别、光影、对白旁白、音效、运镜、全局风格、原始剧本或补充要求和相关资产；如果原始剧本或补充要求里指定第一人称 POV、画风、镜头限制或禁忌，必须逐条继承。
 2. videoMotionPrompt 必须按 Seedance 2.0 视频模型容易理解的导演指令组织，写清：精准主体、动作细节、场景环境、光影色调、镜头运镜、视觉风格、画质和约束条件。
 3. videoMotionPrompt 必须包含起始状态、动作过程、结束状态、镜头运动、情绪/节奏、音效/对白；动作要具体到手、头、肩、腿、视线等身体部位，并补充幅度、速度、力度或过渡衔接。
 4. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
@@ -191,7 +195,8 @@ JSON 格式必须为：
 8. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名。
 9. 如果角色资产写有“官方脸”，提示词必须把该官方虚拟演员作为角色脸部底座；只根据剧本改变服装、姿态、表情、动作、场景和镜头，不重新设计脸，也不要在提示词中写 asset ID。
 10. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
-11. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
+11. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
+12. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -211,10 +216,11 @@ JSON 格式必须为：
 2. 角色优先提炼姓名、年龄、体型、穿着、气质、情绪基调。
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
-5. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
-6. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
-7. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
-8. 不要编造与剧本冲突的人物关系和物件。`;
+5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词也必须使用同一风格，不要改成写实纪实、真人电影或其他风格。
+6. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
+7. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
+8. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
+9. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -1845,7 +1851,16 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData) => {
             const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
             const textInputs = buildNodeGenerationInputs(scriptNode.id, nodesRef.current, connectionsRef.current).filter((input) => input.type === "text" && input.text?.trim());
-            const sourceText = textInputs.map((input) => `【${input.title || "剧本文本"}】\n${input.text?.trim() || ""}`).join("\n\n").trim() || storyboardSourceTextForNode(scriptNode);
+            const directorInstruction = storyboardDirectorInstructionForNode(scriptNode);
+            const connectedSourceText = textInputs.map((input) => `【${input.title || "剧本文本"}】\n${input.text?.trim() || ""}`).join("\n\n").trim();
+            const sourceText =
+                [
+                    directorInstruction ? `【整体要求/导演提示词】\n${directorInstruction}` : "",
+                    connectedSourceText,
+                ]
+                    .filter(Boolean)
+                    .join("\n\n")
+                    .trim() || storyboardSourceTextForNode(scriptNode);
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
                 return;
@@ -5075,10 +5090,15 @@ function normalizeAssetMention(value: string) {
 function storyboardSourceTextForNode(node: CanvasNodeData) {
     const sourceText = node.metadata?.storyboardSourceText?.trim();
     if (sourceText) return sourceText;
-    const prompt = node.metadata?.prompt?.trim();
-    if (prompt && prompt !== STORYBOARD_SCRIPT_PRESET) return prompt;
+    const prompt = storyboardDirectorInstructionForNode(node);
+    if (prompt) return prompt;
     if (!node.metadata?.storyboardRows?.length) return node.metadata?.content?.trim() || "";
     return "";
+}
+
+function storyboardDirectorInstructionForNode(node: CanvasNodeData) {
+    const prompt = node.metadata?.prompt?.trim();
+    return prompt && prompt !== STORYBOARD_SCRIPT_PRESET ? prompt : "";
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
