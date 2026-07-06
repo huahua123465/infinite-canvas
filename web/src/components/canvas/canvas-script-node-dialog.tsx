@@ -709,6 +709,8 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
 function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
     const missingCount = assets.length - readyAssets;
     const preparing = actionKey === "asset:prepare";
+    const generatingAssets = actionKey === "asset:all";
+    const hasPartialAssets = readyAssets > 0 && missingCount > 0;
     const progress = node.metadata?.storyboardAssetProgress;
     return (
         <>
@@ -737,18 +739,20 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, r
                 ))}
             </div>
             <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#202020] px-8">
-                <div className="text-xs text-[#c6c6c6]">检测到 {groupedAssets.character.length} 个角色、{groupedAssets.scene.length} 个场景、{groupedAssets.prop.length} 个道具，其中 {Math.max(missingCount, 0)} 个还没有可用参考。角色可粘贴官方 asset://，场景/道具可上传或 AI 生成。</div>
+                <div className="text-xs text-[#c6c6c6]">
+                    {generatingAssets ? "正在批量生成资产；可以随时暂停，已完成的会保留，暂停后可修改提示词或重新生成单张。" : `检测到 ${groupedAssets.character.length} 个角色、${groupedAssets.scene.length} 个场景、${groupedAssets.prop.length} 个道具，其中 ${Math.max(missingCount, 0)} 个还没有可用参考。`}
+                </div>
                 <div className="flex items-center gap-2">
                     <Button disabled={actionKey !== null} icon={preparing ? <LoaderCircle className="size-4 animate-spin" /> : undefined} onClick={() => onPrepareAssets(node)}>
                         {assets.length ? "重新识别" : "开始识别"}
                     </Button>
-                    {actionKey === "asset:all" ? (
+                    {generatingAssets ? (
                         <Button danger className="!h-10 !rounded-lg !px-8" icon={<Square className="size-4" />} onClick={() => onStopAssetGeneration(node)}>
                             暂停生成
                         </Button>
                     ) : (
                         <Button type="primary" className="!h-10 !rounded-lg !px-8" icon={<Sparkles className="size-4" />} disabled={!assets.length || readyAssets === assets.length || actionKey !== null} onClick={() => onBatchGenerateAssets(node)}>
-                            一键生成所有资产
+                            {hasPartialAssets ? "继续生成剩余资产" : "一键生成所有资产"}
                         </Button>
                     )}
                 </div>
