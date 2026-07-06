@@ -63,6 +63,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
     const editingAssetHasImage = Boolean(editingAsset?.imageUrl || editingAsset?.storageKey);
     const editingAssetGenerating = Boolean(editingAsset && (actionKey === `asset:${editingAsset.id}` || editingAsset.status === "loading"));
+    const assetActionBusy = Boolean(actionKey?.startsWith("asset:") && actionKey !== `asset:${editingAsset?.id}`);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
 
@@ -261,7 +262,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             暂停生成
                                         </Button>
                                     ) : (
-                                        <Button type="primary" icon={<Sparkles className="size-4" />} disabled={actionKey !== null} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
+                                        <Button type="primary" icon={<Sparkles className="size-4" />} disabled={assetActionBusy} onClick={() => onGenerateAssetImage(node, editingAsset.id)}>
                                             {editingAssetHasImage ? "重新生成图片" : "生成图片"}
                                         </Button>
                                     )}

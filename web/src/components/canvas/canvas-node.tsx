@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Empty, Input, Modal } from "antd";
-import { ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
@@ -818,21 +818,24 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                       ? `${missingCount} 个资产未绑定，生成时不会传入图片`
                       : "未绑定资产";
             return (
-                <div className="flex h-full w-full flex-col gap-3 p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
+                <div className="flex h-full w-full flex-col gap-3 overflow-hidden p-4 text-left" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center justify-between gap-2">
                         <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold" style={{ borderColor: theme.node.stroke }}>
                             第 {(node.metadata?.storyboardRowIndex || 0) + 1} 镜
                         </span>
                         <span className="text-[11px] opacity-55">{statusText}</span>
                     </div>
-                    <div className="line-clamp-3 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
-                    {isLoading ? <VideoGenerationProgressBar progress={videoProgress} theme={theme} /> : null}
-                    <div className="mt-auto space-y-2">
+                    <div className="min-h-0 flex-1 overflow-hidden rounded-lg border px-3 py-2.5" style={{ borderColor: theme.node.stroke, background: `${selectionBlue}08` }}>
+                        <div className="line-clamp-4 whitespace-pre-wrap text-xs leading-5 opacity-90">{renderStoryboardPromptMentions(node.metadata?.prompt || "等待写入视频提示词", assetLinks, theme)}</div>
+                        {isLoading ? <div className="mt-3"><VideoGenerationProgressBar progress={videoProgress} theme={theme} /></div> : null}
+                        {isError ? <StoryboardVideoErrorSummary text={helperText} theme={theme} /> : null}
+                    </div>
+                    <div className="space-y-2">
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
                         {hasPreviousTailFrame ? <div className="inline-flex w-fit rounded bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-300">已使用上一镜尾帧作为首帧</div> : null}
-                        <div className="flex items-center justify-between text-[11px] opacity-60">
-                            <span className="line-clamp-2 max-w-[55%] whitespace-pre-wrap">{helperText}</span>
-                            <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
+                            <span className="min-w-0 truncate">{isError ? "请查看上方失败原因，调整参考或提示词后重试" : helperText}</span>
+                            <div className="flex shrink-0 items-center gap-1.5">
                                 <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setPromptPreviewOpen(true)}>
                                     查看提示词
                                 </button>
@@ -887,6 +890,20 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
         );
     }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+}
+
+function StoryboardVideoErrorSummary({ text, theme }: { text: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    return (
+        <div className="mt-3 flex min-h-0 gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-5 text-red-200" style={{ borderColor: "rgba(248, 113, 113, .35)", background: "rgba(248, 113, 113, .12)", boxShadow: `inset 0 0 0 1px ${theme.node.fill}` }}>
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <div className="min-w-0">
+                <div className="font-semibold">失败原因</div>
+                <div className="line-clamp-5 whitespace-pre-wrap" title={text}>
+                    {text}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function VideoGenerationProgressBar({ progress, theme }: { progress?: CanvasNodeMetadata["videoGenerationProgress"]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
@@ -1249,11 +1266,17 @@ function storyboardVideoReferencesFromPrompt(prompt: string, current: Storyboard
     if (!mentions.length) return current;
     const candidateByMention = new Map(candidates.map((item) => [item.mention, item]));
     const currentByMention = new Map(current.map((item) => [item.mention, item]));
-    return mentions.map((mention) => {
-        const matched = currentByMention.get(mention) || candidateByMention.get(mention);
-        if (matched) return { ...matched, mention, name: matched.name || mention.replace(/^@/, ""), role: matched.role || "reference", status: matched.status || ("bound" as const) };
+    return dedupeStoryboardReferences(mentions.map((mention) => {
+        const matched = currentByMention.get(mention) || candidateByMention.get(mention) || findMentionPrefixReference(mention, [...current, ...candidates]);
+        if (matched) return { ...matched, mention: matched.mention, name: matched.name || matched.mention.replace(/^@/, ""), role: matched.role || "reference", status: matched.status || ("bound" as const) };
         return { mention, name: mention.replace(/^@/, ""), role: "reference" as const, status: "missing" as const };
-    });
+    }));
+}
+
+function findMentionPrefixReference(mention: string, references: StoryboardVideoReference[]) {
+    return [...references]
+        .filter((item) => item.mention && item.mention !== mention && item.mention.replace(/^@/, "").length >= 2 && mention.startsWith(item.mention))
+        .sort((a, b) => b.mention.length - a.mention.length)[0];
 }
 
 function dedupeStoryboardReferences(references: StoryboardVideoReference[]) {
