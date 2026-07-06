@@ -62,6 +62,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const editingAssetHasImage = Boolean(editingAsset?.imageUrl || editingAsset?.storageKey);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
+    const editingAssetGenerating = Boolean(editingAsset && (actionKey === `asset:${editingAsset.id}` || editingAsset.status === "loading"));
 
     useEffect(() => {
         if (!node) return;
@@ -254,7 +255,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         </Button>
                                     ) : null}
                                     <Button onClick={() => uploadInputRef.current?.click()}>上传图片</Button>
-                                    {actionKey === `asset:${editingAsset.id}` ? (
+                                    {editingAssetGenerating ? (
                                         <Button danger icon={<Square className="size-4" />} onClick={() => onStopAssetGeneration(node)}>
                                             暂停生成
                                         </Button>
@@ -709,7 +710,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
 function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, readyAssets, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
     const missingCount = assets.length - readyAssets;
     const preparing = actionKey === "asset:prepare";
-    const generatingAssets = actionKey === "asset:all";
+    const generatingAssets = actionKey === "asset:all" || assets.some((asset) => asset.status === "loading");
     const hasPartialAssets = readyAssets > 0 && missingCount > 0;
     const progress = node.metadata?.storyboardAssetProgress;
     return (
