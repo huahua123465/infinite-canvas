@@ -184,18 +184,21 @@ JSON 格式必须为：
 }
 
 要求：
-1. storyboardPrompt 必须综合画面描述、景别、光影、对白旁白、音效、运镜、全局风格、原始剧本或补充要求和相关资产；如果原始剧本或补充要求里指定第一人称 POV、画风、镜头限制或禁忌，必须逐条继承。
-2. videoMotionPrompt 必须按 Seedance 2.0 视频模型容易理解的导演指令组织，写清：精准主体、动作细节、场景环境、光影色调、镜头运镜、视觉风格、画质和约束条件。
-3. videoMotionPrompt 必须包含起始状态、动作过程、结束状态、镜头运动、情绪/节奏、音效/对白；动作要具体到手、头、肩、腿、视线等身体部位，并补充幅度、速度、力度或过渡衔接。
-4. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
-5. 一个镜头里只指定一种主要运镜，例如固定机位、缓慢推镜、平稳横移、跟拍、手持轻晃；不要同时要求推拉摇移。
-6. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束。
-7. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，并在两个提示词里显式使用 @资产名。
-8. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
-9. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
-10. 不要把原文机械粘贴到视频运动提示词里，要整理成视频模型能执行的运动说明。
-11. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
-12. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。`;
+1. 按 Seedance 2.0 容易执行的导演公式组织：精准主体 + 动作细节 + 场景环境 + 光影色调 + 镜头运镜 + 视觉风格 + 画质 + 稳定约束。
+2. storyboardPrompt 用于首帧图/分镜图，只写静态可见画面：构图、主体外观、环境、光影、道具、静态表情和画风，不要把它写成视频动作脚本。
+3. videoMotionPrompt 用于视频模型，必须写清起始状态、动作过程、结束状态、一个主运镜、情绪节奏、音效/对白和稳定性约束。
+4. 把剧情翻译成可拍摄的连续动作，不要机械粘贴原文；动作要具体到手、头、肩、腿、视线、身体重心等部位，并补充幅度、速度、力度或过渡衔接。
+5. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
+6. 一个镜头里只指定一种主要运镜，例如固定机位、缓慢推镜、平稳横移、跟拍、手持轻晃；不要同时要求推拉摇移，也不要堆多个相互冲突的镜头动作。
+7. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束。
+8. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
+9. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
+10. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
+11. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
+12. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
+13. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
+14. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。
+15. 输出前自检并修正：主体是否绑定清楚、动作是否有起点/过程/终点、运镜是否唯一、资产是否真实存在、提示词是否去掉空泛堆词。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -2246,7 +2249,7 @@ function InfiniteCanvasPage() {
                 for (const index of indexes) {
                     const source = buildStoryboardPromptComposeSource(node, rows, index);
                     const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FINAL_PROMPT_PROMPT}\n\n${source}` }], () => {});
-                    updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer));
+                    updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer, node.metadata?.storyboardAssets || []));
                 }
                 message.success(rowIndex === undefined ? "合成提示词已批量生成" : "合成提示词已生成");
             } catch (error) {
@@ -5345,6 +5348,7 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     return [
         storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
         node.metadata?.storyboardAssetStyle ? `全局风格：\n${node.metadata.storyboardAssetStyle}` : "",
+        buildSeedanceStoryboardPromptContext(node, rowIndex, assets),
         `当前镜头：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n")}`,
         contextRows ? `前后镜头上下文：\n${contextRows}` : "",
         `第二步资产清单：\n${assetLines}`,
@@ -5353,11 +5357,34 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
         .join("\n\n");
 }
 
+function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: number, assets: StoryboardAsset[]) {
+    const settings = [
+        node.metadata?.size ? `画幅/比例：${node.metadata.size}` : "",
+        node.metadata?.seconds ? `视频时长：${node.metadata.seconds}s` : "",
+        node.metadata?.vquality ? `清晰度：${node.metadata.vquality}` : "",
+        node.metadata?.generateAudio ? `生成声音：${node.metadata.generateAudio}` : "",
+        node.metadata?.watermark ? `水印设置：${node.metadata.watermark}` : "",
+    ].filter(Boolean);
+    const assetNames = assets.map((asset) => `@${asset.name}`).join("、") || "无";
+    return [
+        "Seedance 第三步合成上下文：",
+        `- 当前是第 ${rowIndex + 1} 个镜头，只为这一镜生成首帧提示词和视频运动提示词。`,
+        "- videoMotionPrompt 要写成可直接给 Seedance 2.0 使用的中文导演指令，优先描述运动、镜头、光线、声音和稳定约束。",
+        "- 不要把全部资产都塞进提示词；只选择本镜头真正出现或需要绑定首帧/参考图的资产。",
+        "- 资产名必须从已知资产中选择，不能编造，不能输出素材 ID、URL 或 storageKey。",
+        "- 默认减少抽卡风险：主体绑定清楚、动作低歧义、一个主运镜、无字幕、无文字、无 Logo、无水印、人物身份和画风稳定。",
+        `- 可用资产：${assetNames}`,
+        settings.length ? `- 视频设置：${settings.join("；")}` : "",
+    ]
+        .filter(Boolean)
+        .join("\n");
+}
+
 function storyboardRowSummary(row: string[]) {
     return `镜号 ${row[0] || ""}，画面：${row[2] || ""}，对白：${row[5] || ""}，运镜：${row[7] || ""}`;
 }
 
-function parseStoryboardPromptDetailAnswer(content: string): StoryboardPromptDetail {
+function parseStoryboardPromptDetailAnswer(content: string, assets: StoryboardAsset[] = []): StoryboardPromptDetail {
     const data = parseJsonObject(content) as Record<string, unknown>;
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("模型没有返回可用的提示词 JSON");
     const storyboardPrompt = readStringField(data, ["storyboardPrompt", "分镜提示词", "imagePrompt", "prompt"]).trim();
@@ -5365,7 +5392,17 @@ function parseStoryboardPromptDetailAnswer(content: string): StoryboardPromptDet
     const mentionValue = data.assetMentions ?? data.assets ?? data["资产引用"];
     const assetMentions = (Array.isArray(mentionValue) ? mentionValue.map((item) => String(item || "")) : typeof mentionValue === "string" ? mentionValue.split(/[，,、\n]/) : []).map(normalizeAssetMention).filter(Boolean);
     if (!storyboardPrompt && !videoMotionPrompt) throw new Error("模型没有返回分镜提示词或视频运动提示词");
-    return { storyboardPrompt: storyboardPrompt || videoMotionPrompt, videoMotionPrompt: videoMotionPrompt || storyboardPrompt, assetMentions: Array.from(new Set(assetMentions)) };
+    return normalizeStoryboardPromptDetailAssets({ storyboardPrompt: storyboardPrompt || videoMotionPrompt, videoMotionPrompt: videoMotionPrompt || storyboardPrompt, assetMentions: Array.from(new Set(assetMentions)) }, assets);
+}
+
+function normalizeStoryboardPromptDetailAssets(detail: StoryboardPromptDetail, assets: StoryboardAsset[]): StoryboardPromptDetail {
+    if (!assets.length) return { ...detail, assetMentions: [] };
+    const knownMentions = assets.map((asset) => normalizeAssetMention(asset.name));
+    const text = `${detail.storyboardPrompt}\n${detail.videoMotionPrompt}`;
+    const explicit = (detail.assetMentions || []).map((mention) => matchKnownAssetMention(mention, assets) || normalizeAssetMention(mention));
+    const inline = knownMentions.filter((mention) => text.includes(mention) || text.includes(mention.replace(/^@/, "")));
+    const assetMentions = Array.from(new Set([...explicit, ...inline].filter((mention) => knownMentions.includes(mention))));
+    return { ...detail, assetMentions };
 }
 
 function normalizeAssetMention(value: string) {
