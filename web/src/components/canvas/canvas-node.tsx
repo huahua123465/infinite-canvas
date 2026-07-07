@@ -909,6 +909,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
 function StoryboardVideoHistoryModal({ node, open, results, theme, onClose }: { node: CanvasNodeData; open: boolean; results: CanvasNodeData[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onClose: () => void }) {
     const latestId = node.metadata?.storyboardVideoLatestResultNodeId;
     const sorted = [...results].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0));
+    useStoryboardModalOutsideClose(open, onClose);
     return (
         <Modal title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜所有视频`} onClose={onClose} />} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden closable={false} modalRender={renderCanvasModal}>
             {sorted.length ? (
@@ -1157,6 +1158,22 @@ function CanvasModalTitle({ title, onClose }: { title: string; onClose: () => vo
     );
 }
 
+function isCanvasModalInnerTarget(target: EventTarget | null) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(".ant-modal, .ant-select-dropdown, .ant-dropdown, .ant-picker-dropdown, .ant-popover, [data-canvas-resource-mention-menu='true']"));
+}
+
+function useStoryboardModalOutsideClose(open: boolean, onClose: () => void) {
+    useEffect(() => {
+        if (!open) return;
+        const handlePointerDown = (event: PointerEvent) => {
+            if (!isCanvasModalInnerTarget(event.target)) onClose();
+        };
+        document.addEventListener("pointerdown", handlePointerDown, true);
+        return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+    }, [open, onClose]);
+}
+
 function renderCanvasModal(modal: ReactNode) {
     const stop = (event: React.SyntheticEvent) => event.stopPropagation();
     return (
@@ -1187,6 +1204,7 @@ function StoryboardVideoPromptPreviewModal({
     onConfigChange: (patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (patch: Partial<CanvasNodeMetadata>) => void;
 }) {
+    useStoryboardModalOutsideClose(open, onClose);
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const assets = useAssetStore((state) => state.assets);
@@ -1593,6 +1611,7 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
 }
 
 function StoryboardVideoReferenceEditor({ node, open, references, scriptReferences, onClose, onSave }: { node: CanvasNodeData; open: boolean; references: StoryboardVideoReference[]; scriptReferences: StoryboardVideoReference[]; onClose: () => void; onSave: (references: StoryboardVideoReference[]) => void }) {
+    useStoryboardModalOutsideClose(open, onClose);
     const assets = useAssetStore((state) => state.assets);
     const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
     const [draft, setDraft] = useState<StoryboardVideoReference[]>(references);
