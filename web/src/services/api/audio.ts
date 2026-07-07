@@ -55,38 +55,43 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
 async function requestVolcengineSpeech(config: AiConfig, resourceId: string, text: string, options?: RequestOptions): Promise<Blob> {
     const format = normalizeVolcengineAudioFormat(config.audioFormat);
     const speaker = normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(`${config.audioInstructions}\n${text}`).value;
-    const response = await axios.post<Blob>(
-        volcengineSpeechUrl(config.baseUrl),
-        {
-            user: { uid: "infinite-canvas" },
-            event: 100,
-            req_params: {
-                text,
-                speaker,
-                audio_params: {
-                    format,
-                    sample_rate: 24000,
-                    bit_rate: 128000,
-                    speech_rate: volcengineSpeechRate(config.audioSpeed),
+    const normalizedResourceId = normalizeVolcengineResourceId(resourceId);
+    const requests = volcengineSpeechRequests(config.baseUrl);
+    const payload = {
+        user: { uid: "infinite-canvas" },
+        event: 100,
+        req_params: {
+            text,
+            speaker,
+            audio_params: {
+                format,
+                sample_rate: 24000,
+                bit_rate: 128000,
+                speech_rate: volcengineSpeechRate(config.audioSpeed),
+            },
+            additions: JSON.stringify({ disable_markdown_filter: true }),
+        },
+    };
+    let lastError: unknown;
+    for (const request of requests) {
+        try {
+            const response = await axios.post<Blob>(
+                request.url,
+                request.viaAgent ? { baseUrl: config.baseUrl, apiKey: config.apiKey, resourceId: normalizedResourceId, payload } : payload,
+                {
+                    headers: request.viaAgent ? { "Content-Type": "application/json" } : volcengineSpeechHeaders(config.apiKey, normalizedResourceId),
+                    responseType: "blob",
+                    signal: options?.signal,
                 },
-                additions: JSON.stringify({ disable_markdown_filter: true }),
-            },
-        },
-        {
-            headers: {
-                "Content-Type": "application/json",
-                "X-Api-Key": config.apiKey,
-                "X-Api-Connect-Id": nanoConnectId(),
-                "X-Api-Resource-Id": normalizeVolcengineResourceId(resourceId),
-            },
-            responseType: "blob",
-            signal: options?.signal,
-        },
-    ).catch(async (error) => {
-        throw new Error(await readAxiosError(error, "火山语音合成失败"));
-    });
-    await assertAudioBlob(response.data);
-    return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
+            );
+            await assertAudioBlob(response.data);
+            return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
+        } catch (error) {
+            lastError = error;
+            if (!shouldTryNextVolcengineRequest(error, request)) break;
+        }
+    }
+    throw new Error(await readAxiosError(lastError, requests[0]?.viaAgent ? "火山语音合成本地代理失败" : "火山语音合成失败"));
 }
 
 export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
@@ -121,6 +126,56 @@ function volcengineSpeechUrl(baseUrl: string) {
     const base = baseUrl.trim().replace(/\/+$/, "") || "https://openspeech.bytedance.com";
     if (/\/api\/v3\/tts\/unidirectional$/i.test(base)) return base;
     return `${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}/api/v3/tts/unidirectional`;
+}
+
+type VolcengineSpeechRequest = { url: string; viaAgent: boolean };
+
+function volcengineSpeechRequests(baseUrl: string): VolcengineSpeechRequest[] {
+    const agentUrl = volcengineAgentProxyUrl();
+    const directUrl = volcengineDevProxyUrl(volcengineSpeechUrl(baseUrl)) || volcengineSpeechUrl(baseUrl);
+    return [
+        ...(agentUrl ? [{ url: agentUrl, viaAgent: true }] : []),
+        { url: directUrl, viaAgent: false },
+    ];
+}
+
+function shouldTryNextVolcengineRequest(error: unknown, request: VolcengineSpeechRequest) {
+    if (!request.viaAgent || axios.isCancel(error)) return false;
+    if (!axios.isAxiosError(error)) return false;
+    return error.response?.status === 404 || error.response?.status === 405;
+}
+
+function volcengineSpeechHeaders(apiKey: string, resourceId: string) {
+    return {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+        "X-Api-Connect-Id": nanoConnectId(),
+        "X-Api-Resource-Id": resourceId,
+    };
+}
+
+function volcengineAgentProxyUrl() {
+    if (typeof window === "undefined") return "";
+    try {
+        const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
+        const token = (localStorage.getItem("canvas-agent-token") || "").trim();
+        return endpoint && token ? `${endpoint}/api/proxy/volcengine/tts?token=${encodeURIComponent(token)}` : "";
+    } catch {
+        return "";
+    }
+}
+
+function volcengineDevProxyUrl(targetUrl: string) {
+    if (typeof window === "undefined") return "";
+    if (!import.meta.env.DEV) return "";
+    try {
+        const target = new URL(targetUrl);
+        if (!/openspeech\.bytedance\.com$/i.test(target.hostname)) return "";
+        if (!["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)) return "";
+        return `${target.pathname}${target.search}`;
+    } catch {
+        return "";
+    }
 }
 
 function normalizeVolcengineResourceId(value: string) {
@@ -164,6 +219,7 @@ async function readAxiosError(error: unknown, fallback: string) {
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
         if (!error.response) {
             const message = error.message || fallback;
+            if (/network error/i.test(message) && fallback.includes("本地代理")) return "火山语音合成本地代理没有响应，请确认 Infinite Canvas Agent 正在运行并已连接；如果刚更新代码，请重启本地 Agent 后再试。";
             if (/network error/i.test(message) && fallback.includes("火山")) return "火山语音合成请求没有收到服务响应（Network Error）。通常是浏览器直连 OpenSpeech 被 CORS 或网络策略拦截；请打开浏览器控制台 Network/Console 查看是否有 CORS 报错。";
             return message;
         }

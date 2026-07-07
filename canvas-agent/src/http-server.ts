@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { DEFAULT_PORT, ensureCanvasWorkspace, loadConfig, saveConfig, updateCanvasWorkspace, type CanvasAgentConfig } from "./config.js";
@@ -38,6 +39,7 @@ export function startHttpServer() {
         res.json({ ok: true });
     });
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
+    app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.get("/agent/codex/workspace", (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.query.canvasId || ""));
         res.json({ ok: true, workspace });
@@ -107,12 +109,65 @@ function route(handler: (req: Request, res: Response) => Promise<unknown>) {
     return (req: Request, res: Response, next: NextFunction) => void handler(req, res).catch(next);
 }
 
+async function proxyVolcengineSpeech(req: Request, res: Response) {
+    const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown; resourceId?: unknown; payload?: unknown };
+    const apiKey = stringField(body.apiKey);
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
+    if (!apiKey || !payload) return void res.status(400).json({ ok: false, error: "missing volcengine apiKey or payload" });
+    const upstream = await fetch(safeVolcengineSpeechUrl(stringField(body.baseUrl)), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Api-Key": apiKey,
+            "X-Api-Connect-Id": cryptoRandomId(),
+            "X-Api-Resource-Id": normalizeVolcengineResourceId(stringField(body.resourceId)),
+        },
+        body: JSON.stringify(payload),
+    });
+    const data = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    for (const name of ["x-tt-logid", "x-tt-log-id"]) {
+        const value = upstream.headers.get(name);
+        if (value) res.setHeader(name, value);
+    }
+    res.send(data);
+}
+
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
 }
 
 function requestUrl(req: Request, config: CanvasAgentConfig) {
     return new URL(req.originalUrl || req.url || "/", config.url);
+}
+
+function safeVolcengineSpeechUrl(baseUrl: string) {
+    const url = new URL(volcengineSpeechUrl(baseUrl || "https://openspeech.bytedance.com"));
+    if (url.protocol !== "https:" || url.hostname !== "openspeech.bytedance.com") throw new Error("only openspeech.bytedance.com is allowed");
+    return url.toString();
+}
+
+function volcengineSpeechUrl(baseUrl: string) {
+    const base = baseUrl.trim().replace(/\/+$/, "") || "https://openspeech.bytedance.com";
+    if (/\/api\/v3\/tts\/unidirectional$/i.test(base)) return base;
+    return `${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}/api/v3/tts/unidirectional`;
+}
+
+function normalizeVolcengineResourceId(value: string) {
+    const resourceId = value.trim();
+    if (/^tts-seedtts2/i.test(resourceId) || /seedtts2/i.test(resourceId)) return "seed-tts-2.0";
+    if (/^tts-seedicl2/i.test(resourceId) || /seedicl2/i.test(resourceId)) return "seed-icl-2.0";
+    if (/^seed-(tts|icl)-/i.test(resourceId)) return resourceId;
+    return "seed-tts-2.0";
+}
+
+function stringField(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function cryptoRandomId() {
+    return randomUUID();
 }
 
 function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfig) {
