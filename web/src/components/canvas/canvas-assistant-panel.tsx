@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import copyToClipboard from "copy-to-clipboard";
 import { Bot, Copy, Cpu, History, PanelRightClose, Plus, Settings2, Trash2, X } from "lucide-react";
-import { Button, Modal, Segmented, Switch, Tooltip } from "antd";
+import { Button, Modal, Segmented, Select, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 
 import { modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -14,7 +14,6 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { AgentChatComposer, AgentChatMessage, AgentModeSwitch, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage, type CanvasAgentMode } from "./canvas-agent-chat-ui";
 import { CanvasLocalAgentPanel } from "./canvas-local-agent-panel";
@@ -672,37 +671,34 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
 function AgentTextModelPicker({ config, value, onChange }: { config: AiConfig; value: string; onChange: (model: string) => void }) {
     const options = useMemo(() => Array.from(new Set([value, ...selectableModelsByCapability(config, "text")].filter(Boolean))), [config, value]);
     const current = value || "";
+    const selectOptions = useMemo(
+        () => options.map((model) => ({ value: model, label: <AgentModelLabel config={config} model={model} /> })),
+        [config, options],
+    );
     return (
-        <Select value={current} onValueChange={onChange}>
-            <SelectTrigger
-                hideChevron
-                className="h-7 min-w-0 max-w-[220px] gap-1.5 border-0 bg-transparent px-1 py-0 text-xs font-normal shadow-none hover:bg-transparent hover:opacity-75 focus-visible:border-transparent focus-visible:ring-0 data-[state=open]:ring-0 dark:bg-transparent dark:hover:bg-transparent"
-                title={current ? `${modelOptionName(current)} · ${resolveModelChannel(config, current).name}` : "选择文本模型"}
-                onMouseDown={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-            >
-                <AgentModelIcon model={current} />
-                <span className="min-w-0 truncate">{current ? modelOptionName(current) : "选择文本模型"}</span>
-                {current ? <span className="shrink-0 opacity-55">{resolveModelChannel(config, current).name}</span> : null}
-            </SelectTrigger>
-            <SelectContent data-canvas-no-zoom className="z-[1200] w-72 max-w-[calc(100vw-24px)]" position="popper" align="start" side="bottom" sideOffset={6} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
-                {options.length ? (
-                    options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={`${modelOptionName(model)} ${resolveModelChannel(config, model).name}`}>
-                            <span className="flex min-w-0 items-center gap-2">
-                                <AgentModelIcon model={model} />
-                                <span className="min-w-0 flex-1 truncate">{modelOptionName(model)}</span>
-                                <span className="shrink-0 text-xs opacity-55">{resolveModelChannel(config, model).name}</span>
-                            </span>
-                        </SelectItem>
-                    ))
-                ) : (
-                    <SelectItem value="__empty_text_model__" disabled>
-                        暂无文本模型
-                    </SelectItem>
-                )}
-            </SelectContent>
-        </Select>
+        <Select
+            data-canvas-no-zoom
+            className="min-w-0 max-w-[220px] text-xs"
+            classNames={{ popup: { root: "z-[1200]" } }}
+            popupMatchSelectWidth={false}
+            variant="borderless"
+            value={current || undefined}
+            placeholder="选择文本模型"
+            options={selectOptions.length ? selectOptions : [{ value: "__empty_text_model__", label: "暂无文本模型", disabled: true }]}
+            onMouseDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onChange={onChange}
+        />
+    );
+}
+
+function AgentModelLabel({ config, model }: { config: AiConfig; model: string }) {
+    return (
+        <span className="flex min-w-0 items-center gap-2">
+            <AgentModelIcon model={model} />
+            <span className="min-w-0 flex-1 truncate">{modelOptionName(model)}</span>
+            <span className="shrink-0 text-xs opacity-55">{resolveModelChannel(config, model).name}</span>
+        </span>
     );
 }
 
