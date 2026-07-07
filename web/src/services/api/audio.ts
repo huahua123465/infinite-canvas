@@ -18,8 +18,15 @@ function aiHeaders(config: AiConfig) {
 }
 
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
-    const model = requestConfig.model.trim();
+    let requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
+    let model = requestConfig.model.trim();
+    if (normalizeVolcengineSpeakerValue(config.audioVoice) && !isVolcengineSpeechConfig(requestConfig, model)) {
+        const volcengineModel = findVolcengineAudioModel(config);
+        if (volcengineModel) {
+            requestConfig = resolveModelRequestConfig(config, volcengineModel);
+            model = requestConfig.model.trim();
+        }
+    }
     assertAudioConfig(requestConfig, model);
     if (isVolcengineSpeechConfig(requestConfig, model)) return requestVolcengineSpeech(requestConfig, model, prompt, options);
     const format = normalizeAudioFormatValue(config.audioFormat);
@@ -97,6 +104,18 @@ function assertAudioConfig(config: AiConfig, model: string) {
 
 function isVolcengineSpeechConfig(config: AiConfig, model: string) {
     return /openspeech\.bytedance\.com/i.test(config.baseUrl) || /^seed-(tts|icl)-/i.test(model);
+}
+
+function findVolcengineAudioModel(config: AiConfig) {
+    const candidates = Array.from(new Set([config.audioModel, ...config.audioModels, ...config.models].filter(Boolean)));
+    const matched = candidates.find((candidate) => {
+        const requestConfig = resolveModelRequestConfig(config, candidate);
+        return isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim());
+    });
+    if (matched) return matched;
+    const channel = config.channels.find((item) => /openspeech\.bytedance\.com/i.test(item.baseUrl) && item.models.length);
+    const model = channel?.models.find((item) => /^seed-(tts|icl)-/i.test(item)) || channel?.models[0];
+    return channel && model ? `${channel.id}::${model}` : "";
 }
 
 function volcengineSpeechUrl(baseUrl: string) {
