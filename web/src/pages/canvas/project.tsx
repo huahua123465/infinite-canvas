@@ -199,13 +199,14 @@ JSON 格式必须为：
 11. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
 12. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
 13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
-14. 有参考资产时，不要反复重描述资产已经可见的脸、服装、场景和道具细节；重点写参考资产没有表达清楚的运动、时间、镜头、光线变化、声音和保持不变的内容。
-15. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
-16. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
-17. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
-18. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
-19. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
-20. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
+14. 如果同一人物存在多个年龄/时期资产，必须根据当前镜头内容选择精确状态的资产，例如年轻时期镜头只用 @白秋妹·年轻时期，成年时期镜头只用 @白秋妹·成年时期；不要用一个状态资产代表另一个年龄，也不要同时引用同一人物多个年龄状态，除非镜头明确是回忆对照或同框设定。
+15. 有参考资产时，不要反复重描述资产已经可见的脸、服装、场景和道具细节；重点写参考资产没有表达清楚的运动、时间、镜头、光线变化、声音和保持不变的内容。
+16. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
+17. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
+18. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
+19. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
+20. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
+21. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -214,7 +215,7 @@ JSON 格式必须为：
 {
   "style": "全局视觉风格，一句话到两句话",
   "assets": [
-    { "kind": "character", "name": "角色名", "description": "角色形象描述", "prompt": "可直接用于生成角色设定图的中文提示词" },
+    { "kind": "character", "name": "角色名·年龄状态", "baseName": "角色本名", "lifeStage": "年龄或时期状态", "description": "该年龄状态的角色形象描述", "prompt": "可直接用于生成该年龄状态角色设定图的中文提示词" },
     { "kind": "scene", "name": "场景名", "description": "场景描述", "prompt": "可直接用于生成场景设定图的中文提示词" },
     { "kind": "prop", "name": "道具名", "description": "道具描述", "prompt": "可直接用于生成道具设定图的中文提示词" }
   ]
@@ -222,15 +223,18 @@ JSON 格式必须为：
 
 要求：
 1. 只保留后续分镜最需要统一的角色、场景、道具，不要泛滥。
-2. 角色优先提炼姓名、年龄、体型、穿着、气质、情绪基调。
+2. 角色优先提炼姓名、年龄状态、体型、穿着、气质、情绪基调。
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
 5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词必须以这些风格词开头，不要改成写实纪实、真实摄影、真人电影感或其他风格。
 6. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
 7. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
 8. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
-9. 角色资产安全改写：如果剧本里写“少女、十几岁、未成年、小孩”等，prompt 统一改成“年轻角色/年轻女性角色/年少时期的虚拟角色”；如果写“残疾、残废、瘸、断腿”等，统一改成“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，统一改成“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或痛苦细节。
-10. 不要编造与剧本冲突的人物关系和物件。`;
+9. 同一人物如果在剧本或分镜中出现不同年龄、时期、身份状态或造型阶段，必须拆成多个 character 资产；不要把童年、青年、成年、老年等多个状态塞进一张角色资产图。命名必须能区分状态，例如“白秋妹·年轻时期”“白秋妹·成年时期”“哥哥·童年”“哥哥·成年”。baseName 保留同一人物本名，lifeStage 写该资产唯一对应的年龄/时期。
+10. 每个 character prompt 只能描述一个角色的一个年龄状态，必须明确“单一角色设定图、只展示该年龄状态、不要出现其他年龄版本、不要出现同一人物成长时间线、不要出现多人合照”。如果需要表现同一角色的多个角度，只能是同一年龄状态的正面、侧面、背面、半身和表情参考。
+11. 角色资产图格式统一为横向角色设定图：干净背景，单一角色，同一脸型、发型、体型、服装、配色和画风；包含正面全身主视图，并可包含侧面、背面、半身头像和表情小参考；不要剧情场景、不要分镜画面、不要文字标注、Logo、水印或边框。
+12. 角色资产安全改写：如果剧本里写“少女、十几岁、未成年、小孩”等，prompt 统一改成“年轻角色/年轻女性角色/年少时期的虚拟角色”；如果写“残疾、残废、瘸、断腿”等，统一改成“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，统一改成“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或痛苦细节。
+13. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -2097,7 +2101,7 @@ function InfiniteCanvasPage() {
                 message.warning("请先填写资产提示词");
                 return;
             }
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1", ...(asset.kind === "character" ? { size: "16:9" } : {}) };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -2378,11 +2382,12 @@ function InfiniteCanvasPage() {
                     }
                     const prompt = storyboardAssetImagePrompt(asset);
                     if (!prompt) return;
+                    const assetConfig = asset.kind === "character" ? { ...generationConfig, size: "16:9" } : generationConfig;
                     const targetId = `storyboard-asset:${scriptNode.id}:${asset.id}`;
                     const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id, batchController);
                     updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
                     try {
-                        const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                        const image = await requestGeneration(assetConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                         const uploaded = await uploadImage(image.dataUrl);
                         updateStoryboardAsset(scriptNode.id, asset.id, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
                     } catch (error) {
@@ -5264,9 +5269,33 @@ function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
         return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
     }
     if (asset.kind === "character") {
-        return `${prompt}\n\n资产类型：非写实虚拟角色设定图。角色按年轻成年虚拟形象呈现，行动不便、朴素衣着和生活处境只作为温和视觉特征；保持 2.5D、动画或漫画质感，角色脸型、发型、体态、服装和画风清晰稳定；避免低龄化、伤害细节、暴力痕迹、暴露画面、写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；不要添加文字、Logo、水印或边框。`;
+        return storyboardCharacterSheetPrompt(asset, prompt);
     }
     return prompt;
+}
+
+function storyboardCharacterSheetPrompt(asset: StoryboardAsset, prompt: string) {
+    const stage = asset.lifeStage?.trim() || inferStoryboardCharacterLifeStage(asset);
+    const baseName = asset.baseName?.trim() || asset.name.split(/[·・]/)[0] || asset.name || "角色";
+    return [
+        "生成一张统一格式的非写实虚拟角色设定图，横向 16:9 宽画布。",
+        `角色：${asset.name || baseName}${stage ? `；年龄/时期状态：${stage}` : ""}。`,
+        `角色原始设定：${prompt}`,
+        "版式要求：只展示这一个角色的这一个年龄/时期状态；允许同一张图里出现同一角色的正面全身主视图、侧面、背面、半身头像和少量表情参考，但必须全部是同一年龄状态、同一张脸、同一发型、同一体型、同一套服装、同一配色和同一画风。",
+        "主视图要求：正面全身站姿要完整清晰，脸、发型、体型、鞋子和整套服装都可见；辅助视图用于补充侧面轮廓、背面服装结构和表情，不要抢占主视图。",
+        "严格禁止：不要出现童年/成年/老年多个版本，不要生成成长时间线，不要出现其他年龄状态，不要多人合照，不要亲属或路人，不要剧情场景，不要分镜画面，不要把角色放进复杂环境。",
+        "风格要求：保持 2.5D、动画或漫画质感，避免写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；行动不便、朴素衣着和生活处境只作为温和视觉特征，不要伤害细节、暴力痕迹、血迹、裸露或痛苦表情。",
+        "画面要求：背景简洁干净，光线柔和，角色轮廓清楚；不要添加任何文字、视角标签、说明字、Logo、水印、边框、UI 或海报标题。",
+    ].join("\n");
+}
+
+function inferStoryboardCharacterLifeStage(asset: StoryboardAsset) {
+    const source = [asset.name, asset.description, asset.prompt].filter(Boolean).join(" ");
+    if (/童年|儿童|小孩|小时候|年少|少年|少女|年轻|青年|年轻女性角色|年轻角色/.test(source)) return "年少/年轻时期";
+    if (/老年|老人|年迈|白发|晚年/.test(source)) return "老年时期";
+    if (/中年|父亲|母亲|爸爸|妈妈/.test(source)) return "中年时期";
+    if (/成年|成人/.test(source)) return "成年时期";
+    return "";
 }
 
 async function storyboardAssetReferenceImage(asset: StoryboardAsset): Promise<ReferenceImage | null> {
@@ -6155,7 +6184,7 @@ function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storage
 function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
     const row = rows[rowIndex] || [];
     const assets = node.metadata?.storyboardAssets || [];
-    const assetLines = assets.length ? assets.map((asset) => `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}｜${asset.description || asset.prompt || "无描述"}`).join("\n") : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
+    const assetLines = assets.length ? assets.map(storyboardPromptAssetLine).join("\n") : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
     const contextRows = rows
         .slice(contextStart, Math.min(rows.length, rowIndex + 2))
@@ -6173,6 +6202,11 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
         .join("\n\n");
 }
 
+function storyboardPromptAssetLine(asset: StoryboardAsset) {
+    const state = asset.kind === "character" ? [asset.baseName ? `本名：${asset.baseName}` : "", asset.lifeStage ? `状态：${asset.lifeStage}` : ""].filter(Boolean).join("，") : "";
+    return `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}${state ? `｜${state}` : ""}｜${asset.description || asset.prompt || "无描述"}`;
+}
+
 function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: number, assets: StoryboardAsset[]) {
     const settings = [
         node.metadata?.size ? `画幅/比例：${node.metadata.size}` : "",
@@ -6188,6 +6222,7 @@ function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: nu
         "- videoMotionPrompt 要写成可直接给 Seedance 2.0 使用的中文导演指令，优先描述运动、镜头、光线、声音和稳定约束。",
         "- 不要把全部资产都塞进提示词；只选择本镜头真正出现或需要绑定首帧/参考图的资产。",
         "- 资产名必须从已知资产中选择，不能编造，不能输出素材 ID、URL 或 storageKey。",
+        "- 同一人物如有多个年龄/时期资产，必须按当前镜头精确选择对应状态，不要用一个状态替代另一个状态。",
         "- 默认减少抽卡风险：主体绑定清楚、动作低歧义、一个主运镜、无字幕、无文字、无 Logo、无水印、人物身份和画风稳定。",
         `- 可用资产：${assetNames}`,
         settings.length ? `- 视频设置：${settings.join("；")}` : "",
@@ -6328,7 +6363,9 @@ function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: S
     if (!kind || !name) return null;
     const description = safetyNeutralStoryboardPrompt(readStringField(record, ["description", "描述", "角色描述", "场景描述", "道具描述", "detail"]).trim());
     const prompt = safetyNeutralStoryboardPrompt(readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description);
-    const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, description, prompt, status: NODE_STATUS_IDLE };
+    const baseName = kind === "character" ? readStringField(record, ["baseName", "本名", "角色本名", "人物本名"]).trim() : "";
+    const lifeStage = kind === "character" ? readStringField(record, ["lifeStage", "年龄状态", "时期", "阶段", "state", "ageStage"]).trim() : "";
+    const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, baseName: baseName || undefined, lifeStage: lifeStage || inferStoryboardCharacterLifeStage({ id: "", kind, name, description, prompt }), description, prompt, status: NODE_STATUS_IDLE };
     return base;
 }
 

@@ -30,6 +30,8 @@ export type StoryboardAsset = {
     id: string;
     kind: StoryboardAssetKind;
     name: string;
+    baseName?: string;
+    lifeStage?: string;
     description: string;
     prompt: string;
     imageUrl?: string;

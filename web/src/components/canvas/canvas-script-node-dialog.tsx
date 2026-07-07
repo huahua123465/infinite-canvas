@@ -301,6 +301,12 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     </button>
                                     <input ref={uploadInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => uploadEditingAsset(event.target.files?.[0])} />
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
+                                    {editingAsset.kind === "character" ? (
+                                        <div className="mb-4 grid grid-cols-2 gap-3">
+                                            <AssetEditorField label="角色本名" value={editingAsset.baseName || ""} placeholder="例如 白秋妹" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { baseName: value })} />
+                                            <AssetEditorField label="年龄/时期状态" value={editingAsset.lifeStage || ""} placeholder="例如 年轻时期" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { lifeStage: value })} />
+                                        </div>
+                                    ) : null}
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
                                     <AssetEditorField label="生成提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
                                     {editingAsset.kind === "character" ? (
@@ -878,6 +884,7 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
     const hasSceneSheet = Boolean(asset.sceneSheetUrl || asset.sceneSheetStorageKey);
     const voiceLoading = actionKey === `asset-voice:${asset.id}` || asset.voiceAudioStatus === "loading";
     const hasVoice = Boolean(asset.voiceAudioUrl || asset.voiceAudioStorageKey);
+    const characterState = characterAssetStateText(asset);
     return (
         <div
             className="group min-w-0 cursor-pointer text-left"
@@ -965,10 +972,18 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
                     {asset.voiceAudioError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.voiceAudioError}</div> : null}
                 </div>
             ) : null}
-            <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
+            <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
+                {characterState ? <span className="shrink-0 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">{characterState}</span> : null}
+            </div>
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
         </div>
     );
+}
+
+function characterAssetStateText(asset: StoryboardAsset) {
+    if (asset.kind !== "character") return "";
+    return [asset.baseName, asset.lifeStage].filter(Boolean).join(" · ");
 }
 
 function AssetVoiceModelField({ config, onChange }: { config: AiConfig; onChange: (model: string) => void }) {
