@@ -4253,6 +4253,7 @@ function InfiniteCanvasPage() {
                     onOpenMyAssets={() => {
                         setAssetPickerOpen(true);
                     }}
+                    onOpenDirectorDesk={() => navigate("/director-desk")}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={minimapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}

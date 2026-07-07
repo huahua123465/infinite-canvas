@@ -18,5 +18,5 @@
         }
     },
     "include": ["vite.config.ts", "src/**/*.ts", "src/**/*.tsx"],
-    "exclude": ["node_modules"]
+    "exclude": ["node_modules", "src/features/director-desk/**/*.test.ts", "src/features/director-desk/**/*.test.tsx", "src/features/director-desk/test"]
 }
