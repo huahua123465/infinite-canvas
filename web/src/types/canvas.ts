@@ -46,6 +46,7 @@ export type StoryboardAsset = {
     voiceAudioDurationMs?: number;
     voiceAudioStatus?: CanvasNodeStatus;
     voiceAudioError?: string;
+    voiceSpeaker?: string;
     voiceAudioVoice?: string;
     voiceAudioSpeed?: string;
     voiceAudioInstructions?: string;

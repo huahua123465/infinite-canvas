@@ -34,6 +34,9 @@ type CanvasScriptNodeDialogProps = {
     onUploadAssetImage: (nodeId: string, assetId: string, file: File) => void;
     onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void;
     onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void;
+    onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void;
+    onBatchGenerateSceneSheets: (node: CanvasNodeData) => void;
+    onStopSceneSheets: (node: CanvasNodeData) => void;
     onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void;
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
@@ -47,7 +50,7 @@ type CanvasScriptNodeDialogProps = {
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -59,7 +62,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const readyAssets = assets.filter(storyboardAssetReady).length;
     const missingAssets = assets.length - readyAssets;
     const preparingAssets = actionKey === "asset:prepare";
-    const generatingAssets = actionKey === "asset:all" || assets.some((asset) => asset.status === "loading");
+    const generatingAssets = actionKey === "asset:all" || actionKey === "asset-sheet:all" || assets.some((asset) => asset.status === "loading" || asset.sceneSheetStatus === "loading");
     const hasPartialAssets = readyAssets > 0 && missingAssets > 0;
     const [view, setView] = useState<ScriptDialogView>(node?.metadata?.storyboardStep === "assets" ? "assets" : node?.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
@@ -197,6 +200,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onSelectAsset={setEditingAssetId}
                             onGenerateAssetImage={onGenerateAssetImage}
                             onGenerateSceneSheet={onGenerateSceneSheet}
+                            onStopSceneSheet={onStopSceneSheet}
+                            onBatchGenerateSceneSheets={onBatchGenerateSceneSheets}
+                            onStopSceneSheets={onStopSceneSheets}
                             onGenerateAssetVoice={onGenerateAssetVoice}
                             onPreviewSceneSheet={setPreviewSceneSheetAssetId}
                         />
@@ -302,6 +308,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                                     {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? "重做声音" : "生成试听"}
                                                 </Button>
                                             </div>
+                                            <AssetEditorField label="声音 / speaker ID" value={editingAsset.voiceSpeaker || ""} placeholder="火山需填 speaker，例如 zh_female_cancan_mars_bigtts" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSpeaker: value })} />
+                                            <AssetEditorField label="试听台词" value={editingAsset.voiceSampleText || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSampleText: value })} />
                                             <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
                                             {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? <audio src={editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey} controls className="mt-3 h-9 w-full" /> : <div className="mt-2 text-xs leading-5 text-cyan-100/70">生成后可在这里试听；后续视频会把这段声音作为角色音色参考。</div>}
                                             {editingAsset.voiceAudioError ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.voiceAudioError}</div> : null}
@@ -762,7 +770,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onGenerateSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
+function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
     const progress = node.metadata?.storyboardAssetProgress;
     return (
@@ -775,10 +783,13 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, o
             {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
             {ASSET_SECTIONS.map(({ kind, title }) => (
                 <section key={kind} className="mb-7">
-                    <div className="mb-3 text-sm font-semibold text-[#ededed]">{title}</div>
+                    <div className="mb-3 flex min-h-8 items-center gap-3">
+                        <div className="text-sm font-semibold text-[#ededed]">{title}</div>
+                        {kind === "scene" && groupedAssets.scene.length ? <BatchSceneSheetButton node={node} actionKey={actionKey} scenes={groupedAssets.scene} onBatchGenerateSceneSheets={onBatchGenerateSceneSheets} onStopSceneSheets={onStopSceneSheets} /> : null}
+                    </div>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
                         {groupedAssets[kind].map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
+                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
                         ))}
                         <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
                             <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
@@ -790,11 +801,27 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, o
     );
 }
 
+function BatchSceneSheetButton({ node, actionKey, scenes, onBatchGenerateSceneSheets, onStopSceneSheets }: { node: CanvasNodeData; actionKey?: string | null; scenes: StoryboardAsset[]; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void }) {
+    const missing = scenes.filter((asset) => !asset.sceneSheetUrl && !asset.sceneSheetStorageKey).length;
+    const running = actionKey === "asset-sheet:all";
+    return (
+        <button
+            type="button"
+            className={`inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${running ? "border-red-400/35 bg-red-500/10 text-red-100 hover:border-red-300/55 hover:bg-red-500/15" : "border-emerald-400/25 bg-emerald-500/10 text-emerald-100 hover:border-emerald-300/45 hover:bg-emerald-500/15"}`}
+            disabled={!running && (!missing || Boolean(actionKey && actionKey !== "asset-sheet:all"))}
+            onClick={() => (running ? onStopSceneSheets(node) : onBatchGenerateSceneSheets(node))}
+        >
+            {running ? <Square className="size-3.5" /> : <Sparkles className="size-3.5" />}
+            {running ? "一键暂停全部" : missing ? `一键生成全部多角度锁定图（剩 ${missing}）` : "多角度锁定图已完成"}
+        </button>
+    );
+}
+
 function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount, preparing, generatingAssets, hasPartialAssets, readyAssets, onPrepareAssets, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; missingCount: number; preparing: boolean; generatingAssets: boolean; hasPartialAssets: boolean; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
     return (
         <div className="flex shrink-0 items-center gap-4">
             <div className="max-w-[430px] text-right text-xs leading-5 text-[#c6c6c6]">
-                {generatingAssets ? "正在批量生成资产；可以随时暂停，已完成的会保留。" : `检测到 ${groupedAssets.character.length} 个角色、${groupedAssets.scene.length} 个场景、${groupedAssets.prop.length} 个道具，其中 ${Math.max(missingCount, 0)} 个还没有可用参考。`}
+                {generatingAssets ? "正在生成资产；可以随时暂停，已完成的会保留。" : `检测到 ${groupedAssets.character.length} 个角色、${groupedAssets.scene.length} 个场景、${groupedAssets.prop.length} 个道具，其中 ${Math.max(missingCount, 0)} 个还没有可用参考。`}
             </div>
             <div className="flex items-center gap-2">
                 <Button disabled={actionKey !== null} icon={preparing ? <LoaderCircle className="size-4 animate-spin" /> : undefined} onClick={() => onPrepareAssets(node)}>
@@ -840,7 +867,7 @@ function AssetRecognitionProgress({ progress }: { progress?: StoryboardAssetProg
     );
 }
 
-function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
+function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneSheet, onStopSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onStopSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
     const hasImage = Boolean(asset.imageUrl || asset.storageKey);
     const sheetLoading = actionKey === `asset-sheet:${asset.id}` || asset.sceneSheetStatus === "loading";
@@ -892,15 +919,19 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
                     )}
                     <button
                         type="button"
-                        className="flex h-8 w-full items-center justify-center gap-1.5 border-t border-emerald-500/15 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-60"
-                        disabled={Boolean(actionKey && actionKey !== `asset-sheet:${asset.id}`)}
+                        className={`flex h-8 w-full items-center justify-center gap-1.5 border-t text-[11px] font-semibold hover:bg-emerald-500/10 disabled:opacity-60 ${sheetLoading ? "border-red-500/15 text-red-100 hover:bg-red-500/10" : "border-emerald-500/15 text-emerald-200"}`}
+                        disabled={!sheetLoading && Boolean(actionKey && actionKey !== `asset-sheet:${asset.id}`)}
                         onClick={(event) => {
                             event.stopPropagation();
-                            onGenerateSceneSheet();
+                            if (sheetLoading) {
+                                onStopSceneSheet();
+                            } else {
+                                onGenerateSceneSheet();
+                            }
                         }}
                     >
-                        {sheetLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                        {hasSceneSheet ? "重做多角度锁定图" : "生成多角度锁定图"}
+                        {sheetLoading ? <Square className="size-3.5" /> : <Sparkles className="size-3.5" />}
+                        {sheetLoading ? "暂停生成" : hasSceneSheet ? "重做多角度锁定图" : "生成多角度锁定图"}
                     </button>
                     {asset.sceneSheetError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.sceneSheetError}</div> : null}
                 </div>
@@ -936,11 +967,11 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
     );
 }
 
-function AssetEditorField({ label, value, textarea, tall, onChange }: { label: string; value: string; textarea?: boolean; tall?: boolean; onChange: (value: string) => void }) {
+function AssetEditorField({ label, value, textarea, tall, placeholder, onChange }: { label: string; value: string; textarea?: boolean; tall?: boolean; placeholder?: string; onChange: (value: string) => void }) {
     return (
         <label className="mb-4 block">
             <span className="mb-2 block text-xs font-semibold text-[#f0f0f0]">{label}</span>
-            {textarea ? <textarea className={`block w-full resize-none rounded-lg border border-[#383838] bg-[#303030] px-3 py-3 text-sm leading-6 text-[#f5f5f5] outline-none focus:border-[#777] ${tall ? "h-56" : "h-28"}`} value={value} onChange={(event) => onChange(event.target.value)} /> : <input className="block h-10 w-full rounded-lg border border-[#383838] bg-[#303030] px-3 text-sm text-[#f5f5f5] outline-none focus:border-[#777]" value={value} onChange={(event) => onChange(event.target.value)} />}
+            {textarea ? <textarea className={`block w-full resize-none rounded-lg border border-[#383838] bg-[#303030] px-3 py-3 text-sm leading-6 text-[#f5f5f5] outline-none focus:border-[#777] ${tall ? "h-56" : "h-28"}`} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /> : <input className="block h-10 w-full rounded-lg border border-[#383838] bg-[#303030] px-3 text-sm text-[#f5f5f5] outline-none focus:border-[#777]" value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />}
         </label>
     );
 }

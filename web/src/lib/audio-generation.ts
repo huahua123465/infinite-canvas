@@ -15,6 +15,7 @@ export const audioVoiceOptions = [
 ];
 
 const defaultAudioVoice = "alloy";
+const openAiAudioVoiceValues = new Set(audioVoiceOptions.map((item) => item.value));
 
 export const audioFormatOptions = [
     { value: "mp3", label: "MP3" },
@@ -27,6 +28,16 @@ export const audioFormatOptions = [
 
 export function normalizeAudioVoiceValue(value: string) {
     return value.trim() || defaultAudioVoice;
+}
+
+export function isOpenAiAudioVoiceValue(value: string) {
+    return openAiAudioVoiceValues.has(value.trim().toLowerCase());
+}
+
+export function normalizeVolcengineSpeakerValue(value: string) {
+    const speaker = value.trim();
+    if (!speaker || isOpenAiAudioVoiceValue(speaker)) return "";
+    return speaker;
 }
 
 export function normalizeAudioFormatValue(value: string) {

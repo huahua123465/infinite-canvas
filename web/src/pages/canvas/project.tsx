@@ -53,6 +53,7 @@ import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
+import { normalizeVolcengineSpeakerValue } from "@/lib/audio-generation";
 import type { CanvasAgentMode } from "@/components/canvas/canvas-agent-chat-ui";
 import {
     CanvasNodeType,
@@ -460,6 +461,7 @@ function InfiniteCanvasPage() {
     const agentCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const generationBatchControllersRef = useRef(new Map<string, AbortController>());
     const tailFrameBackfillRef = useRef(new Set<string>());
 
     const createHistoryEntry = useCallback(
@@ -493,8 +495,18 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
+    const stopGenerationByTargetId = useCallback((targetNodeId: string) => {
+        const request = generationRequestsRef.current.get(targetNodeId);
+        if (!request) return false;
+        request.controller.abort();
+        generationRequestsRef.current.delete(targetNodeId);
+        return true;
+    }, []);
+
     const stopGenerationByRunningId = useCallback((runningId: string) => {
         const affectedNodeIds = new Set<string>();
+        generationBatchControllersRef.current.get(runningId)?.abort();
+        generationBatchControllersRef.current.delete(runningId);
         generationRequestsRef.current.forEach((request) => {
             if (request.runningNodeId !== runningId) return;
             request.controller.abort();
@@ -2119,6 +2131,105 @@ function InfiniteCanvasPage() {
         [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardAsset],
     );
 
+    const batchGenerateStoryboardSceneSheets = useCallback(
+        async (node: CanvasNodeData) => {
+            const scriptNode = withStoryboardVideoSettings(node);
+            if (scriptNode !== node) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
+            const assets = (scriptNode.metadata?.storyboardAssets || []).filter((asset) => asset.kind === "scene" && !asset.sceneSheetUrl && !asset.sceneSheetStorageKey);
+            if (!assets.length) {
+                message.info("没有需要生成的多角度锁定图");
+                return;
+            }
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1", size: "16:9" };
+            if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                openConfigDialog(true);
+                return;
+            }
+            setStoryboardActionKey("asset-sheet:all");
+            let stopped = false;
+            const batchController = new AbortController();
+            generationBatchControllersRef.current.set(scriptNode.id, batchController);
+            try {
+                await runLimited(assets, STORYBOARD_ASSET_BATCH_CONCURRENCY, async (asset) => {
+                    if (batchController.signal.aborted) {
+                        stopped = true;
+                        return;
+                    }
+                    const prompt = storyboardSceneSheetPrompt(asset);
+                    if (!prompt) {
+                        updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetStatus: NODE_STATUS_ERROR, sceneSheetError: "请先填写场景提示词" });
+                        return;
+                    }
+                    const targetId = `storyboard-scene-sheet:${scriptNode.id}:${asset.id}`;
+                    const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id, createLinkedAbortController(batchController));
+                    updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetUrl: undefined, sceneSheetStorageKey: undefined, sceneSheetStatus: NODE_STATUS_LOADING, sceneSheetError: undefined });
+                    try {
+                        const referenceImage = await storyboardAssetReferenceImage(asset);
+                        const image = referenceImage ? await requestEdit(generationConfig, prompt, [referenceImage], undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                        const uploaded = await uploadImage(image.dataUrl);
+                        updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetUrl: uploaded.url, sceneSheetStorageKey: uploaded.storageKey, sceneSheetStatus: NODE_STATUS_SUCCESS, sceneSheetError: undefined });
+                        const sceneSheetReference = storyboardSceneSheetVideoReference(asset, uploaded);
+                        if (sceneSheetReference) {
+                            setNodes((prev) =>
+                                prev.map((item) =>
+                                    item.type === CanvasNodeType.Video && item.metadata?.storyboardSourceNodeId === scriptNode.id && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId && storyboardPromptDetailUsesAsset(scriptNode, item.metadata.storyboardRowIndex, asset)
+                                        ? { ...item, metadata: { ...item.metadata, storyboardVideoReferences: mergeStoryboardVideoReferences(item.metadata.storyboardVideoReferences || [], sceneSheetReference) } }
+                                        : item,
+                                ),
+                            );
+                        }
+                    } catch (error) {
+                        if (isGenerationCanceled(error)) {
+                            stopped = true;
+                            updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetStatus: NODE_STATUS_IDLE, sceneSheetError: undefined });
+                            return;
+                        }
+                        updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetStatus: NODE_STATUS_ERROR, sceneSheetError: friendlyGenerationError(error, "生成场景多角度锁定图失败") });
+                    } finally {
+                        finishGenerationRequest(targetId, controller);
+                    }
+                });
+                if (!stopped && !batchController.signal.aborted) message.success("场景多角度锁定图批量生成完成");
+            } finally {
+                generationBatchControllersRef.current.delete(scriptNode.id);
+                setStoryboardActionKey(null);
+            }
+        },
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardAsset],
+    );
+
+    const stopStoryboardSceneSheetGeneration = useCallback(
+        (node: CanvasNodeData, assetId: string) => {
+            stopGenerationByTargetId(`storyboard-scene-sheet:${node.id}:${assetId}`);
+            updateStoryboardAsset(node.id, assetId, { sceneSheetStatus: NODE_STATUS_IDLE, sceneSheetError: undefined });
+            if (storyboardActionKey === `asset-sheet:${assetId}`) setStoryboardActionKey(null);
+            message.info("已暂停当前多角度锁定图生成");
+        },
+        [message, stopGenerationByTargetId, storyboardActionKey, updateStoryboardAsset],
+    );
+
+    const stopStoryboardSceneSheetGenerationBatch = useCallback(
+        (node: CanvasNodeData) => {
+            stopGenerationByRunningId(node.id);
+            setStoryboardActionKey(null);
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === node.id
+                        ? {
+                              ...item,
+                              metadata: {
+                                  ...item.metadata,
+                                  storyboardAssets: (item.metadata?.storyboardAssets || []).map((asset) => (asset.sceneSheetStatus === NODE_STATUS_LOADING ? { ...asset, sceneSheetStatus: NODE_STATUS_IDLE, sceneSheetError: undefined } : asset)),
+                              },
+                          }
+                        : item,
+                ),
+            );
+            message.info("已暂停全部多角度锁定图生成");
+        },
+        [message, stopGenerationByRunningId],
+    );
+
     const generateStoryboardAssetVoice = useCallback(
         async (node: CanvasNodeData, assetId: string) => {
             const scriptNode = withStoryboardVideoSettings(node);
@@ -2129,9 +2240,10 @@ function InfiniteCanvasPage() {
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: effectiveConfig.audioModel || effectiveConfig.model, count: "1" };
-            const voiceProfile = storyboardAssetVoiceProfile(asset, scriptNode.metadata?.storyboardAssetStyle, generationConfig);
+            const baseVoiceProfile = storyboardAssetVoiceProfile(asset, scriptNode.metadata?.storyboardAssetStyle, generationConfig);
+            const sampleText = storyboardAssetVoiceSampleText(asset, baseVoiceProfile, scriptNode);
+            const voiceProfile = { ...baseVoiceProfile, sampleText };
             const voicePrompt = storyboardAssetVoicePrompt(asset, scriptNode.metadata?.storyboardAssetStyle, voiceProfile);
-            const sampleText = storyboardAssetVoiceSampleText(asset, voiceProfile);
             if (!voicePrompt || !sampleText) {
                 message.warning("请先填写角色描述或提示词");
                 return;
@@ -2139,6 +2251,15 @@ function InfiniteCanvasPage() {
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
+            }
+            if (isVolcengineAudioConfig(generationConfig)) {
+                if (!normalizeVolcengineSpeakerValue(voiceProfile.voice)) {
+                    const errorDetails = "火山语音合成不会根据角色描述自动换男女声；请在右侧角色编辑里为该角色填写有效 speaker ID，例如 zh_female_cancan_mars_bigtts。";
+                    updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioStatus: NODE_STATUS_ERROR, voiceAudioError: errorDetails, voiceAudioVoice: voiceProfile.voice, voiceSampleText: sampleText });
+                    message.error(errorDetails);
+                    return;
+                }
+                if (!asset.voiceSpeaker?.trim()) message.warning("当前火山语音会使用全局 speaker；如需角色音色不同，请在右侧角色编辑里为该角色填写单独 speaker ID");
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
             updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
@@ -4161,6 +4282,9 @@ function InfiniteCanvasPage() {
                     onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
                     onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
                     onGenerateSceneSheet={(node, assetId) => void generateStoryboardSceneSheet(node, assetId)}
+                    onStopSceneSheet={stopStoryboardSceneSheetGeneration}
+                    onBatchGenerateSceneSheets={(node) => void batchGenerateStoryboardSceneSheets(node)}
+                    onStopSceneSheets={stopStoryboardSceneSheetGenerationBatch}
                     onGenerateAssetVoice={(node, assetId) => void generateStoryboardAssetVoice(node, assetId)}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
@@ -5048,6 +5172,16 @@ async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Pro
     await Promise.all(workers);
 }
 
+function createLinkedAbortController(parent: AbortController) {
+    const controller = new AbortController();
+    if (parent.signal.aborted) {
+        controller.abort();
+    } else {
+        parent.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+    return controller;
+}
+
 function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
     if (!asset) return "";
     const prompt = safetyNeutralStoryboardPrompt(asset.prompt.trim() || asset.description.trim());
@@ -5140,10 +5274,10 @@ function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | und
     const age = storyboardAssetVoiceAge(normalized);
     const role = storyboardAssetVoiceRole(normalized);
     const isVolcengine = isVolcengineAudioConfig(config);
-    const voice = isVolcengine ? config.audioVoice : storyboardAssetVoiceName(gender, age, role, config.audioVoice);
+    const voice = asset.voiceSpeaker?.trim() || (isVolcengine ? config.audioVoice : storyboardAssetVoiceName(gender, age, role, config.audioVoice));
     const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
     const trait = storyboardAssetVoiceTrait(gender, age, role);
-    const sampleText = storyboardAssetVoiceSampleTextForProfile(gender, age, role);
+    const sampleText = asset.voiceSampleText?.trim() || storyboardAssetVoiceSampleTextForProfile(gender, age, role);
     const instructions = [
         `只朗读输入台词，不要读出角色设定、说明文字、引号或括号。`,
         `角色声音画像：${trait}`,
@@ -5173,12 +5307,57 @@ function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string, prof
         .join("\n");
 }
 
-function storyboardAssetVoiceSampleText(asset: StoryboardAsset, profile?: StoryboardAssetVoiceProfile) {
+function storyboardAssetVoiceSampleText(asset: StoryboardAsset, profile?: StoryboardAssetVoiceProfile, scriptNode?: CanvasNodeData) {
+    const custom = asset.voiceSampleText?.trim();
+    if (custom) return custom;
+    const scripted = scriptNode ? storyboardAssetScriptDialogueSampleText(scriptNode, asset) : "";
+    if (scripted) return scripted;
     if (profile?.sampleText) return profile.sampleText;
     const source = [asset.description, asset.prompt].join("\n");
     const quoted = source.match(/[“"{｛]([^”"}｝]{4,40})[”"}｝]/)?.[1]?.trim();
     if (quoted) return quoted;
     return storyboardAssetVoiceSampleTextForProfile(storyboardAssetVoiceGender(source), storyboardAssetVoiceAge(source), storyboardAssetVoiceRole(source));
+}
+
+function storyboardAssetScriptDialogueSampleText(scriptNode: CanvasNodeData, asset: StoryboardAsset) {
+    const rows = scriptNode.metadata?.storyboardRows || [];
+    if (!rows.length) return "";
+    const detailByIndex = scriptNode.metadata?.storyboardPromptDetails || {};
+    const names = Array.from(new Set([asset.name, asset.name ? `@${asset.name}` : "", ...asset.name.split(/[、，,\s/]+/)].map((item) => item.trim()).filter((item) => item.length >= 2)));
+    const candidates: string[] = [];
+    rows.forEach((row, index) => {
+        const detail = detailByIndex[String(index)];
+        const context = [row[2], row[5], row[8], detail?.storyboardPrompt, detail?.videoMotionPrompt, detail?.assetMentions?.join(" ")].filter(Boolean).join("\n");
+        if (!names.some((name) => context.includes(name))) return;
+        const dialogue = storyboardCleanVoiceDialogue(row[5] || "", names);
+        if (dialogue) candidates.push(dialogue);
+    });
+    return compactStoryboardVoiceSample(candidates.join(" "));
+}
+
+function storyboardCleanVoiceDialogue(text: string, names: string[]) {
+    const source = text
+        .replace(/<[^>]+>/g, " ")
+        .replace(/（[^）]*(?:音乐|音效|环境音|字幕|无对白)[^）]*）/g, " ")
+        .replace(/\([^)]*(?:音乐|音效|环境音|字幕|无对白)[^)]*\)/g, " ")
+        .trim();
+    if (!source || /^(无|无对白|空|none|n\/a)$/i.test(source)) return "";
+    const quoted = Array.from(source.matchAll(/[“"{｛]([^”"}｝]{4,80})[”"}｝]/g)).map((match) => match[1].trim());
+    if (quoted.length) return compactStoryboardVoiceSample(quoted.join(" "));
+    const namePattern = names.map(escapeRegExp).join("|");
+    const matched = namePattern ? source.match(new RegExp(`(?:${namePattern})\\s*[：:，,]?\\s*([^。！？!?；;\\n]{4,80})`)) : null;
+    const withoutSpeaker = (matched?.[1] || source).replace(/^[^：:\n]{1,12}[：:]/, "").trim();
+    return compactStoryboardVoiceSample(withoutSpeaker);
+}
+
+function compactStoryboardVoiceSample(text: string) {
+    const normalized = text.replace(/\s+/g, " ").replace(/^[：:，,。；;、\s]+/, "").trim();
+    if (normalized.length <= 90) return normalized;
+    return `${normalized.slice(0, 90).replace(/[，,、；;：:。！？!?]*$/, "")}。`;
+}
+
+function escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function storyboardAssetVoiceGender(source: string) {
@@ -5249,11 +5428,12 @@ function storyboardSceneSheetPrompt(asset: StoryboardAsset) {
     const source = safetyNeutralStoryboardPrompt(asset.prompt.trim() || asset.description.trim());
     if (!source) return "";
     return [
-        "为同一个场景生成一张多角度空间锁定参考图，画面是整洁的 2x3 参考 sheet。",
-        "六个分区依次呈现：主视图、正面、左侧、右侧、俯视空间布局、背面/反向视角。",
+        "为同一个场景生成一张多角度空间锁定参考图，画面是整洁的 2x3 拼版参考图。",
+        "六个分区依次呈现不同机位：主视图、正面、左侧、右侧、俯视空间布局、背面/反向视角；这些机位名称只用于理解构图，不要画进图片里。",
         "每个分区必须是同一个地点，只改变相机方向；保持建筑结构、门窗位置、墙面/地面材质、道具摆放、光线方向、色调、年代质感完全一致。",
-        "画面中不要出现人物、角色、人脸、手部、路人、字幕、文字、Logo、水印；不要添加新家具、新门窗、新装饰物，不要改变布局。",
-        "这张图只作为视频模型理解空间关系的参考 sheet，不是最终视频画面。",
+        "绝对不要在任何分区里添加视角标签、英文角标、中文角标、标题、说明字、左下角文字、字幕、Logo、水印或边框装饰；不要出现 MAIN VIEW、FRONT VIEW、LEFT SIDE VIEW、RIGHT SIDE VIEW、TOP-DOWN VIEW、REAR VIEW 等文字。",
+        "画面中不要出现人物、角色、人脸、手部、路人；不要添加新家具、新门窗、新装饰物，不要改变布局。",
+        "这张图只作为视频模型理解空间关系的参考图，不是最终视频画面。",
         `原始场景设定：${source}`,
     ].join("\n");
 }

@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -47,6 +47,8 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
 
 async function requestVolcengineSpeech(config: AiConfig, resourceId: string, text: string, options?: RequestOptions): Promise<Blob> {
     const format = normalizeVolcengineAudioFormat(config.audioFormat);
+    const speaker = normalizeVolcengineSpeakerValue(config.audioVoice);
+    if (!speaker) throw new Error("火山语音合成必须填写有效 speaker ID，不能使用 OpenAI voice（如 alloy、coral、onyx）。请在角色声音里填写对应的火山音色 ID，例如 zh_female_cancan_mars_bigtts。");
     const response = await axios.post<Blob>(
         volcengineSpeechUrl(config.baseUrl),
         {
@@ -54,12 +56,14 @@ async function requestVolcengineSpeech(config: AiConfig, resourceId: string, tex
             event: 100,
             req_params: {
                 text,
-                speaker: normalizeAudioVoiceValue(config.audioVoice),
+                speaker,
                 audio_params: {
                     format,
                     sample_rate: 24000,
+                    bit_rate: 128000,
                     speech_rate: volcengineSpeechRate(config.audioSpeed),
                 },
+                additions: JSON.stringify({ disable_markdown_filter: true }),
             },
         },
         {
