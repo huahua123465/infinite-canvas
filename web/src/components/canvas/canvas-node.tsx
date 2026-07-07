@@ -910,7 +910,7 @@ function StoryboardVideoHistoryModal({ node, open, results, theme, onClose }: { 
     const latestId = node.metadata?.storyboardVideoLatestResultNodeId;
     const sorted = [...results].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0));
     return (
-        <Modal title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜所有视频`} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden>
+        <Modal title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜所有视频`} onClose={onClose} />} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden closable={false} modalRender={renderCanvasModal}>
             {sorted.length ? (
                 <div className="grid max-h-[68vh] grid-cols-1 gap-3 overflow-y-auto pr-1 md:grid-cols-2">
                     {sorted.map((item) => {
