@@ -114,9 +114,9 @@ textarea:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
-  height: 100%;
-  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1755,7 +1755,7 @@ textarea:focus-visible {
 .viewport-toolbar {
   position: absolute;
   left: 50%;
-  bottom: 40px;
+  bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 10;
   transform: translateX(-50%);
   width: max-content;
@@ -2033,7 +2033,7 @@ textarea:focus-visible {
 .viewport-aspect-panel {
   position: absolute;
   left: 50%;
-  bottom: calc(40px + var(--viewport-toolbar-height, 46px) + 10px);
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + var(--viewport-toolbar-height, 46px) + 10px);
   z-index: 34;
   width: 340px;
   height: 206px;

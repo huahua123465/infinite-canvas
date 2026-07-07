@@ -28,7 +28,7 @@ import { getViewportAspectFrameRect, type ViewportSafeAreaInsets } from "./viewp
 
 export const DEFAULT_DIRECTOR_VIEW_SNAPSHOT: CameraShotSnapshot = DEFAULT_DIRECTOR_CAMERA_VIEW_SNAPSHOT;
 const VIEWPORT_FRAME_PADDING = 40;
-const VIEWPORT_TOOLBAR_BOTTOM_OFFSET = 40;
+const VIEWPORT_TOOLBAR_BOTTOM_OFFSET = 16;
 const DEFAULT_VIEWPORT_TOOLBAR_HEIGHT = 44;
 const GIZMO_AXIS_COLORS: [string, string, string] = ["#E56C5B", "#6CDB7A", "#7AA7FF"];
 const GIZMO_VIEWPORT_SCALE = 25;
