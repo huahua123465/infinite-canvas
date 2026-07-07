@@ -1164,6 +1164,7 @@ function StoryboardVideoPromptPreviewModal({
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
     const [saveHint, setSaveHint] = useState("");
     const saveHintTimerRef = useRef<number | null>(null);
+    const finalPromptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
     useEffect(() => {
         if (!open) return;
@@ -1201,6 +1202,18 @@ function StoryboardVideoPromptPreviewModal({
     const updateDraftFinalPrompt = (value: string) => {
         setDraftFinalPrompt(value);
         saveDraft(draftConfig, value);
+    };
+
+    const insertReferenceToFinalPrompt = (reference: StoryboardVideoReference) => {
+        const textarea = finalPromptTextareaRef.current;
+        const start = textarea?.selectionStart ?? draftFinalPrompt.length;
+        const end = textarea?.selectionEnd ?? start;
+        const inserted = insertStoryboardMention(draftFinalPrompt, reference.mention, start, end);
+        updateDraftFinalPrompt(inserted.value);
+        requestAnimationFrame(() => {
+            finalPromptTextareaRef.current?.focus();
+            finalPromptTextareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+        });
     };
 
     const generate = () => {
@@ -1301,7 +1314,9 @@ function StoryboardVideoPromptPreviewModal({
                         <div className="text-sm font-semibold">最终生成提示词</div>
                         <span className="text-xs text-stone-500">可手动修改，@ 资产会自动尝试绑定到参考图</span>
                     </div>
+                    <StoryboardPromptAssetPicker references={referenceCandidates} theme={theme} onSelect={insertReferenceToFinalPrompt} />
                     <CanvasResourceMentionTextarea
+                        ref={finalPromptTextareaRef}
                         value={draftFinalPrompt}
                         references={mentionReferences}
                         onChange={updateDraftFinalPrompt}
@@ -1340,6 +1355,71 @@ function StoryboardVideoPromptPreviewModal({
 
 function PromptPreviewBox({ children, emptyText = "暂无内容" }: { children?: ReactNode; emptyText?: string }) {
     return <div className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">{children || <span className="text-stone-400">{emptyText}</span>}</div>;
+}
+
+function StoryboardPromptAssetPicker({ references, theme, onSelect }: { references: StoryboardVideoReference[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: StoryboardVideoReference) => void }) {
+    const options = sortStoryboardVideoReferences(references).filter((reference) => reference.mention);
+    return (
+        <div className="mb-2 rounded-xl border px-3 py-2" style={{ borderColor: `${selectionBlue}33`, background: `${selectionBlue}0d` }}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold" style={{ color: theme.node.text }}>
+                    可选资产
+                </div>
+                <div className="text-[11px] text-stone-500">点击插入，也可以输入 @ 搜索</div>
+            </div>
+            {options.length ? (
+                <div className="thin-scrollbar flex max-h-32 gap-2 overflow-x-auto pb-1">
+                    {options.map((reference) => (
+                        <button
+                            key={`${reference.source || "reference"}-${reference.assetId || reference.nodeId || reference.mention}`}
+                            type="button"
+                            className="flex w-40 shrink-0 items-center gap-2 rounded-lg border px-2 py-2 text-left text-xs transition hover:border-blue-400 hover:bg-blue-500/10"
+                            style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.text }}
+                            title={`插入 ${reference.mention}`}
+                            onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onSelect(reference);
+                            }}
+                        >
+                            <span className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-black/10">
+                                {reference.url || reference.storageKey ? <StoryboardAssetPreviewImage src={reference.storageKey || reference.url || ""} alt={reference.name || reference.mention} /> : <span className="grid size-full place-items-center"><ImageIcon className="size-4 opacity-55" /></span>}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="block truncate font-semibold">{reference.mention}</span>
+                                <span className="mt-0.5 block truncate opacity-60">{storyboardReferenceOptionLabel(reference)}</span>
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <div className="rounded-lg border border-dashed border-stone-300 px-3 py-3 text-center text-xs text-stone-500 dark:border-stone-700">当前剧本还没有可引用资产</div>
+            )}
+        </div>
+    );
+}
+
+function insertStoryboardMention(value: string, mention: string, selectionStart: number, selectionEnd: number) {
+    const label = normalizeStoryboardMention(mention);
+    if (!label) return { value, cursor: selectionEnd };
+    const prefix = value.slice(0, selectionStart);
+    const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
+    const replaceStart = match ? match.index + match[1].length : selectionStart;
+    const before = value.slice(0, replaceStart);
+    const after = value.slice(selectionEnd);
+    const insertText = `${before && !/\s$/.test(before) ? " " : ""}${label} `;
+    const next = `${before}${insertText}${after}`;
+    return { value: next, cursor: before.length + insertText.length };
+}
+
+function storyboardReferenceOptionLabel(reference: StoryboardVideoReference) {
+    const source = reference.source === "script" ? "剧本资产" : reference.source === "asset" ? "我的素材" : reference.source === "node" ? "画布节点" : "参考资产";
+    const role = STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT[reference.role || "reference"];
+    return `${source} · ${role}`;
 }
 
 function storyboardReferenceAssetCandidates(references: StoryboardVideoReference[], scriptReferences: StoryboardVideoReference[], imageAssets: ImageAsset[]) {
