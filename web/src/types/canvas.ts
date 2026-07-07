@@ -46,6 +46,10 @@ export type StoryboardAsset = {
     voiceAudioDurationMs?: number;
     voiceAudioStatus?: CanvasNodeStatus;
     voiceAudioError?: string;
+    voiceAudioVoice?: string;
+    voiceAudioSpeed?: string;
+    voiceAudioInstructions?: string;
+    voiceSampleText?: string;
 };
 
 export type StoryboardAssetMentionLink = {

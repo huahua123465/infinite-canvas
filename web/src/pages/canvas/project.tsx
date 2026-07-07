@@ -2128,24 +2128,28 @@ function InfiniteCanvasPage() {
                 message.warning("只有角色资产可以生成声音");
                 return;
             }
-            const voicePrompt = storyboardAssetVoicePrompt(asset, scriptNode.metadata?.storyboardAssetStyle);
-            const sampleText = storyboardAssetVoiceSampleText(asset);
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: effectiveConfig.audioModel || effectiveConfig.model, count: "1" };
+            const voiceProfile = storyboardAssetVoiceProfile(asset, scriptNode.metadata?.storyboardAssetStyle, generationConfig);
+            const voicePrompt = storyboardAssetVoicePrompt(asset, scriptNode.metadata?.storyboardAssetStyle, voiceProfile);
+            const sampleText = storyboardAssetVoiceSampleText(asset, voiceProfile);
             if (!voicePrompt || !sampleText) {
                 message.warning("请先填写角色描述或提示词");
                 return;
             }
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: effectiveConfig.audioModel || effectiveConfig.model, count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined });
+            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const audio = await storeGeneratedAudio(await requestAudioGeneration({ ...generationConfig, audioInstructions: [generationConfig.audioInstructions, voicePrompt].filter(Boolean).join("\n\n") }, sampleText, { signal: controller.signal }), generationConfig.audioFormat);
-                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined });
+                const customVoicePrompt = asset.voicePrompt?.trim();
+                const audioInstructions = [generationConfig.audioInstructions, voiceProfile.instructions, customVoicePrompt].filter(Boolean).join("\n\n");
+                const audioConfig = { ...generationConfig, audioVoice: voiceProfile.voice, audioSpeed: voiceProfile.speed, audioInstructions };
+                const audio = await storeGeneratedAudio(await requestAudioGeneration(audioConfig, sampleText, { signal: controller.signal }), generationConfig.audioFormat);
+                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
                     setNodes((prev) =>
@@ -5122,7 +5126,37 @@ function storyboardAssetVoiceAudioReference(asset: StoryboardAsset, audio?: Pick
     };
 }
 
-function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string) {
+type StoryboardAssetVoiceProfile = {
+    voice: string;
+    speed: string;
+    instructions: string;
+    sampleText: string;
+};
+
+function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | undefined, config: AiConfig): StoryboardAssetVoiceProfile {
+    const source = [asset.name, asset.description, asset.prompt].filter(Boolean).join("，");
+    const normalized = safetyNeutralStoryboardPrompt(source);
+    const gender = storyboardAssetVoiceGender(normalized);
+    const age = storyboardAssetVoiceAge(normalized);
+    const role = storyboardAssetVoiceRole(normalized);
+    const isVolcengine = isVolcengineAudioConfig(config);
+    const voice = isVolcengine ? config.audioVoice : storyboardAssetVoiceName(gender, age, role, config.audioVoice);
+    const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
+    const trait = storyboardAssetVoiceTrait(gender, age, role);
+    const sampleText = storyboardAssetVoiceSampleTextForProfile(gender, age, role);
+    const instructions = [
+        `只朗读输入台词，不要读出角色设定、说明文字、引号或括号。`,
+        `角色声音画像：${trait}`,
+        normalized ? `角色设定摘要：${normalized}` : "",
+        style?.trim() ? `作品整体风格：${style.trim()}` : "",
+        "保持中文自然口语，音色、年龄感、气息、语速和情绪强度稳定；不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
+    ]
+        .filter(Boolean)
+        .join("\n");
+    return { voice, speed, instructions, sampleText };
+}
+
+function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string, profile?: StoryboardAssetVoiceProfile) {
     const custom = asset.voicePrompt?.trim();
     if (custom) return custom;
     const source = safetyNeutralStoryboardPrompt([asset.name, asset.description, asset.prompt].filter(Boolean).join("，"));
@@ -5131,18 +5165,84 @@ function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string) {
         `为角色“${asset.name || "未命名角色"}”生成一段 6-10 秒中文角色声音试听样本。`,
         `角色设定：${source}`,
         style?.trim() ? `作品整体风格：${style.trim()}` : "",
+        profile?.instructions ? `声音画像：${profile.instructions}` : "",
         "声音要求：音色、年龄感、气息、语速、情绪强度要稳定清晰；像角色在镜头外短声试音，不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
-        "试听台词可以是中性的短句，例如“我知道了，我们继续吧”，重点体现角色声音质感，不推进剧情。",
+        `试听台词固定朗读为：“${profile?.sampleText || "我知道了，我们继续吧。"}”；重点体现角色声音质感，不推进剧情。`,
     ]
         .filter(Boolean)
         .join("\n");
 }
 
-function storyboardAssetVoiceSampleText(asset: StoryboardAsset) {
+function storyboardAssetVoiceSampleText(asset: StoryboardAsset, profile?: StoryboardAssetVoiceProfile) {
+    if (profile?.sampleText) return profile.sampleText;
     const source = [asset.description, asset.prompt].join("\n");
     const quoted = source.match(/[“"{｛]([^”"}｝]{4,40})[”"}｝]/)?.[1]?.trim();
     if (quoted) return quoted;
-    return "我知道了，我们继续吧。";
+    return storyboardAssetVoiceSampleTextForProfile(storyboardAssetVoiceGender(source), storyboardAssetVoiceAge(source), storyboardAssetVoiceRole(source));
+}
+
+function storyboardAssetVoiceGender(source: string) {
+    if (/父|爸爸|爹|叔|伯|爷|公|丈夫|男人|男性|男/.test(source)) return "male";
+    if (/母|妈妈|娘|婶|姨|奶|婆|妻|女人|女性|女/.test(source)) return "female";
+    return "neutral";
+}
+
+function storyboardAssetVoiceAge(source: string) {
+    if (/老人|老年|年迈|花甲|古稀|爷爷|奶奶|外公|外婆|阿婆|阿公|老父|老母|白发/.test(source)) return "old";
+    if (/中年|父亲|母亲|爸爸|妈妈|家中父亲|家中母亲|成年/.test(source)) return "adult";
+    if (/年轻|少年|少女|青年|女孩|男孩|女儿|儿子|妹妹|弟弟/.test(source)) return "young";
+    return "adult";
+}
+
+function storyboardAssetVoiceRole(source: string) {
+    if (/父|爸爸|爹|家中父亲|父亲/.test(source)) return "father";
+    if (/母|妈妈|娘|家中母亲|母亲/.test(source)) return "mother";
+    if (/老人|老年|爷爷|奶奶|外公|外婆|阿婆|阿公/.test(source)) return "elder";
+    if (/孩子|女儿|儿子|妹妹|弟弟|少年|少女/.test(source)) return "young";
+    return "default";
+}
+
+function storyboardAssetVoiceName(gender: string, age: string, role: string, currentVoice: string) {
+    const current = currentVoice.trim();
+    if (current && current !== "alloy") return current;
+    if (role === "father" || gender === "male" || age === "old") return "onyx";
+    if (role === "mother") return "shimmer";
+    if (gender === "female" && age === "young") return "nova";
+    if (gender === "female") return "coral";
+    return current || "alloy";
+}
+
+function storyboardAssetVoiceSpeed(age: string, role: string, currentSpeed: string) {
+    const speed = Number(currentSpeed);
+    const base = Number.isFinite(speed) && speed > 0 ? speed : 1;
+    if (role === "elder" || age === "old") return String(Math.min(base, 0.9));
+    if (role === "father" || role === "mother") return String(Math.min(base, 0.95));
+    if (age === "young") return String(Math.max(base, 1.05));
+    return String(base);
+}
+
+function storyboardAssetVoiceTrait(gender: string, age: string, role: string) {
+    if (role === "father") return "成年男性，音色偏低沉，带一点劳累后的沙哑和克制，语速略慢，情绪疲惫但可靠。";
+    if (role === "mother") return "成熟女性，音色温和但有生活压力感，气息柔和，语速略慢，情绪含蓄坚韧。";
+    if (role === "elder" || age === "old") return gender === "female" ? "老年女性，音色偏轻，气息稍弱，语速缓慢，情绪温和而坚韧。" : "老年男性，音色低哑，气息较沉，语速缓慢，情绪克制而有沧桑感。";
+    if (gender === "female" && age === "young") return "年轻女性，音色清亮自然，气息轻，语速稍快，情绪真诚但不夸张。";
+    if (gender === "female") return "成年女性，音色自然温和，气息稳定，语速中等，情绪细腻克制。";
+    if (gender === "male") return "成年男性，音色自然偏低，气息稳定，语速中等偏慢，情绪克制可信。";
+    return "自然中文口语音色，年龄感清晰，气息稳定，语速中等，情绪克制。";
+}
+
+function storyboardAssetVoiceSampleTextForProfile(gender: string, age: string, role: string) {
+    if (role === "father") return "先别急，听我把话说完。天再难，也得把家里的人照看好，我们一步一步来。";
+    if (role === "mother") return "我知道你心里苦，可日子还得往前走。先稳住，把眼前这件事慢慢做好。";
+    if (role === "elder" || age === "old") return "我这一辈子见过不少风浪，眼下先别慌，稳住脚步，再往前走。";
+    if (gender === "female" && age === "young") return "我会记住你说的话。就算有点害怕，我也想再试一次，慢慢把事情做好。";
+    if (gender === "female") return "我明白你的意思。先把心放稳，眼前这一步走好了，后面的路才有办法。";
+    if (gender === "male") return "这件事我明白了。先把眼前的问题处理好，剩下的我们慢慢想办法。";
+    return "我知道了，我们继续吧。先把眼前这一步做好，后面的事情再慢慢解决。";
+}
+
+function isVolcengineAudioConfig(config: AiConfig) {
+    return /openspeech\.bytedance\.com/i.test(config.baseUrl) || /^seed-(tts|icl)-/i.test(config.model || config.audioModel);
 }
 
 function storyboardSceneSheetPrompt(asset: StoryboardAsset) {
