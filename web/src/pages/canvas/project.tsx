@@ -53,7 +53,7 @@ import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
-import { normalizeVolcengineSpeakerValue } from "@/lib/audio-generation";
+import { normalizeVolcengineSpeakerValue, suggestVolcengineSpeakerForText } from "@/lib/audio-generation";
 import type { CanvasAgentMode } from "@/components/canvas/canvas-agent-chat-ui";
 import {
     CanvasNodeType,
@@ -2100,8 +2100,7 @@ function InfiniteCanvasPage() {
             const targetId = `storyboard-scene-sheet:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const referenceImage = await storyboardAssetReferenceImage(asset);
-                const image = referenceImage ? await requestEdit(generationConfig, prompt, [referenceImage], undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 updateStoryboardAsset(scriptNode.id, assetId, { sceneSheetUrl: uploaded.url, sceneSheetStorageKey: uploaded.storageKey, sceneSheetStatus: NODE_STATUS_SUCCESS, sceneSheetError: undefined });
                 const sceneSheetReference = storyboardSceneSheetVideoReference(asset, uploaded);
@@ -2164,8 +2163,7 @@ function InfiniteCanvasPage() {
                     const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id, createLinkedAbortController(batchController));
                     updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetUrl: undefined, sceneSheetStorageKey: undefined, sceneSheetStatus: NODE_STATUS_LOADING, sceneSheetError: undefined });
                     try {
-                        const referenceImage = await storyboardAssetReferenceImage(asset);
-                        const image = referenceImage ? await requestEdit(generationConfig, prompt, [referenceImage], undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                        const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                         const uploaded = await uploadImage(image.dataUrl);
                         updateStoryboardAsset(scriptNode.id, asset.id, { sceneSheetUrl: uploaded.url, sceneSheetStorageKey: uploaded.storageKey, sceneSheetStatus: NODE_STATUS_SUCCESS, sceneSheetError: undefined });
                         const sceneSheetReference = storyboardSceneSheetVideoReference(asset, uploaded);
@@ -2252,17 +2250,19 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 return;
             }
-            if (isVolcengineAudioConfig(generationConfig)) {
+            const isVolcengineVoice = isVolcengineAudioConfig(generationConfig);
+            const autoSpeakerPatch = isVolcengineVoice && !asset.voiceSpeaker?.trim() ? { voiceSpeaker: voiceProfile.voice } : {};
+            if (isVolcengineVoice) {
                 if (!normalizeVolcengineSpeakerValue(voiceProfile.voice)) {
                     const errorDetails = "火山语音合成不会根据角色描述自动换男女声；请在右侧角色编辑里为该角色填写有效 speaker ID，例如 zh_female_cancan_mars_bigtts。";
                     updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioStatus: NODE_STATUS_ERROR, voiceAudioError: errorDetails, voiceAudioVoice: voiceProfile.voice, voiceSampleText: sampleText });
                     message.error(errorDetails);
                     return;
                 }
-                if (!asset.voiceSpeaker?.trim()) message.warning("当前火山语音会使用全局 speaker；如需角色音色不同，请在右侧角色编辑里为该角色填写单独 speaker ID");
+                if (!asset.voiceSpeaker?.trim()) message.info(`已按角色文本自动选择 speaker：${voiceProfile.voice}`);
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
+            updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
@@ -2270,7 +2270,7 @@ function InfiniteCanvasPage() {
                 const audioInstructions = [generationConfig.audioInstructions, voiceProfile.instructions, customVoicePrompt].filter(Boolean).join("\n\n");
                 const audioConfig = { ...generationConfig, audioVoice: voiceProfile.voice, audioSpeed: voiceProfile.speed, audioInstructions };
                 const audio = await storeGeneratedAudio(await requestAudioGeneration(audioConfig, sampleText, { signal: controller.signal }), generationConfig.audioFormat);
-                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
+                updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
                     setNodes((prev) =>
@@ -5274,7 +5274,7 @@ function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | und
     const age = storyboardAssetVoiceAge(normalized);
     const role = storyboardAssetVoiceRole(normalized);
     const isVolcengine = isVolcengineAudioConfig(config);
-    const voice = asset.voiceSpeaker?.trim() || (isVolcengine ? config.audioVoice : storyboardAssetVoiceName(gender, age, role, config.audioVoice));
+    const voice = asset.voiceSpeaker?.trim() || (isVolcengine ? normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(normalized).value : storyboardAssetVoiceName(gender, age, role, config.audioVoice));
     const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
     const trait = storyboardAssetVoiceTrait(gender, age, role);
     const sampleText = asset.voiceSampleText?.trim() || storyboardAssetVoiceSampleTextForProfile(gender, age, role);
@@ -5428,7 +5428,8 @@ function storyboardSceneSheetPrompt(asset: StoryboardAsset) {
     const source = safetyNeutralStoryboardPrompt(asset.prompt.trim() || asset.description.trim());
     if (!source) return "";
     return [
-        "为同一个场景生成一张多角度空间锁定参考图，画面是整洁的 2x3 拼版参考图。",
+        "为同一个场景生成一张多角度空间锁定参考图。整体必须是横向 16:9 宽画布，宽明显大于高，画面铺满整张图，不要竖版长图、海报比例、居中窄图、黑边或大面积留白。",
+        "版式固定为 3 列 x 2 行的横向拼版：上排 3 个等宽横向小图，下排 3 个等宽横向小图；每个分区都要填满自己的格子，不要做成 2 列 x 3 行。",
         "六个分区依次呈现不同机位：主视图、正面、左侧、右侧、俯视空间布局、背面/反向视角；这些机位名称只用于理解构图，不要画进图片里。",
         "每个分区必须是同一个地点，只改变相机方向；保持建筑结构、门窗位置、墙面/地面材质、道具摆放、光线方向、色调、年代质感完全一致。",
         "绝对不要在任何分区里添加视角标签、英文角标、中文角标、标题、说明字、左下角文字、字幕、Logo、水印或边框装饰；不要出现 MAIN VIEW、FRONT VIEW、LEFT SIDE VIEW、RIGHT SIDE VIEW、TOP-DOWN VIEW、REAR VIEW 等文字。",

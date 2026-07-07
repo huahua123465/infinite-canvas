@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Button, Dropdown, Modal } from "antd";
+import { Button, Dropdown, Modal, Select } from "antd";
 import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { suggestVolcengineSpeakerForText, volcengineVoiceOptions } from "@/lib/audio-generation";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "@/types/canvas";
 
@@ -77,6 +78,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const assetActionBusy = Boolean(actionKey?.startsWith("asset:") && actionKey !== `asset:${editingAsset?.id}`);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
+    const editingAssetVoiceSuggestion = useMemo(() => (editingAsset ? suggestVolcengineSpeakerForText([editingAsset.name, editingAsset.description, editingAsset.prompt, editingAsset.voicePrompt].filter(Boolean).join("\n")) : null), [editingAsset]);
 
     useEffect(() => {
         if (!node) return;
@@ -308,7 +310,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                                     {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? "重做声音" : "生成试听"}
                                                 </Button>
                                             </div>
-                                            <AssetEditorField label="声音 / speaker ID" value={editingAsset.voiceSpeaker || ""} placeholder="火山需填 speaker，例如 zh_female_cancan_mars_bigtts" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSpeaker: value })} />
+                                            <AssetVoiceSpeakerField asset={editingAsset} suggestion={editingAssetVoiceSuggestion} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSpeaker: value })} />
                                             <AssetEditorField label="试听台词" value={editingAsset.voiceSampleText || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSampleText: value })} />
                                             <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
                                             {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? <audio src={editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey} controls className="mt-3 h-9 w-full" /> : <div className="mt-2 text-xs leading-5 text-cyan-100/70">生成后可在这里试听；后续视频会把这段声音作为角色音色参考。</div>}
@@ -963,6 +965,40 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
             ) : null}
             <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
+        </div>
+    );
+}
+
+function AssetVoiceSpeakerField({ asset, suggestion, onChange }: { asset: StoryboardAsset; suggestion: (typeof volcengineVoiceOptions)[number] | null; onChange: (value: string) => void }) {
+    const options = volcengineVoiceOptions.map((item) => ({
+        value: item.value,
+        label: `${item.label} · ${item.tone}`,
+        searchText: [item.label, item.value, item.tone, ...item.tags].join(" "),
+    }));
+    const recommended = suggestion ? `${suggestion.label} · ${suggestion.value}` : "";
+    return (
+        <div className="mb-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-[#f0f0f0]">声音 / speaker ID</span>
+                {suggestion ? (
+                    <Button size="small" type="text" className="!h-7 !px-2 !text-cyan-100" onClick={() => onChange(suggestion.value)}>
+                        自动填入推荐
+                    </Button>
+                ) : null}
+            </div>
+            <input className="mb-2 block h-10 w-full rounded-lg border border-[#383838] bg-[#303030] px-3 text-sm text-[#f5f5f5] outline-none focus:border-[#777]" value={asset.voiceSpeaker || ""} placeholder={recommended || "火山 speaker ID，例如 zh_female_cancan_mars_bigtts"} onChange={(event) => onChange(event.target.value)} />
+            <Select
+                allowClear
+                showSearch
+                className="w-full"
+                popupMatchSelectWidth={false}
+                value={asset.voiceSpeaker || undefined}
+                placeholder="选择内置火山音色"
+                options={options}
+                optionFilterProp="searchText"
+                onChange={(value) => onChange(value || "")}
+            />
+            {suggestion ? <div className="mt-2 truncate text-xs text-cyan-100/70">推荐：{recommended}</div> : null}
         </div>
     );
 }
