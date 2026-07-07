@@ -4,7 +4,7 @@ import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Spar
 
 import { ModelPicker } from "@/components/model-picker";
 import { suggestVolcengineSpeakerForText, volcengineVoiceOptions } from "@/lib/audio-generation";
-import type { AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
@@ -52,6 +52,7 @@ type CanvasScriptNodeDialogProps = {
 };
 
 export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
+    const updateConfig = useConfigStore((state) => state.updateConfig);
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -310,6 +311,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                                     {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? "重做声音" : "生成试听"}
                                                 </Button>
                                             </div>
+                                            <AssetVoiceModelField config={config} onChange={(model) => updateConfig("audioModel", model)} />
                                             <AssetVoiceSpeakerField asset={editingAsset} suggestion={editingAssetVoiceSuggestion} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSpeaker: value })} />
                                             <AssetEditorField label="试听台词" value={editingAsset.voiceSampleText || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSampleText: value })} />
                                             <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
@@ -965,6 +967,18 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
             ) : null}
             <div className="truncate text-sm font-semibold text-[#e8e8e8]">{asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}</div>
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
+        </div>
+    );
+}
+
+function AssetVoiceModelField({ config, onChange }: { config: AiConfig; onChange: (model: string) => void }) {
+    return (
+        <div className="mb-4 rounded-lg border border-cyan-500/15 bg-black/10 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-[#f0f0f0]">音频模型</span>
+                <span className="min-w-0 truncate text-[11px] text-cyan-100/70">{config.audioModel ? modelOptionLabel(config, config.audioModel) : "未选择"}</span>
+            </div>
+            <ModelPicker config={config} value={config.audioModel} capability="audio" className="!h-9 !w-full !max-w-full !rounded-lg !border-[#3f5358] !bg-[#26363a] !px-3 !text-cyan-50" fullWidth placeholder="选择生成角色声音的模型" onChange={onChange} />
         </div>
     );
 }
