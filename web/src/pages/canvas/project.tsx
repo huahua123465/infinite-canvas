@@ -4839,7 +4839,7 @@ function storyboardVideoSettingsSource(text: string) {
     const inlinePattern = /(视频|video|seedance).*(分辨率|清晰度|比例|尺寸|时长|秒数|resolution|aspect|ratio|duration)/i;
     lines.forEach((line, index) => {
         if (!headerPattern.test(line) && !inlinePattern.test(line)) return;
-        chunks.push(lines.slice(index, index + 5).join("\n"));
+        chunks.push(lines.slice(index, index + 8).join("\n"));
     });
     return chunks.join("\n").trim();
 }
@@ -5942,12 +5942,13 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const baseAudioReferences = existing?.metadata?.storyboardVideoAudioReferences?.length ? mergeStoryboardAudioReferenceList(existing.metadata.storyboardVideoAudioReferences, audioReferences) : audioReferences;
     const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections);
     const finalVideoReferences = mergeStoryboardVideoReferences(baseVideoReferences, previousTailFrame);
+    const customConfig = existing?.metadata?.storyboardVideoConfigCustomized ? existing.metadata : undefined;
     const videoModel = existing?.metadata?.model || generationConfig.model;
-    const videoSize = existing?.metadata?.size || generationConfig.size;
-    const videoSeconds = existing?.metadata?.seconds || generationConfig.videoSeconds;
-    const videoQuality = existing?.metadata?.vquality || generationConfig.vquality;
-    const videoGenerateAudio = existing?.metadata?.generateAudio || generationConfig.videoGenerateAudio;
-    const videoWatermark = existing?.metadata?.watermark || generationConfig.videoWatermark;
+    const videoSize = customConfig?.size || generationConfig.size;
+    const videoSeconds = customConfig?.seconds || generationConfig.videoSeconds;
+    const videoQuality = customConfig?.vquality || generationConfig.vquality;
+    const videoGenerateAudio = customConfig?.generateAudio || generationConfig.videoGenerateAudio;
+    const videoWatermark = customConfig?.watermark || generationConfig.videoWatermark;
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,

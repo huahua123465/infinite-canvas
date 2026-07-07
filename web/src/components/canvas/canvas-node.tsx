@@ -1228,16 +1228,16 @@ function StoryboardVideoPromptPreviewModal({
         saveHintTimerRef.current = window.setTimeout(() => setSaveHint(""), 1800);
     };
 
-    const saveDraft = (config: AiConfig, finalPrompt: string) => {
+    const saveDraft = (config: AiConfig, finalPrompt: string, configCustomized = false) => {
         const nextReferences = storyboardVideoReferencesFromPrompt(finalPrompt, references, referenceCandidates);
-        onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()) });
+        onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()), ...(configCustomized ? { storyboardVideoConfigCustomized: true } : {}) });
         markAutoSaved();
     };
 
     const updateDraftConfig = (patch: Partial<AiConfig>) => {
         setDraftConfig((current) => {
             const next = { ...current, ...patch };
-            saveDraft(next, draftFinalPrompt);
+            saveDraft(next, draftFinalPrompt, true);
             return next;
         });
     };

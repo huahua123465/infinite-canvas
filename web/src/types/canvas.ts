@@ -132,6 +132,7 @@ export type CanvasNodeMetadata = {
     storyboardVideoResultNodeIds?: string[];
     storyboardVideoTailFrameUrl?: string;
     storyboardVideoTailFrameStorageKey?: string;
+    storyboardVideoConfigCustomized?: boolean;
     videoGenerationProgress?: VideoGenerationProgress;
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
