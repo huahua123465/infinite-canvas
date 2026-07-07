@@ -162,6 +162,11 @@ async function assertAudioBlob(blob: Blob) {
 async function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+        if (!error.response) {
+            const message = error.message || fallback;
+            if (/network error/i.test(message) && fallback.includes("火山")) return "火山语音合成请求没有收到服务响应（Network Error）。通常是浏览器直连 OpenSpeech 被 CORS 或网络策略拦截；请打开浏览器控制台 Network/Console 查看是否有 CORS 报错。";
+            return message;
+        }
         const responseData = error.response?.data;
         const message = await extractAxiosErrorMessage(responseData);
         const logId = error.response?.headers?.["x-tt-logid"] || error.response?.headers?.["x-tt-log-id"];
