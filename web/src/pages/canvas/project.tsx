@@ -5274,7 +5274,7 @@ function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | und
     const age = storyboardAssetVoiceAge(normalized);
     const role = storyboardAssetVoiceRole(normalized);
     const isVolcengine = isVolcengineAudioConfig(config);
-    const voice = asset.voiceSpeaker?.trim() || (isVolcengine ? normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(normalized).value : storyboardAssetVoiceName(gender, age, role, config.audioVoice));
+    const voice = isVolcengine ? asset.voiceSpeaker?.trim() || normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(normalized).value : storyboardAssetVoiceName(gender, age, role, config.audioVoice);
     const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
     const trait = storyboardAssetVoiceTrait(gender, age, role);
     const sampleText = asset.voiceSampleText?.trim() || storyboardAssetVoiceSampleTextForProfile(gender, age, role);
