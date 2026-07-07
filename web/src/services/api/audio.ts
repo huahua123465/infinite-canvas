@@ -41,7 +41,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         await assertAudioBlob(response.data);
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
-        throw new Error(readAxiosError(error, "音频生成失败"));
+        throw new Error(await readAxiosError(error, "音频生成失败"));
     }
 }
 
@@ -70,13 +70,14 @@ async function requestVolcengineSpeech(config: AiConfig, resourceId: string, tex
             headers: {
                 "Content-Type": "application/json",
                 "X-Api-Key": config.apiKey,
-                "X-Api-Resource-Id": resourceId || "seed-tts-2.0",
+                "X-Api-Connect-Id": nanoConnectId(),
+                "X-Api-Resource-Id": normalizeVolcengineResourceId(resourceId),
             },
             responseType: "blob",
             signal: options?.signal,
         },
-    ).catch((error) => {
-        throw new Error(readAxiosError(error, "火山语音合成失败"));
+    ).catch(async (error) => {
+        throw new Error(await readAxiosError(error, "火山语音合成失败"));
     });
     await assertAudioBlob(response.data);
     return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
@@ -104,6 +105,18 @@ function volcengineSpeechUrl(baseUrl: string) {
     return `${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}/api/v3/tts/unidirectional`;
 }
 
+function normalizeVolcengineResourceId(value: string) {
+    const resourceId = value.trim();
+    if (/^tts-seedtts2/i.test(resourceId) || /seedtts2/i.test(resourceId)) return "seed-tts-2.0";
+    if (/^tts-seedicl2/i.test(resourceId) || /seedicl2/i.test(resourceId)) return "seed-icl-2.0";
+    if (/^seed-(tts|icl)-/i.test(resourceId)) return resourceId;
+    return "seed-tts-2.0";
+}
+
+function nanoConnectId() {
+    return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function normalizeVolcengineAudioFormat(value: string) {
     const format = normalizeAudioFormatValue(value);
     if (format === "opus") return "ogg_opus";
@@ -128,13 +141,47 @@ async function assertAudioBlob(blob: Blob) {
     if (payload.error?.message) throw new Error(payload.error.message);
 }
 
-function readAxiosError(error: unknown, fallback: string) {
+async function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
         const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || statusMessage(error.response?.status, fallback);
+        const message = await extractAxiosErrorMessage(responseData);
+        const logId = error.response?.headers?.["x-tt-logid"] || error.response?.headers?.["x-tt-log-id"];
+        const detail = message || statusMessage(error.response?.status, fallback);
+        return logId ? `${detail}（火山 logid: ${logId}）` : detail;
     }
     return error instanceof Error ? error.message : fallback;
+}
+
+async function extractAxiosErrorMessage(data: unknown) {
+    if (!data) return "";
+    if (data instanceof Blob) {
+        const text = await data.text();
+        return extractAxiosErrorMessageFromText(text);
+    }
+    if (typeof data === "string") return extractAxiosErrorMessageFromText(data);
+    if (typeof data === "object") {
+        return extractAxiosErrorMessageFromObject(data);
+    }
+    return "";
+}
+
+function extractAxiosErrorMessageFromObject(data: object) {
+    const payload = data as { message?: string; msg?: string; code?: string | number; error?: { message?: string; code?: string | number } };
+    const code = payload.code || payload.error?.code;
+    const message = payload.msg || payload.message || payload.error?.message;
+    return [code, message].filter(Boolean).join("：");
+}
+
+function extractAxiosErrorMessageFromText(text: string) {
+    const source = text.trim();
+    if (!source) return "";
+    try {
+        const payload = JSON.parse(source) as object;
+        return typeof payload === "object" && payload ? extractAxiosErrorMessageFromObject(payload) : source.slice(0, 300);
+    } catch {
+        return source.slice(0, 300);
+    }
 }
 
 function statusMessage(status: number | undefined, fallback: string) {
