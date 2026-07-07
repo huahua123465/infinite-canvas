@@ -236,6 +236,8 @@ async function normalizeVolcengineAudioBlob(blob: Blob, format: string) {
     if (looksLikeAudioFile(bytes)) return new Blob([bytes], { type: blob.type.startsWith("audio/") ? blob.type : mimeType });
     const chunks = extractVolcengineAudioChunks(bytes);
     if (chunks.length) return new Blob(chunks, { type: mimeType });
+    const jsonChunks = extractVolcengineJsonAudioChunks(bytes);
+    if (jsonChunks.length) return new Blob(jsonChunks, { type: mimeType });
     return blob.type.startsWith("audio/") ? blob : new Blob([bytes], { type: mimeType });
 }
 
@@ -286,6 +288,102 @@ function extractVolcengineAudioChunks(bytes: Uint8Array) {
         offset = cursor + payloadSize;
     }
     return chunks;
+}
+
+type VolcengineChunkPayload = {
+    code?: number | string;
+    status_code?: number | string;
+    msg?: string;
+    message?: string;
+    error?: { code?: number | string; message?: string };
+    data?: string;
+};
+
+function extractVolcengineJsonAudioChunks(bytes: Uint8Array) {
+    const text = new TextDecoder().decode(bytes).trim();
+    if (!text || !text.includes("{")) return [];
+    const chunks: Uint8Array[] = [];
+    const payloads = parseJsonObjects(text);
+    for (const payload of payloads) {
+        const code = Number(payload.code ?? payload.status_code ?? payload.error?.code ?? 0);
+        const message = payload.msg || payload.message || payload.error?.message;
+        if (Number.isFinite(code) && code !== 0 && code !== 20000000) throw new Error([code, message].filter(Boolean).join("：") || "火山语音合成失败");
+        const audio = typeof payload.data === "string" ? decodeBase64AudioChunk(payload.data) : null;
+        if (audio?.length) chunks.push(audio);
+    }
+    if (payloads.length && !chunks.length) throw new Error("火山语音合成未返回音频数据");
+    return chunks;
+}
+
+function parseJsonObjects(text: string) {
+    const objects: VolcengineChunkPayload[] = [];
+    for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim().replace(/^data:\s*/i, "");
+        if (!line || line === "[DONE]") continue;
+        try {
+            const payload = JSON.parse(line) as VolcengineChunkPayload;
+            if (payload && typeof payload === "object") objects.push(payload);
+        } catch {
+            // Fall back to balanced JSON scanning below.
+        }
+    }
+    if (objects.length) return objects;
+
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (char === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (char === "\"") inString = false;
+            continue;
+        }
+        if (char === "\"") {
+            inString = true;
+            continue;
+        }
+        if (char === "{") {
+            if (depth === 0) start = index;
+            depth += 1;
+            continue;
+        }
+        if (char !== "}" || depth === 0) continue;
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+            try {
+                const payload = JSON.parse(text.slice(start, index + 1)) as VolcengineChunkPayload;
+                if (payload && typeof payload === "object") objects.push(payload);
+            } catch {
+                // Ignore non-JSON chunks.
+            }
+            start = -1;
+        }
+    }
+    return objects;
+}
+
+function decodeBase64AudioChunk(value: string) {
+    const source = value.trim().replace(/^data:audio\/[^;]+;base64,/i, "").replace(/\s+/g, "");
+    if (source.length < 8 || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(source)) return null;
+    const normalized = source.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+    try {
+        const binary = atob(padded);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+    } catch {
+        return null;
+    }
 }
 
 function validPayloadRange(bytes: Uint8Array, start: number, size: number) {
