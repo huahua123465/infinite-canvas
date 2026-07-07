@@ -84,8 +84,9 @@ async function requestVolcengineSpeech(config: AiConfig, resourceId: string, tex
                     signal: options?.signal,
                 },
             );
-            await assertAudioBlob(response.data);
-            return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
+            const audio = await normalizeVolcengineAudioBlob(response.data, format);
+            await assertAudioBlob(audio);
+            return audio;
         } catch (error) {
             lastError = error;
             if (!shouldTryNextVolcengineRequest(error, request)) break;
@@ -227,6 +228,77 @@ function normalizeVolcengineAudioFormat(value: string) {
 function volcengineSpeechRate(value: string) {
     const speed = Number(normalizeAudioSpeedValue(value));
     return Math.max(-50, Math.min(100, Math.round((speed - 1) * 100)));
+}
+
+async function normalizeVolcengineAudioBlob(blob: Blob, format: string) {
+    const mimeType = audioMimeType(format);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (looksLikeAudioFile(bytes)) return new Blob([bytes], { type: blob.type.startsWith("audio/") ? blob.type : mimeType });
+    const chunks = extractVolcengineAudioChunks(bytes);
+    if (chunks.length) return new Blob(chunks, { type: mimeType });
+    return blob.type.startsWith("audio/") ? blob : new Blob([bytes], { type: mimeType });
+}
+
+function looksLikeAudioFile(bytes: Uint8Array) {
+    if (bytes.length < 4) return false;
+    const text = ascii(bytes, 0, 4);
+    if (text === "ID3" || text === "OggS") return true;
+    if (text === "RIFF" && ascii(bytes, 8, 4) === "WAVE") return true;
+    return bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;
+}
+
+function extractVolcengineAudioChunks(bytes: Uint8Array) {
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+    while (offset + 4 <= bytes.length) {
+        const version = bytes[offset] >> 4;
+        const headerSize = (bytes[offset] & 0x0f) * 4;
+        const messageType = bytes[offset + 1] >> 4;
+        const flags = bytes[offset + 1] & 0x0f;
+        if (version !== 1 || headerSize < 4 || offset + headerSize > bytes.length) break;
+        let cursor = offset + headerSize;
+        if (messageType === 0x0b) {
+            if (!flags) {
+                offset = cursor;
+                continue;
+            }
+            if (cursor + 8 > bytes.length) break;
+            cursor += 4;
+            const payloadSize = readInt32(bytes, cursor);
+            cursor += 4;
+            if (!validPayloadRange(bytes, cursor, payloadSize)) break;
+            chunks.push(bytes.slice(cursor, cursor + payloadSize));
+            offset = cursor + payloadSize;
+            continue;
+        }
+        if (messageType === 0x0f) {
+            if (cursor + 8 > bytes.length) break;
+            cursor += 4;
+            const payloadSize = readInt32(bytes, cursor);
+            cursor += 4 + Math.max(0, payloadSize);
+            offset = Math.min(cursor, bytes.length);
+            continue;
+        }
+        if (cursor + 4 > bytes.length) break;
+        const payloadSize = readInt32(bytes, cursor);
+        cursor += 4;
+        if (!validPayloadRange(bytes, cursor, payloadSize)) break;
+        offset = cursor + payloadSize;
+    }
+    return chunks;
+}
+
+function validPayloadRange(bytes: Uint8Array, start: number, size: number) {
+    return Number.isFinite(size) && size >= 0 && start + size <= bytes.length;
+}
+
+function readInt32(bytes: Uint8Array, offset: number) {
+    return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+}
+
+function ascii(bytes: Uint8Array, start: number, length: number) {
+    if (start + length > bytes.length) return "";
+    return String.fromCharCode(...bytes.slice(start, start + length));
 }
 
 async function assertAudioBlob(blob: Blob) {
