@@ -36,6 +36,7 @@ type CanvasNodeProps = {
     resourceLabel?: CanvasResourceReference;
     mentionReferences?: CanvasResourceReference[];
     storyboardReferenceAssets?: StoryboardVideoReference[];
+    storyboardVideoResults?: CanvasNodeData[];
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     batchCount?: number;
@@ -78,6 +79,7 @@ type NodeContentRendererProps = {
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     storyboardReferenceAssets: StoryboardVideoReference[];
+    storyboardVideoResults: CanvasNodeData[];
     onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
@@ -99,6 +101,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     resourceLabel,
     mentionReferences = [],
     storyboardReferenceAssets = [],
+    storyboardVideoResults = [],
     renderPanel,
     renderNodeContent,
     batchCount = 0,
@@ -334,6 +337,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         renderNodeContent={renderNodeContent}
                         mentionReferences={mentionReferences}
                         storyboardReferenceAssets={storyboardReferenceAssets}
+                        storyboardVideoResults={storyboardVideoResults}
                         onContentChange={onContentChange}
                         onMetadataChange={onMetadataChange}
                         onStoryboardScreenshotImport={onStoryboardScreenshotImport}
@@ -784,9 +788,10 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataChange, onRetry }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVideoResults, onMetadataChange, onRetry }: NodeContentRendererProps) {
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+    const [videoHistoryOpen, setVideoHistoryOpen] = useState(false);
     const isStoryboardVideo = node.metadata?.storyboardSourceNodeId && node.metadata?.storyboardRowIndex !== undefined;
     const isLoading = node.metadata?.status === "loading";
     const isError = node.metadata?.status === "error";
@@ -839,6 +844,11 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                         <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
                             <span className="min-w-0 truncate">{isError ? "请查看上方失败原因，调整参考或提示词后重试" : helperText}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
+                                {storyboardVideoResults.length ? (
+                                    <button type="button" className="rounded px-1.5 py-0.5 font-semibold text-[#2f80ff] hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setVideoHistoryOpen(true)}>
+                                        所有视频 {storyboardVideoResults.length}
+                                    </button>
+                                ) : null}
                                 <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setPromptPreviewOpen(true)}>
                                     查看提示词
                                 </button>
@@ -869,6 +879,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
                             onConfigChange={(patch) => onMetadataChange(node.id, patch)}
                             onGenerate={(patch) => onRetry?.(node, patch)}
                         />
+                        <StoryboardVideoHistoryModal node={node} open={videoHistoryOpen} results={storyboardVideoResults} theme={theme} onClose={() => setVideoHistoryOpen(false)} />
                         <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferenceSavePatch(node, references))} />
                     </div>
                 </div>
@@ -893,6 +904,39 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, onMetadataCh
         );
     }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+}
+
+function StoryboardVideoHistoryModal({ node, open, results, theme, onClose }: { node: CanvasNodeData; open: boolean; results: CanvasNodeData[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onClose: () => void }) {
+    const latestId = node.metadata?.storyboardVideoLatestResultNodeId;
+    const sorted = [...results].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0));
+    return (
+        <Modal title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜所有视频`} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden>
+            {sorted.length ? (
+                <div className="grid max-h-[68vh] grid-cols-1 gap-3 overflow-y-auto pr-1 md:grid-cols-2">
+                    {sorted.map((item) => {
+                        const isLatest = item.id === latestId;
+                        return (
+                            <div key={item.id} className="overflow-hidden rounded-lg border" style={{ borderColor: isLatest ? selectionBlue : theme.node.stroke, background: theme.node.fill, color: theme.node.text }}>
+                                <div className="relative aspect-video bg-black">
+                                    {item.metadata?.content ? <video src={item.metadata.content} controls className="h-full w-full object-contain" data-canvas-no-zoom /> : <div className="flex h-full items-center justify-center text-xs text-stone-400">{item.metadata?.status === "loading" ? "生成中" : "暂无视频"}</div>}
+                                    {isLatest ? <span className="absolute left-2 top-2 rounded bg-[#2f80ff] px-2 py-0.5 text-[10px] font-semibold text-white">最新</span> : null}
+                                </div>
+                                <div className="space-y-1 px-3 py-2 text-xs">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="font-semibold">版本 {item.metadata?.storyboardVideoVariantIndex || "-"}</span>
+                                        <span className="opacity-55">{item.metadata?.model || "未记录模型"}</span>
+                                    </div>
+                                    <div className="line-clamp-2 opacity-65">{item.metadata?.storyboardVideoFinalPrompt || item.metadata?.prompt || "暂无提示词"}</div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无视频版本" />
+            )}
+        </Modal>
+    );
 }
 
 function StoryboardVideoErrorSummary({ text, theme }: { text: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {

@@ -803,7 +803,7 @@ function InfiniteCanvasPage() {
             let bestPriority = Number.POSITIVE_INFINITY;
 
             [...nodesRef.current]
-                .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                .filter((node) => !isHiddenCanvasNode(node, nodesRef.current))
                 .reverse()
                 .forEach((node) => {
                     const anchor = getConnectionTargetAnchor(node, current);
@@ -840,9 +840,10 @@ function InfiniteCanvasPage() {
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
         return nodes
-            .filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom)
+            .filter((node) => !isHiddenCanvasNode(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom)
             .sort((a, b) => (a.type === CanvasNodeType.Workspace ? -1 : 0) - (b.type === CanvasNodeType.Workspace ? -1 : 0));
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+    const minimapNodes = useMemo(() => nodes.filter((node) => !isHiddenCanvasNode(node, nodes)), [nodes]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
@@ -868,6 +869,18 @@ function InfiniteCanvasPage() {
         nodes.forEach((node) => {
             if (node.metadata?.isBatchRoot) map.set(node.id, node.metadata.batchChildIds?.length || 0);
         });
+        return map;
+    }, [nodes]);
+    const storyboardVideoResultsByDraftId = useMemo(() => {
+        const map = new Map<string, CanvasNodeData[]>();
+        nodes.forEach((node) => {
+            const draftId = node.metadata?.storyboardVideoDraftNodeId;
+            if (!draftId) return;
+            const results = map.get(draftId) || [];
+            results.push(node);
+            map.set(draftId, results);
+        });
+        map.forEach((results) => results.sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0)));
         return map;
     }, [nodes]);
     const batchMotionById = useMemo(() => {
@@ -1558,7 +1571,7 @@ function InfiniteCanvasPage() {
             const nextSelected = new Set<string>(currentSelection.additive ? currentSelection.initialSelectedNodeIds : []);
 
             nodesRef.current
-                .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                .filter((node) => !isHiddenCanvasNode(node, nodesRef.current))
                 .forEach((node) => {
                     const intersects = rectX < node.position.x + node.width && rectX + rectW > node.position.x && rectY < node.position.y + node.height && rectY + rectH > node.position.y;
 
@@ -3805,6 +3818,7 @@ function InfiniteCanvasPage() {
                     if (storyboardDraftVideo) {
                         const completedResult: CanvasNodeData = {
                             ...generationTargetNode,
+                            position: { x: generationTargetNode.position.x + generationTargetNode.width / 2 - videoSize.width / 2, y: generationTargetNode.position.y },
                             width: videoSize.width,
                             height: videoSize.height,
                             metadata: { ...generationTargetNode.metadata, ...videoMetadata(video), ...storyboardTailFrameMetadata(tailFrame), prompt: videoPrompt, storyboardVideoFinalPrompt: videoPrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, videoGenerationProgress: undefined },
@@ -4034,7 +4048,7 @@ function InfiniteCanvasPage() {
                             .filter((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
                                 const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && !isWorkspaceChildConnection(connection, from, to) && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
+                                return Boolean(from && to && !isWorkspaceChildConnection(connection, from, to) && !isHiddenCanvasConnectionEndpoint(from, nodes) && !isHiddenCanvasConnectionEndpoint(to, nodes));
                             })
                             .map((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
@@ -4086,6 +4100,7 @@ function InfiniteCanvasPage() {
                             resourceLabel={resourceReferenceByNodeId.get(node.id)}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
                             storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes, connections)}
+                            storyboardVideoResults={storyboardVideoResultsByDraftId.get(node.id) || []}
                             renderPanel={(panelNode) =>
                                 panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
@@ -4240,7 +4255,7 @@ function InfiniteCanvasPage() {
                     }}
                 />
 
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
+                {isMiniMapOpen ? <Minimap nodes={minimapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 
@@ -4985,11 +5000,27 @@ function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], colla
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }
 
+function isHiddenStoryboardVideoResult(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+    const draftId = node.metadata?.storyboardVideoDraftNodeId;
+    if (!draftId) return false;
+    const draft = nodes.find((item) => item.id === draftId);
+    const latestId = draft?.metadata?.storyboardVideoLatestResultNodeId;
+    return Boolean(latestId && nodes.some((item) => item.id === latestId) && latestId !== node.id);
+}
+
+function isHiddenCanvasNode(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {
+    return isHiddenBatchChild(node, nodes, collapsingBatchIds) || isHiddenStoryboardVideoResult(node, nodes);
+}
+
 function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNodeData[]) {
     const rootId = node.metadata?.batchRootId;
     if (!rootId) return false;
     const root = nodes.find((item) => item.id === rootId);
     return Boolean(root && !root.metadata?.imageBatchExpanded);
+}
+
+function isHiddenCanvasConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+    return isHiddenBatchConnectionEndpoint(node, nodes) || isHiddenStoryboardVideoResult(node, nodes);
 }
 
 function isWorkspaceChildConnection(connection: CanvasConnection, from: CanvasNodeData, to: CanvasNodeData) {
@@ -5775,11 +5806,9 @@ function isStoryboardVideoDraftNode(node: CanvasNodeData) {
 
 function buildStoryboardVideoResultNode(draft: CanvasNodeData, config: AiConfig, prompt: string, nodes: CanvasNodeData[]): CanvasNodeData {
     const variantIndex = nodes.filter((node) => node.metadata?.storyboardVideoDraftNodeId === draft.id).length + 1;
-    const gap = 34;
-    const columns = 2;
     const position = {
-        x: draft.position.x + draft.width + 42 + ((variantIndex - 1) % columns) * (draft.width + gap),
-        y: draft.position.y + Math.floor((variantIndex - 1) / columns) * (draft.height + 74),
+        x: draft.position.x,
+        y: draft.position.y - Math.min(52, draft.height * 0.18),
     };
     return {
         id: `storyboard-video-result-${draft.id}-${nanoid()}`,
@@ -5818,6 +5847,7 @@ function upsertStoryboardVideoResultNode(nodes: CanvasNodeData[], draft: CanvasN
     let hasResult = false;
     const next = nodes.map((node) => {
         if (node.id === draft.id) {
+            const resultIds = Array.from(new Set([...(node.metadata?.storyboardVideoResultNodeIds || []), result.id]));
             return {
                 ...node,
                 metadata: {
@@ -5826,6 +5856,7 @@ function upsertStoryboardVideoResultNode(nodes: CanvasNodeData[], draft: CanvasN
                     errorDetails: undefined,
                     videoGenerationProgress: undefined,
                     storyboardVideoLatestResultNodeId: result.id,
+                    storyboardVideoResultNodeIds: resultIds,
                 },
             };
         }
@@ -5835,16 +5866,45 @@ function upsertStoryboardVideoResultNode(nodes: CanvasNodeData[], draft: CanvasN
         }
         if (node.type === CanvasNodeType.Workspace && node.metadata?.workspaceKind === "storyboard-videos" && node.metadata.workspaceSourceNodeId === draft.metadata?.storyboardSourceNodeId) {
             const childIds = Array.from(new Set([...(node.metadata.workspaceChildNodeIds || []), result.id]));
+            const size = storyboardVideoWorkspaceSize(node, nodes, draft, result);
             return {
                 ...node,
-                width: Math.max(node.width, result.position.x + result.width - node.position.x + 36),
-                height: Math.max(node.height, result.position.y + result.height - node.position.y + 36),
+                width: size.width,
+                height: size.height,
                 metadata: { ...node.metadata, workspaceChildNodeIds: childIds },
             };
         }
         return node;
     });
     return hasResult ? next : [...next, result];
+}
+
+function storyboardVideoWorkspaceSize(workspace: CanvasNodeData, nodes: CanvasNodeData[], draft: CanvasNodeData, result: CanvasNodeData) {
+    const sourceId = draft.metadata?.storyboardSourceNodeId;
+    const itemById = new Map<string, CanvasNodeData>();
+    nodes.forEach((node) => {
+        if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceId) return;
+        const resultDraftId = node.metadata?.storyboardVideoDraftNodeId;
+        if (!resultDraftId) {
+            itemById.set(node.id, node);
+            return;
+        }
+        const resultDraft = resultDraftId === draft.id ? draft : nodes.find((item) => item.id === resultDraftId);
+        if (resultDraftId === draft.id) return;
+        if (resultDraft?.metadata?.storyboardVideoLatestResultNodeId === node.id) itemById.set(node.id, node);
+    });
+    itemById.set(result.id, result);
+    const bounds = Array.from(itemById.values()).reduce(
+        (box, item) => ({
+            right: Math.max(box.right, item.position.x + item.width),
+            bottom: Math.max(box.bottom, item.position.y + item.height),
+        }),
+        { right: workspace.position.x + NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].width, bottom: workspace.position.y + NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].height },
+    );
+    return {
+        width: Math.max(NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].width, bounds.right - workspace.position.x + 36),
+        height: Math.max(NODE_DEFAULT_SIZE[CanvasNodeType.Workspace].height, bounds.bottom - workspace.position.y + 36),
+    };
 }
 
 function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?: StoryboardVideoReference | null) {
