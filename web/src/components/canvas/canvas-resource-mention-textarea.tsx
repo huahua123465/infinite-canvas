@@ -55,12 +55,13 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
-        const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
-        if (!match || !references.some((item) => item.active)) {
+        const at = prefix.lastIndexOf("@");
+        const query = at >= 0 ? prefix.slice(at + 1) : "";
+        if (at < 0 || /[\s，,、。；;：:）)】\].!?！？]/.test(query) || !references.some((item) => item.active)) {
             closeMention();
             return;
         }
-        setMention({ start: cursor - match[2].length - 1, query: match[2] });
+        setMention({ start: at, query });
         setActiveIndex(0);
     };
 
@@ -122,14 +123,17 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 }}
                 onSelect={(event) => {
                     updateSelectionState();
+                    if (event.currentTarget.selectionStart === event.currentTarget.selectionEnd) syncMention(value, event.currentTarget.selectionStart);
                     props.onSelect?.(event);
                 }}
                 onKeyUp={(event) => {
                     updateSelectionState();
+                    if (event.key !== "Escape") syncMention(value, event.currentTarget.selectionStart);
                     props.onKeyUp?.(event);
                 }}
                 onPointerUp={(event) => {
                     updateSelectionState();
+                    if (event.currentTarget.selectionStart === event.currentTarget.selectionEnd) syncMention(value, event.currentTarget.selectionStart);
                     props.onPointerUp?.(event);
                 }}
                 onFocus={(event) => {

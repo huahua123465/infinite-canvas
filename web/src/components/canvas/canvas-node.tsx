@@ -1196,7 +1196,6 @@ function StoryboardVideoPromptPreviewModal({
     const audioReferences = node.metadata?.storyboardVideoAudioReferences || [];
     const audioContinuityPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references, audioReferences);
-    const referencesKey = references.map((item) => `${item.mention}:${item.role || "reference"}:${item.status}:${item.storageKey || item.url || ""}`).join("|");
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
     const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
     const referenceCandidates = storyboardReferenceAssetCandidates(references, scriptReferences, imageAssets);
@@ -1215,7 +1214,7 @@ function StoryboardVideoPromptPreviewModal({
         setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
         setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences));
         setSaveHint("");
-    }, [globalConfig, node.id, node.metadata?.prompt, node.metadata?.storyboardVideoFinalPrompt, open, referencesKey, audioReferences]);
+    }, [open, node.id]);
 
     useEffect(() => {
         return () => {
