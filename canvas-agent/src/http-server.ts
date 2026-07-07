@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { DEFAULT_PORT, ensureCanvasWorkspace, loadConfig, saveConfig, updateCanvasWorkspace, type CanvasAgentConfig } from "./config.js";
@@ -39,6 +41,7 @@ export function startHttpServer() {
         res.json({ ok: true });
     });
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
+    app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.get("/agent/codex/workspace", (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.query.canvasId || ""));
@@ -131,6 +134,46 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
 
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
+}
+
+const SEEDANCE_20_FILES = [
+    "SKILL.md",
+    "skills/seedance-prompt/SKILL.md",
+    "skills/seedance-camera/SKILL.md",
+    "skills/seedance-motion/SKILL.md",
+    "skills/seedance-troubleshoot/SKILL.md",
+] as const;
+
+async function loadSeedance20Context() {
+    const root = await findSeedance20Root();
+    if (!root) throw new Error("seedance-20 skill package not found; set SEEDANCE_20_SKILL_ROOT to the package directory");
+    const files = await Promise.all(
+        SEEDANCE_20_FILES.map(async (relativePath) => ({
+            path: relativePath,
+            content: await fs.readFile(path.join(root, relativePath), "utf8"),
+        })),
+    );
+    return { root, files };
+}
+
+async function findSeedance20Root() {
+    const candidates = [
+        process.env.SEEDANCE_20_SKILL_ROOT || "",
+        path.resolve(process.cwd(), "seedance-2.0-5.3.0", "seedance-2.0-5.3.0"),
+        path.resolve(process.cwd(), "..", "seedance-2.0-5.3.0", "seedance-2.0-5.3.0"),
+        path.resolve(process.cwd(), "..", "..", "seedance-2.0-5.3.0", "seedance-2.0-5.3.0"),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+        const root = path.resolve(candidate);
+        try {
+            await fs.access(path.join(root, "SKILL.md"));
+            await fs.access(path.join(root, "skills", "seedance-prompt", "SKILL.md"));
+            return root;
+        } catch {
+            // try next candidate
+        }
+    }
+    return "";
 }
 
 function requestUrl(req: Request, config: CanvasAgentConfig) {

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="title desc">
+  <title>Seedance 2.0 Skill OS hero</title>
+  <desc>A dark cinematic dashboard showing the Seedance 2.0 intent-first filmmaking workflow.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="0.55" stop-color="#111827"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.45" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="18"/></filter>
+    <style>
+      .small{font:500 22px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;fill:#cbd5e1}
+      .title{font:800 76px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;fill:#f8fafc;letter-spacing:-2px}
+      .subtitle{font:500 28px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;fill:#e2e8f0}
+      .label{font:700 18px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;fill:#f8fafc}
+      .muted{font:500 15px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;fill:#94a3b8}
+      .card{fill:#0f172a;stroke:#334155;stroke-width:1.5;rx:22}
+      .line{stroke:url(#accent);stroke-width:4;stroke-linecap:round}
+    </style>
+  </defs>
+  <rect width="1200" height="480" fill="url(#bg)"/>
+  <circle cx="970" cy="80" r="180" fill="#7c3aed" opacity="0.25" filter="url(#soft)"/>
+  <circle cx="1050" cy="360" r="160" fill="#06b6d4" opacity="0.16" filter="url(#soft)"/>
+  <path d="M0 372 C190 320 310 410 500 365 C720 312 820 235 1200 290" fill="none" stroke="#38bdf8" opacity="0.18" stroke-width="2"/>
+  <text x="70" y="92" class="small">v5.3.0 · validated agent-skill system</text>
+  <text x="70" y="178" class="title">Seedance 2.0</text>
+  <text x="70" y="248" class="title">Skill OS</text>
+  <text x="74" y="306" class="subtitle">Intent-first quad-modal AI filmmaking</text>
+  <line x1="74" y1="342" x2="520" y2="342" class="line"/>
+  <text x="74" y="386" class="small">Prompt → References → Guardrails → Output</text>
+  <rect x="690" y="72" width="390" height="330" class="card"/>
+  <text x="728" y="120" class="label">System snapshot</text>
+  <text x="728" y="166" class="muted">23 modular skills</text>
+  <text x="728" y="212" class="muted">14 reference files</text>
+  <text x="728" y="258" class="muted">14 eval cases</text>
+  <text x="728" y="304" class="muted">API status dated 2026-05-08</text>
+  <text x="728" y="350" class="muted">README + SVG frontend audited</text>
+  <rect x="950" y="112" width="36" height="36" rx="10" fill="#22d3ee" opacity="0.9"/>
+  <rect x="950" y="158" width="36" height="36" rx="10" fill="#a78bfa" opacity="0.9"/>
+  <rect x="950" y="204" width="36" height="36" rx="10" fill="#f472b6" opacity="0.9"/>
+  <rect x="950" y="250" width="36" height="36" rx="10" fill="#22c55e" opacity="0.9"/>
+  <rect x="950" y="296" width="36" height="36" rx="10" fill="#f59e0b" opacity="0.9"/>
+</svg>

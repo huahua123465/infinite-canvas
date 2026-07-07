@@ -174,7 +174,7 @@ const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚�
 4. 只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const ASSET_KIND_TEXT: Record<StoryboardAssetKind, string> = { character: "人物", scene: "场景", prop: "道具" };
-const STORYBOARD_FINAL_PROMPT_PROMPT = `你是短剧分镜与视频运动提示词专家。请把单个镜头、第二步资产和全局风格整合成第三步“合成提示词”。
+const STORYBOARD_FINAL_PROMPT_PROMPT = `你是短剧分镜与 Seedance 2.0 视频导演提示词专家。请按 seedance-20 技能包的专业导演工作流，把单个镜头、第二步资产和全局风格整合成第三步“合成提示词”。
 
 只输出 JSON，不要 Markdown，不要解释。
 
@@ -186,22 +186,26 @@ JSON 格式必须为：
 }
 
 要求：
-1. 按 Seedance 2.0 容易执行的导演公式组织：精准主体 + 动作细节 + 场景环境 + 光影色调 + 镜头运镜 + 视觉风格 + 画质 + 稳定约束。
-2. storyboardPrompt 用于首帧图/分镜图，只写静态可见画面：构图、主体外观、环境、光影、道具、静态表情和画风，不要把它写成视频动作脚本。
-3. videoMotionPrompt 用于视频模型，必须写清起始状态、动作过程、结束状态、一个主运镜、情绪节奏、音效/对白和稳定性约束。
-4. 把剧情翻译成可拍摄的连续动作，不要机械粘贴原文；动作要具体到手、头、肩、腿、视线、身体重心等部位，并补充幅度、速度、力度或过渡衔接。
-5. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
-6. 一个镜头里只指定一种主要运镜，例如固定机位、缓慢推镜、平稳横移、跟拍、手持轻晃；不要同时要求推拉摇移，也不要堆多个相互冲突的镜头动作。
-7. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束。
-8. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
-9. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
-10. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
-11. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
-12. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
-13. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
-14. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具。
-15. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
-16. 输出前自检并修正：主体是否绑定清楚、动作是否有起点/过程/终点、运镜是否唯一、资产是否真实存在、提示词是否去掉空泛堆词和安全高风险表述。`;
+1. 先判断本镜头的生成模式：无资产时按 T2V 写完整画面；有角色/场景/道具资产时按 R2V/I2V 思路写，明确每个 @资产名 的作用是角色身份、场景空间、道具或首帧参考，不要让参考资产互相抢控制权。
+2. 按 Seedance 2.0 导演公式组织：主体 + 单一可见动作 + 场景 + 单一主运镜 + 物理光源/风格 + 音频 + 稳定约束。主体和主动作必须放在前半句，避免模型抓错重点。
+3. storyboardPrompt 用于首帧图/分镜图，只写静态可见画面：构图、主体外观、环境、光影、道具、静态表情和画风，不要把它写成视频动作脚本。
+4. videoMotionPrompt 用于视频模型，必须写成短拍摄简报：起始状态、动作过程、改变后的结束状态、一个主运镜及终点、情绪节奏、音效/对白和稳定性约束。
+5. 每镜只写一个主要可见事件，例如发现、靠近、转身、抬手、停顿、交接、离开或环境变化；不要把多个剧情事件塞进同一个 5-10 秒镜头。
+6. 动作用 physical verbs 写清楚演员/物体、力度、速度、幅度、身体部位、物理后果和终点，例如手指攥紧衣角、肩膀微颤后松开、脚步踩进泥水并停住。
+7. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
+8. 一个镜头里只指定一种主要运镜，并写清起幅、速度、主体关系和落幅，例如“中景缓慢推近到近景，停在她攥紧衣角的手上”；不要同时要求推拉摇移、无人机、环绕和手持。
+9. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。对白要短，唇形镜头优先锁定机位或轻微推镜。
+10. 除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束；不要使用负面提示词语法，只用自然语言约束。
+11. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
+12. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
+13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
+14. 有参考资产时，不要反复重描述资产已经可见的脸、服装、场景和道具细节；重点写参考资产没有表达清楚的运动、时间、镜头、光线变化、声音和保持不变的内容。
+15. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
+16. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
+17. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
+18. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
+19. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
+20. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -233,6 +237,40 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 1. 只输出提示词正文，不要解释。
 2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。
 3. 尽量写成可直接用于生图模型的完整提示词。`;
+
+type Seedance20SkillContext = {
+    root?: string;
+    files?: Array<{ path: string; content: string }>;
+};
+
+async function buildStoryboardFinalPromptInstruction() {
+    const context = await loadSeedance20SkillContext();
+    if (!context?.files?.length) return STORYBOARD_FINAL_PROMPT_PROMPT;
+    return [
+        STORYBOARD_FINAL_PROMPT_PROMPT,
+        "【运行时读取的 seedance-20 技能包】",
+        "下面内容来自本地 seedance-2.0-5.3.0/seedance-2.0-5.3.0 技能包。合成 videoMotionPrompt 时必须优先吸收这些文件里的导演公式、模式判断、动作/运镜契约和排障自检；如果与上方 JSON 输出格式冲突，仍保持上方 JSON 格式。",
+        context.root ? `技能包路径：${context.root}` : "",
+        ...context.files.map((file) => `--- ${file.path} ---\n${file.content.trim()}`),
+    ]
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+async function loadSeedance20SkillContext(): Promise<Seedance20SkillContext | null> {
+    if (typeof window === "undefined") return null;
+    try {
+        const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
+        const token = (localStorage.getItem("canvas-agent-token") || "").trim();
+        if (!endpoint || !token) return null;
+        const response = await fetch(`${endpoint}/api/skills/seedance-20/context?token=${encodeURIComponent(token)}`);
+        if (!response.ok) return null;
+        const data = (await response.json()) as { ok?: boolean } & Seedance20SkillContext;
+        return data.ok && data.files?.length ? data : null;
+    } catch {
+        return null;
+    }
+}
 
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
@@ -2510,9 +2548,10 @@ function InfiniteCanvasPage() {
             }
             setStoryboardActionKey(rowIndex === undefined ? "prompt:all" : `prompt:${rowIndex}`);
             try {
+                const promptInstruction = await buildStoryboardFinalPromptInstruction();
                 for (const index of indexes) {
                     const source = buildStoryboardPromptComposeSource(node, rows, index);
-                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FINAL_PROMPT_PROMPT}\n\n${source}` }], () => {});
+                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {});
                     updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer, node.metadata?.storyboardAssets || []));
                 }
                 message.success(rowIndex === undefined ? "合成提示词已批量生成" : "合成提示词已生成");
