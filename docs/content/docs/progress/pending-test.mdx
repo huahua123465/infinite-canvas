@@ -23,6 +23,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 角色声音模型选择：脚本节点右侧角色声音编辑区应显示当前默认音频模型，并支持直接切换音频模型；切换后生成角色试听应使用新的默认音频模型，减少用户不清楚当前走 OpenAI 还是火山 TTS 的问题。
 - 火山网络错误提示：火山 TTS 请求没有 HTTP 响应时，应显示 Network Error/CORS 方向的提示，避免把浏览器直连 OpenSpeech 被拦截误判成 speaker 或额度问题。
 - 火山语音本地转发：火山 OpenSpeech TTS 应优先通过本地 Infinite Canvas Agent 代理请求；本地 Vite 开发环境应提供 `/api/v3/tts` 同源代理，避免浏览器直连 `openspeech.bytedance.com` 时被 CORS 或本机网络策略拦截。
+- 火山语音旧版鉴权：音频渠道 API Key 字段应支持填写 `APP ID|Access Token` 或包含 `appId` / `accessToken` 的 JSON，用于旧版控制台 OpenSpeech 鉴权；本地 Agent 代理也应按同样规则转发对应请求头。
 - 角色声音模型选择稳定性：脚本节点右侧角色声音区的音频模型选择应改用 Ant Design Select，避免 Radix Select 在当前 React 运行时中反复更新 ref 导致 `Maximum update depth exceeded`。
 - Seedance 第三步合成提示词：合成 `storyboardPrompt` / `videoMotionPrompt` 时应更明确区分首帧静态画面和视频运动导演指令，并根据第二步资产清单收口 `assetMentions`，减少虚构资产、过度引用资产、运镜冲突和空泛堆词。
 - 分镜视频节点：生成失败时应在节点主体区域清晰展示失败原因；放大节点后提示词、错误信息、参考资产和底部操作区的空间分配应更均衡。

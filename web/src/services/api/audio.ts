@@ -146,12 +146,39 @@ function shouldTryNextVolcengineRequest(error: unknown, request: VolcengineSpeec
 }
 
 function volcengineSpeechHeaders(apiKey: string, resourceId: string) {
+    const legacy = parseVolcengineLegacyAuth(apiKey);
+    if (legacy) {
+        return {
+            "Content-Type": "application/json",
+            "X-Api-App-Id": legacy.appId,
+            "X-Api-Access-Key": legacy.accessToken,
+            "X-Api-Connect-Id": nanoConnectId(),
+            "X-Api-Resource-Id": resourceId,
+        };
+    }
     return {
         "Content-Type": "application/json",
         "X-Api-Key": apiKey,
         "X-Api-Connect-Id": nanoConnectId(),
         "X-Api-Resource-Id": resourceId,
     };
+}
+
+function parseVolcengineLegacyAuth(value: string) {
+    const source = value.trim();
+    if (!source) return null;
+    if (source.startsWith("{")) {
+        try {
+            const payload = JSON.parse(source) as { appId?: string; app_id?: string; accessToken?: string; access_token?: string; accessKey?: string; access_key?: string };
+            const appId = (payload.appId || payload.app_id || "").trim();
+            const accessToken = (payload.accessToken || payload.access_token || payload.accessKey || payload.access_key || "").trim();
+            return appId && accessToken ? { appId, accessToken } : null;
+        } catch {
+            return null;
+        }
+    }
+    const parts = source.split(/[|,\s]+/).map((item) => item.trim()).filter(Boolean);
+    return parts.length >= 2 && /^\d{6,}$/.test(parts[0]) ? { appId: parts[0], accessToken: parts[1] } : null;
 }
 
 function volcengineAgentProxyUrl() {

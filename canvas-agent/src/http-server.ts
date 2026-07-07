@@ -116,12 +116,7 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
     if (!apiKey || !payload) return void res.status(400).json({ ok: false, error: "missing volcengine apiKey or payload" });
     const upstream = await fetch(safeVolcengineSpeechUrl(stringField(body.baseUrl)), {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-Api-Key": apiKey,
-            "X-Api-Connect-Id": cryptoRandomId(),
-            "X-Api-Resource-Id": normalizeVolcengineResourceId(stringField(body.resourceId)),
-        },
+        headers: volcengineSpeechHeaders(apiKey, normalizeVolcengineResourceId(stringField(body.resourceId))),
         body: JSON.stringify(payload),
     });
     const data = Buffer.from(await upstream.arrayBuffer());
@@ -160,6 +155,42 @@ function normalizeVolcengineResourceId(value: string) {
     if (/^tts-seedicl2/i.test(resourceId) || /seedicl2/i.test(resourceId)) return "seed-icl-2.0";
     if (/^seed-(tts|icl)-/i.test(resourceId)) return resourceId;
     return "seed-tts-2.0";
+}
+
+function volcengineSpeechHeaders(apiKey: string, resourceId: string) {
+    const legacy = parseVolcengineLegacyAuth(apiKey);
+    if (legacy) {
+        return {
+            "Content-Type": "application/json",
+            "X-Api-App-Id": legacy.appId,
+            "X-Api-Access-Key": legacy.accessToken,
+            "X-Api-Connect-Id": cryptoRandomId(),
+            "X-Api-Resource-Id": resourceId,
+        };
+    }
+    return {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+        "X-Api-Connect-Id": cryptoRandomId(),
+        "X-Api-Resource-Id": resourceId,
+    };
+}
+
+function parseVolcengineLegacyAuth(value: string) {
+    const source = value.trim();
+    if (!source) return null;
+    if (source.startsWith("{")) {
+        try {
+            const payload = JSON.parse(source) as { appId?: string; app_id?: string; accessToken?: string; access_token?: string; accessKey?: string; access_key?: string };
+            const appId = stringField(payload.appId || payload.app_id);
+            const accessToken = stringField(payload.accessToken || payload.access_token || payload.accessKey || payload.access_key);
+            return appId && accessToken ? { appId, accessToken } : null;
+        } catch {
+            return null;
+        }
+    }
+    const parts = source.split(/[|,\s]+/).map((item) => item.trim()).filter(Boolean);
+    return parts.length >= 2 && /^\d{6,}$/.test(parts[0]) ? { appId: parts[0], accessToken: parts[1] } : null;
 }
 
 function stringField(value: unknown) {
