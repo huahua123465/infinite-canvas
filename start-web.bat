@@ -2,6 +2,7 @@
 setlocal
 
 set "WEB_DIR=%~dp0web"
+set "CANVAS_URL=http://localhost:3000"
 
 if not exist "%WEB_DIR%\package.json" (
   echo Cannot find web\package.json.
@@ -19,6 +20,9 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+
+echo Starting Canvas Agent in a new window...
+start "Infinite Canvas Agent" cmd /k "set CANVAS_URL=%CANVAS_URL%&& npx -y @basketikun/canvas-agent"
 
 echo Starting web dev server...
 call npm run dev
