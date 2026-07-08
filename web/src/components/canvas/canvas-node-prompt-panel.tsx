@@ -46,7 +46,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
-    const videoImageReferences = mode === "video" ? mentionReferences.filter((item) => item.kind === "image" && item.active) : [];
+    const activeImageReferences = mentionReferences.filter((item) => item.kind === "image" && item.active);
+    const mentionedImageLabels = activeImageReferences.filter((item) => promptIncludesReferenceLabel(prompt, item.label)).map((item) => item.label);
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -113,7 +114,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
                 placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
-            {videoImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
+            {mode === "image" && activeImageReferences.length ? (
+                <div className="mt-1.5 text-[11px] opacity-60">
+                    将传入参考图：{activeImageReferences.map((item) => item.label).join("、")}
+                    {mentionedImageLabels.length ? `；已 @ 引用：${mentionedImageLabels.join("、")}` : "；输入 @ 可点选图片标签来指定描述对象"}
+                </div>
+            ) : null}
+            {mode === "video" && activeImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -213,6 +220,14 @@ function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: bool
 function estimatePromptEditorHeight(prompt: string) {
     const visualLines = (prompt || "").split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 42)), 0);
     return Math.min(560, Math.max(260, visualLines * 22 + 36));
+}
+
+function promptIncludesReferenceLabel(prompt: string, label: string) {
+    return new RegExp(`(^|\\s|[，,。；;：:、])${escapeRegExp(label)}(?!\\d)`).test(prompt);
+}
+
+function escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
