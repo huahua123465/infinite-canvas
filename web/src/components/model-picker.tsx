@@ -64,6 +64,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             data-canvas-no-zoom
             className={cn(fullWidth ? "w-full min-w-0" : "min-w-36", className)}
             classNames={{ popup: { root: "z-[1200]" } }}
+            styles={{ popup: { root: { zIndex: 1700 } } }}
             popupMatchSelectWidth={false}
             value={current || undefined}
             placeholder={placeholder}
