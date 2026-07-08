@@ -1,0 +1,225 @@
+---
+title: 2026-07-07 工作交接
+description: 记录 2026-07-07 当天完成的主要修改、已推送提交、当前状态和明天继续验证的入口。
+---
+
+# 2026-07-07 工作交接
+
+本文用于明天继续接手 `custom/jt-vite-merge` 分支。正式功能说明仍等人工测试确认后再更新到功能文档。
+
+## 当前状态
+
+- 当前分支：`custom/jt-vite-merge`
+- 已推送远端：`origin/custom/jt-vite-merge`
+- 当前远端最新提交：`ed5f614 fix storyboard video settings sync`
+- 未提交内容：只有未跟踪目录 `seedance-2.0-5.3.0/`、`storyai-3d-director-desk/`、`tmp/`，今天没有把它们提交或推送。
+- 本次按项目规则没有执行构建；明天需要由用户本地运行和验证。
+
+同事同步当前分支：
+
+```bash
+git fetch origin
+git checkout custom/jt-vite-merge
+git pull origin custom/jt-vite-merge
+```
+
+## 今天完成的主要事项
+
+### 1. 资产 @ 选择器
+
+相关提交：
+
+- `213ef53 feat: add storyboard prompt asset picker`
+- `bc2ca65 fix: stabilize storyboard prompt mention editing`
+
+完成内容：
+
+- 分镜视频最终提示词弹窗中，直接显示当前剧本资产、场景锁定图和我的素材候选。
+- 点击资产卡片可插入 `@资产名`。
+- 在提示词中间输入或点击 `@` 时，会弹出资产候选下拉，不需要手动输入完整资产名称。
+- 选择资产后会自动保存引用绑定关系。
+- 修复自动保存导致光标跳到提示词末尾的问题。
+
+明天重点验证：
+
+- 在最终提示词中间位置输入 `@`，候选资产应能出现。
+- 选中资产后，应插入到当前光标位置，不应跳到末尾。
+- 关闭弹窗再打开，提示词和绑定资产应保留。
+
+### 2. 视频尺寸/时长同步
+
+相关提交：
+
+- `98ddd55 feat: sync storyboard video settings from prompts`
+- `4c1443e fix: complete seedance video payload settings`
+- `ed5f614 fix storyboard video settings sync`
+
+完成内容：
+
+- 脚本节点整体提示词中的“视频生成设置 / 视频设置 / video:”参数块可解析：
+  - 分辨率，例如 `720p`
+  - 比例/尺寸，例如 `16:9`
+  - 时长，例如 `6s`
+  - 生成声音，例如 `开启`
+  - 水印，例如 `关闭`
+- 真实 Seedance 请求会使用接口参数 `aspect_ratio`、`resolution`、`duration`、`generate_audio`、`watermark`，而不是只依赖提示词自然语言。
+- 重新搭建视频工作区时，未单独改过的旧草稿会跟随脚本默认设置刷新。
+- 单个视频节点如果在“最终生成提示词”弹窗里改过模型、尺寸、时长等设置，会标记为手动配置，后续不被脚本统一设置覆盖。
+- 放宽了“视频生成设置”解析范围，避免 `水印：关闭` 等靠后的配置行漏读。
+
+明天重点验证：
+
+- 图四整体提示词写入：
+
+```text
+视频生成设置：
+分辨率：720p
+比例：16:9
+时长：6s
+生成声音：开启
+水印：关闭
+```
+
+- 批量创建待审核视频节点后，最终提示词弹窗里的“视频生成设置”按钮应显示对应的 `720p / 16:9 / 6s`。
+- 生成后视频时长应接近 6 秒，不应混入旧的 12 秒或 15 秒配置。
+- 单独打开某个视频，把它改成别的比例或时长，重新搭建视频工作区后，该单个视频应保留自己的设置。
+
+### 3. 视频布局和多版本收纳
+
+相关提交：
+
+- `0382eba 收纳分镜视频多版本结果`
+- `680897c 修复所有视频弹窗关闭按钮`
+- `e6fc6b0 Polish storyboard video review flow`
+
+完成内容：
+
+- 待审核视频节点多次生成后，外层只显示当前最新视频。
+- 历史视频版本进入“所有视频”弹窗查看，避免连续向右铺开遮挡画布。
+- 待审核视频节点继续保留为可编辑提示词节点。
+- 生成视频结果作为独立结果记录保存，多次生成可保留多版本。
+- 修复“所有视频”弹窗关闭按钮。
+
+明天重点验证：
+
+- 同一个镜头连续生成多次，只应在节点上看到最新版本入口。
+- 点击“所有视频”能看到历史版本。
+- 最新版本标记和关闭按钮应正常。
+
+### 4. 导演台
+
+相关提交：
+
+- `2666606 Add full 3D director desk entry`
+- `4800cd9 Fix director desk toolbar viewport clipping`
+
+完成内容：
+
+- 新增完整 3D 导演台入口。
+- 导航或画布工具栏可进入 `/director-desk`。
+- 保留导演视角/机位视角、角色、机位、模型导入、全景、截图、本地项目持久化等基础能力。
+- 修复导演台工具栏在视口边界附近被裁切的问题。
+
+明天重点验证：
+
+- 首页或画布入口能打开 3D 导演台。
+- 宽屏、窄屏下工具栏不应被裁切。
+- 关闭按钮应能返回画布库或上一层入口。
+
+### 5. 一键生成多角度锁定图
+
+相关提交线索：
+
+- 这部分已记录在 `pending-test.mdx` 的“分镜场景多角度批量生成”“分镜场景锁定图预览”“横向比例”“无文字标注”等待测项中。
+
+完成/待测方向：
+
+- 场景资产卡片支持生成多角度锁定图。
+- 批量生成时按还没有锁定图的场景补齐。
+- 多角度锁定图应作为后续视频的“场景锁定”参考。
+- 生成结果应避免分屏文字标签、Logo、水印和竖版比例。
+
+明天重点验证：
+
+- 第二步“准备资产”里的场景卡片是否显示一键生成入口。
+- 批量生成时已完成的场景不应重复生成。
+- 后续创建待审核视频节点时，对应场景锁定图应自动进入参考资产。
+
+### 6. 音频和火山 TTS
+
+相关提交：
+
+- `eb0c95a Add Volcengine speech synthesis support`
+- `100ce9e Fix Volcengine character voice speakers`
+- `24c1afc Add Volcengine voice picker and auto speaker`
+- `b17eb02 Improve Volcengine TTS error details`
+- `77b9ac2 Keep Volcengine speakers out of OpenAI TTS`
+- `51290c8 Auto-route Volcengine speaker audio`
+- `7cfaa70 Fallback Volcengine speaker for TTS`
+- `78342b1 Add voice model picker to character audio`
+- `03f7520 Clarify Volcengine audio network failures`
+- `ef82385 Proxy Volcengine TTS requests`
+- `fc79039 Support legacy Volcengine TTS auth`
+- `bf62e25 Fix Volcengine TTS audio frame parsing`
+
+完成内容：
+
+- 接入火山 OpenSpeech TTS。
+- 支持角色声音区域生成声音提示词和试听音频。
+- 支持角色级 speaker、自动推荐 speaker、手填 speaker、音频模型选择。
+- 支持本地 Agent / Vite 代理火山 TTS 请求，降低浏览器 CORS 阻断。
+- 支持新版 `X-Api-Key / X-Api-Resource-Id` 和旧版 `APP ID|Access Token` / JSON 鉴权。
+- 修复火山返回 chunked 二进制音频帧解析，避免音频控件 `0:00 / 0:00`。
+- OpenAI TTS 和火山 speaker 做了渠道隔离，避免把火山 speaker 传给 OpenAI。
+- Radix/React 运行时更新循环相关问题通过模型选择器和依赖锁定处理。
+
+明天重点验证：
+
+- 角色卡片生成声音是否能拿到可播放音频。
+- 火山 speaker 是否按角色生效，不应所有角色都变成同一个默认音色。
+- 使用 OpenAI TTS 时不应把火山 speaker 传过去。
+- 没有 HTTP 响应时，错误提示应指向 Network/CORS 或代理问题。
+
+### 7. 同事运行和依赖稳定性
+
+相关提交：
+
+- `27ee829 fix: pin radix dependency for react runtime`
+- `fb464e9 Fix model picker update loop`
+
+完成内容：
+
+- 固定 Radix 相关依赖版本，减少同事拉取后因为依赖解析不同导致 React 最大更新深度错误。
+- 模型选择器改用更稳定的实现，避免角色声音区反复更新 ref。
+
+明天如果同事仍然异常：
+
+```bash
+git fetch origin
+git checkout custom/jt-vite-merge
+git pull origin custom/jt-vite-merge
+cd web
+npm install
+npm run dev
+```
+
+如果依赖仍旧不一致，可让同事删除 `web/node_modules` 后重新 `npm install`。
+
+## 明天建议验证顺序
+
+1. 先同步分支并启动前端。
+2. 打开已有项目，确认画布能正常进入。
+3. 验证最终提示词 `@` 资产选择器和光标位置。
+4. 验证图四“视频生成设置”能同步到新建/未手动改过的视频草稿。
+5. 单独修改一个视频尺寸，再重新搭建视频工作区，确认它不会被覆盖。
+6. 连续生成同一镜头多个视频，确认“所有视频”弹窗和最新版本显示。
+7. 验证火山角色声音试听能播放。
+8. 打开 3D 导演台，检查入口、工具栏、关闭返回。
+
+## 明天可能继续处理的问题
+
+- 如果同事仍然生成出 12 秒或 15 秒视频，优先检查该视频节点是否已经被标记为手动配置，或最终提示词弹窗里的真实视频设置是否仍是旧值。
+- 如果 `@` 候选不显示，优先检查当前脚本资产是否已经生成，以及最终提示词弹窗里的“可选资产”是否为空。
+- 如果音频仍无法播放，优先看接口原始错误、代理是否启动、火山鉴权格式是否正确。
+- 如果多角度锁定图比例不对，优先检查场景锁定图生成提示词和生图尺寸配置是否仍被旧节点 metadata 覆盖。
+
