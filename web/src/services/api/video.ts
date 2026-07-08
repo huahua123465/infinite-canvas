@@ -170,13 +170,17 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     const imageUrls = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveSeedanceImageUrl(config, image)));
     const referenceVideos = await Promise.all(videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos).map(resolveSeedanceVideoUrl));
     const referenceAudios = await Promise.all(audioReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.audios).map(resolveSeedanceAudioUrl));
+    const needsPrimaryImage = Boolean(referenceVideos.length || referenceAudios.length || imageUrls.length === 1);
+    const primaryImageUrl = needsPrimaryImage ? imageUrls[0] : "";
+    const extraImageUrls = needsPrimaryImage ? imageUrls.slice(1) : imageUrls;
+    const extraImageOffset = needsPrimaryImage ? 1 : 0;
     const payload = {
         model: modelOptionName(model),
         prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
-        ...(imageUrls.length === 1 ? { image_url: imageUrls[0] } : {}),
-        ...(imageUrls.length > 1 ? { reference_images: imageUrls.map((url, index) => ({ url, name: references[index]?.name || `图片${index + 1}` })) } : {}),
+        ...(primaryImageUrl ? { image_url: primaryImageUrl } : {}),
+        ...(extraImageUrls.length ? { reference_images: extraImageUrls.map((url, index) => ({ url, name: references[index + extraImageOffset]?.name || `图片${index + extraImageOffset + 1}` })) } : {}),
         ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
         ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
     };
