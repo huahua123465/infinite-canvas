@@ -67,7 +67,9 @@ type ResponseApiPayload = {
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
 type ImageApiResponse = {
-    data?: Array<Record<string, unknown>>;
+    id?: string;
+    status?: string;
+    data?: Array<Record<string, unknown>> | Record<string, unknown>;
     error?: { message?: string };
     code?: number;
     msg?: string;
@@ -194,8 +196,10 @@ function parseImagePayload(payload: ImageApiResponse) {
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || "请求失败");
     }
+    if (payload.error?.message) throw new Error(payload.error.message);
+    const items = Array.isArray(payload.data) ? payload.data : payload.data && typeof payload.data === "object" ? [payload.data] : [];
     const images =
-        payload.data
+        items
             ?.map(resolveImageDataUrl)
             .filter((value): value is string => Boolean(value))
             .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
@@ -593,6 +597,93 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     return parseGeminiImagePayload(response.data);
 }
 
+function isCangyuanConfig(config: Pick<AiConfig, "apiFormat">) {
+    return config.apiFormat === "cangyuan";
+}
+
+function cangyuanImageSize(config: AiConfig, quality: string | undefined) {
+    const size = config.size.trim();
+    if (!size || size.toLowerCase() === "auto") return undefined;
+    if (size.includes(":") && config.model.toLowerCase().includes("gpt-image")) return resolveRequestSize(quality, size);
+    return size;
+}
+
+function shouldUseCangyuanImageAsync(config: AiConfig, references: ReferenceImage[]) {
+    const model = config.model.toLowerCase();
+    return model.includes("gpt-image") || references.length > 1;
+}
+
+function readCangyuanTaskId(payload: ImageApiResponse) {
+    if (typeof payload.id === "string" && payload.id) return payload.id;
+    if (payload.data && !Array.isArray(payload.data) && typeof payload.data.id === "string") return payload.data.id;
+    return "";
+}
+
+function readCangyuanStatus(payload: ImageApiResponse) {
+    if (typeof payload.status === "string") return payload.status;
+    if (payload.data && !Array.isArray(payload.data) && typeof payload.data.status === "string") return payload.data.status;
+    return "";
+}
+
+async function requestCangyuanImages(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
+    const requests = Array.from({ length: count }, () => requestCangyuanImageOnce(config, prompt, references, mask, options));
+    return (await Promise.all(requests)).flat();
+}
+
+async function requestCangyuanImageOnce(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const referenceUrls = await Promise.all(references.map(imageReferenceUrl));
+    const requestAsync = shouldUseCangyuanImageAsync(config, references);
+    const response = await axios.post<ImageApiResponse>(
+        aiApiUrl(config, "/images/generations"),
+        {
+            model: config.model,
+            prompt: withSystemPrompt(config, prompt),
+            stream: false,
+            ...(quality ? { quality } : {}),
+            ...(cangyuanImageSize(config, quality) ? { size: cangyuanImageSize(config, quality) } : {}),
+            ...(referenceUrls.length === 1 ? { image: referenceUrls[0] } : {}),
+            ...(referenceUrls.length > 1 ? { images: referenceUrls } : {}),
+            ...(mask ? { mask: await imageReferenceUrl(mask) } : {}),
+            ...(requestAsync ? { async: true } : {}),
+        },
+        { headers: aiHeaders(config, "application/json"), signal: options?.signal },
+    );
+    return parseCangyuanImageResult(config, response.data, options);
+}
+
+async function parseCangyuanImageResult(config: AiConfig, payload: ImageApiResponse, options?: RequestOptions) {
+    try {
+        return parseImagePayload(payload);
+    } catch (error) {
+        const taskId = readCangyuanTaskId(payload);
+        if (!taskId) throw error;
+        return pollCangyuanImageTask(config, taskId, options);
+    }
+}
+
+async function pollCangyuanImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        await delay(3000, options?.signal);
+        const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/generations/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal });
+        const status = readCangyuanStatus(response.data);
+        if (status === "failed") throw new Error(response.data.error?.message || response.data.msg || "图片生成失败");
+        if (!status || status === "completed") {
+            try {
+                return parseImagePayload(response.data);
+            } catch (error) {
+                if (status === "completed") throw error;
+            }
+        }
+    }
+    throw new Error("图片生成超时，请稍后重试");
+}
+
+async function imageReferenceUrl(image: ReferenceImage) {
+    return image.url || image.dataUrl || imageToDataUrl(image);
+}
+
 function parseGeminiImagePayload(payload: GeminiPayload) {
     validateGeminiPayload(payload);
     const images =
@@ -615,6 +706,13 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (isCangyuanConfig(requestConfig)) {
+        try {
+            return await requestCangyuanImages(requestConfig, prompt, [], undefined, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -653,6 +751,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (isCangyuanConfig(requestConfig)) {
+        try {
+            return await requestCangyuanImages(requestConfig, requestPrompt, references, mask, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -756,3 +861,21 @@ const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "
     model: "",
     systemPrompt: "",
 };
+
+function delay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener(
+            "abort",
+            () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+        );
+    });
+}

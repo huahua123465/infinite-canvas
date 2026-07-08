@@ -36,6 +36,7 @@ const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
     { label: "Gemini", value: "gemini" },
     { label: "方舟 Ark", value: "ark" },
+    { label: "沧元算力", value: "cangyuan" },
 ];
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
@@ -468,6 +469,7 @@ function uniqueModels(models: string[]) {
 function apiFormatLabel(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return "Gemini";
     if (apiFormat === "ark") return "方舟 Ark";
+    if (apiFormat === "cangyuan") return "沧元算力";
     return "OpenAI";
 }
 

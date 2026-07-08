@@ -1,0 +1,74 @@
+---
+title: 2026-07-08 工作交接
+description: 记录 2026-07-08 沧元算力模型渠道接入、待测试点和后续验证入口。
+---
+
+# 2026-07-08 工作交接
+
+本文用于继续接手 `custom/jt-vite-merge` 分支。正式功能说明仍等人工测试确认后再更新到功能文档。
+
+## 当前状态
+
+- 当前分支：`custom/jt-vite-merge`
+- 目标远端：`origin/custom/jt-vite-merge`
+- 本次按项目规则没有执行构建或语法检查，仅执行了 `git diff --check`。
+- 未跟踪目录 `tmp/` 未纳入本次提交。
+
+同事同步当前分支：
+
+```bash
+git fetch origin
+git checkout custom/jt-vite-merge
+git pull origin custom/jt-vite-merge
+```
+
+## 今天完成的主要事项
+
+### 1. 新增沧元算力渠道格式
+
+- 配置弹窗的渠道调用格式新增“沧元算力”。
+- 默认 Base URL 为 `https://ai.cangyuansuanli.cn`。
+- 保留原有 OpenAI / Gemini / 方舟 Ark 逻辑，不把沧元算力硬塞进 Ark Seedance 分支。
+- 仍使用现有“拉取模型”按钮读取 `/v1/models`。
+
+### 2. 模型能力分类补齐
+
+- `omni` 会被归类为视频模型。
+- `gemini-banana-*` 会被归类为图像模型。
+- 原有 `seedance`、`sora`、`grok-video`、`flux`、`gpt-image` 等分类继续保留。
+
+### 3. 图像生成适配
+
+- 沧元算力图像渠道走 `POST /v1/images/generations`。
+- 文生图和 JSON 图生图都走同一入口。
+- 同步结果从 `data[].url` 读取。
+- 异步结果会轮询 `GET /v1/images/generations/{task_id}`。
+- 图生图参考图优先传 `image` / `images`，局部编辑传 `mask`。
+
+### 4. 视频生成适配
+
+- 沧元算力视频渠道走 `POST /v1/videos`。
+- 轮询走 `GET /v1/videos/{task_id}`。
+- 完成后优先读取 `video_url`，没有时再尝试 `/v1/videos/{task_id}/content`。
+- 轮询间隔为 5 秒。
+- 参考视频或参考音频必须同时提供至少 1 张主参考图，符合沧元算力文档要求。
+- 沧元算力下的 `seedance-2.0-*` 不再误走方舟 Ark 的 `/contents/generations/tasks`。
+
+## 明天重点验证
+
+1. 配置里新增渠道，调用格式选择“沧元算力”，Base URL 是否自动填入 `https://ai.cangyuansuanli.cn`。
+2. 填写 API Key 后点击“拉取模型”，确认能读取模型列表。
+3. 进入“模型”Tab，确认 `omni-*` 出现在视频模型可选项，`gemini-banana-*` 出现在图像模型可选项。
+4. 使用 `gemini-banana-pro-4k` 做一次基础文生图，确认能取到图片 URL 并保存到画布。
+5. 使用 `gemini-banana-pro-4k` 做一次图生图，确认参考图通过 `image` / `images` 生效。
+6. 使用 `seedance-2.0-720p` 做一次基础文生视频，确认走 `/v1/videos`，不是 Ark 的 `/contents/generations/tasks`。
+7. 视频完成后确认 `video_url` 或 `/content` 下载都能正常进入画布。
+
+## 如果测试失败优先看
+
+- 401 / 403：检查 API Key、账户权限和模型权限。
+- 拉取模型为空：先直接验证 `GET https://ai.cangyuansuanli.cn/v1/models` 是否对当前 Key 开放。
+- 图像无返回：检查响应里是否是异步任务 ID；如果是，应看轮询接口是否返回 `completed` 和 `data[].url`。
+- 视频超时：确认任务状态是否停在 `queued` / `in_progress`，以及是否触发内容安全拦截。
+- Seedance 相关参数错误：优先看是否传了不支持的比例、时长、参考视频/音频，或缺少主参考图。
+
