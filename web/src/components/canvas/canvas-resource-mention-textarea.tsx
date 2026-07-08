@@ -86,10 +86,10 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
     };
 
-    const showOverlay = Boolean(highlightLabels && activeLabels.length && !hasSelection);
+    const showOverlay = Boolean(highlightLabels && activeLabels.length && !hasSelection && !isFocused);
     const mergedStyle = {
         ...(style || {}),
-        color: showOverlay ? colorWithAlpha(theme.node.text, 0.08) : style?.color,
+        color: showOverlay ? "transparent" : style?.color,
         caretColor: theme.node.text,
         ...(showOverlay ? { background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
@@ -311,14 +311,4 @@ function clamp(value: number, min: number, max: number) {
 
 function escapeRegExp(value: string) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function colorWithAlpha(color: string, alpha: number) {
-    const hex = color.trim().replace(/^#/, "");
-    if (!/^[\da-f]{6}$/i.test(hex)) return color;
-    const value = Number.parseInt(hex, 16);
-    const red = (value >> 16) & 255;
-    const green = (value >> 8) & 255;
-    const blue = value & 255;
-    return `rgba(${red},${green},${blue},${alpha})`;
 }
