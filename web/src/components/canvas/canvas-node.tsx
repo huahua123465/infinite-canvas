@@ -373,7 +373,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.type === CanvasNodeType.Video && props.node.metadata?.storyboardSourceNodeId && props.node.metadata?.storyboardRowIndex !== undefined && !props.node.metadata?.content) {
+    if (props.node.type === CanvasNodeType.Video && !props.node.metadata?.content) {
         return <VideoNodeContent {...props} />;
     }
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
@@ -797,6 +797,37 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
     const isLoading = node.metadata?.status === "loading";
     const isError = node.metadata?.status === "error";
     const videoProgress = node.metadata?.videoGenerationProgress;
+    const videoTaskId = node.metadata?.videoTaskId;
+    const [taskRecoveryOpen, setTaskRecoveryOpen] = useState(false);
+    const [manualVideoTaskId, setManualVideoTaskId] = useState(videoTaskId || "");
+
+    const openTaskRecovery = useCallback(() => {
+        setManualVideoTaskId(videoTaskId || "");
+        setTaskRecoveryOpen(true);
+    }, [videoTaskId]);
+    const submitTaskRecovery = useCallback(() => {
+        const taskId = manualVideoTaskId.trim();
+        if (!taskId) return;
+        setTaskRecoveryOpen(false);
+        onRetry?.(node, {
+            videoTaskId: taskId,
+            videoTaskProvider: node.metadata?.videoTaskProvider,
+            videoTaskModel: node.metadata?.videoTaskModel || node.metadata?.model,
+            videoTaskEndpoint: node.metadata?.videoTaskEndpoint,
+            status: "loading",
+            errorDetails: undefined,
+            videoGenerationProgress: undefined,
+        });
+    }, [manualVideoTaskId, node, onRetry]);
+    const taskRecoveryModal = (
+        <VideoTaskRecoveryModal
+            open={taskRecoveryOpen}
+            taskId={manualVideoTaskId}
+            onChange={setManualVideoTaskId}
+            onClose={() => setTaskRecoveryOpen(false)}
+            onSubmit={submitTaskRecovery}
+        />
+    );
 
     useEffect(() => {
         const openPromptPreview = (event: Event) => {
@@ -856,6 +887,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                                 <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setReferenceEditorOpen(true)}>
                                     编辑参考
                                 </button>
+                                {videoTaskId ? <span className="max-w-[180px] truncate rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px]" title={videoTaskId}>{videoTaskId}</span> : null}
                                 {isError ? (
                                     <button
                                         type="button"
@@ -864,7 +896,12 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                                         onMouseDown={(event) => event.stopPropagation()}
                                         onClick={() => onRetry?.(node)}
                                     >
-                                        重试
+                                        {videoTaskId ? "查询任务结果" : "重试"}
+                                    </button>
+                                ) : null}
+                                {isError && !videoTaskId ? (
+                                    <button type="button" className="rounded px-1.5 py-0.5 hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={openTaskRecovery}>
+                                        填写任务ID
                                     </button>
                                 ) : null}
                             </div>
@@ -882,6 +919,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         />
                         <StoryboardVideoHistoryModal node={node} open={videoHistoryOpen} results={storyboardVideoResults} theme={theme} onClose={() => setVideoHistoryOpen(false)} />
                         <StoryboardVideoReferenceEditor node={node} open={referenceEditorOpen} references={assetPreviews} scriptReferences={storyboardReferenceAssets} onClose={() => setReferenceEditorOpen(false)} onSave={(references) => onMetadataChange(node.id, storyboardVideoReferenceSavePatch(node, references))} />
+                        {taskRecoveryModal}
                     </div>
                 </div>
             );
@@ -894,6 +932,62 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         <span className="text-sm font-semibold">{videoGenerationStatusText(videoProgress)}</span>
                     </div>
                     <VideoGenerationProgressBar progress={videoProgress} theme={theme} />
+                    {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
+                    {!videoTaskId ? (
+                        <button
+                            type="button"
+                            className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                openTaskRecovery();
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                        >
+                            填写任务ID查询
+                        </button>
+                    ) : null}
+                    {taskRecoveryModal}
+                </div>
+            );
+        }
+        if (isError) {
+            return (
+                <div className="flex h-full w-full flex-col justify-center gap-3 p-5" style={{ background: theme.node.fill, color: theme.node.text }}>
+                    <div className="flex items-center gap-2 text-red-300">
+                        <AlertTriangle className="size-4" />
+                        <span className="text-sm font-semibold">生成未接回</span>
+                    </div>
+                    <div className="line-clamp-4 text-xs leading-5 opacity-75">{node.metadata?.errorDetails || "视频生成中断，可用任务 ID 查询平台结果。"}</div>
+                    {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
+                    <button
+                        type="button"
+                        className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onRetry?.(node);
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                    >
+                        <RefreshCw className="size-3.5" />
+                        {videoTaskId ? "查询任务结果" : "重试"}
+                    </button>
+                    {!videoTaskId ? (
+                        <button
+                            type="button"
+                            className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                openTaskRecovery();
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                        >
+                            填写任务ID
+                        </button>
+                    ) : null}
+                    {taskRecoveryModal}
                 </div>
             );
         }
@@ -901,10 +995,31 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
                 <Video className="size-7 opacity-35" />
                 <span className="text-sm">空视频节点</span>
+                <button type="button" className="rounded px-2 py-1 text-xs hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={openTaskRecovery}>
+                    填写任务ID恢复
+                </button>
+                {taskRecoveryModal}
             </div>
         );
     }
     return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+}
+
+function VideoTaskRecoveryModal({ open, taskId, onChange, onClose, onSubmit }: { open: boolean; taskId: string; onChange: (value: string) => void; onClose: () => void; onSubmit: () => void }) {
+    return (
+        <Modal title={<CanvasModalTitle title="查询视频任务" onClose={onClose} />} open={open} onCancel={onClose} footer={null} width={460} destroyOnHidden closable={false} modalRender={renderCanvasModal}>
+            <div className="space-y-3">
+                <div className="text-xs leading-5 opacity-65">平台已显示成功但画布没有接回时，粘贴平台任务 ID 查询已有结果，不会重新提交生成任务。</div>
+                <Input autoFocus value={taskId} placeholder="例如 task_xxx" onChange={(event) => onChange(event.target.value)} onPressEnter={onSubmit} />
+                <div className="flex justify-end gap-2">
+                    <Button onClick={onClose}>取消</Button>
+                    <Button type="primary" disabled={!taskId.trim()} onClick={onSubmit}>
+                        查询结果
+                    </Button>
+                </div>
+            </div>
+        </Modal>
+    );
 }
 
 function StoryboardVideoHistoryModal({ node, open, results, theme, onClose }: { node: CanvasNodeData; open: boolean; results: CanvasNodeData[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onClose: () => void }) {

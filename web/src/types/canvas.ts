@@ -136,6 +136,11 @@ export type CanvasNodeMetadata = {
     storyboardVideoTailFrameStorageKey?: string;
     storyboardVideoConfigCustomized?: boolean;
     videoGenerationProgress?: VideoGenerationProgress;
+    videoTaskId?: string;
+    videoTaskProvider?: "openai" | "seedance" | "cangyuan";
+    videoTaskModel?: string;
+    videoTaskEndpoint?: "videos" | "video-generations";
+    videoTaskSubmittedAt?: string;
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];

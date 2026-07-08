@@ -54,7 +54,7 @@ type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string; cangyuanEndpoint?: "videos" | "video-generations" };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
-type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void };
+type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void };
 export type VideoGenerationTaskState =
     | { status: "pending"; providerStatus?: string; progress?: number }
     | { status: "completed"; result: VideoGenerationResult; providerStatus?: string; progress?: number }
@@ -74,7 +74,12 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     options?.onProgress?.({ percent: 8, text: "正在提交视频任务", stage: "submitting" });
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    options?.onProgress?.({ percent: 16, text: task.provider === "seedance" ? "视频任务已创建，等待方舟返回任务状态" : "视频任务已创建，等待接口处理", stage: "submitted" });
+    options?.onTaskCreated?.(task);
+    return resumeVideoGenerationTask(config, task, options);
+}
+
+export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    options?.onProgress?.({ percent: 16, text: task.provider === "seedance" ? `视频任务已创建，等待方舟返回任务状态：${task.id}` : `视频任务已创建，等待接口处理：${task.id}`, stage: "submitted" });
     const delayMs = task.provider === "seedance" ? 30000 : task.provider === "cangyuan" ? 5000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -167,20 +172,20 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     }
     assertSeedanceVideoReferences(videoReferences);
     assertSeedanceAudioReferences(audioReferences);
-    const imageUrls = await Promise.all(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images).map((image) => resolveSeedanceImageUrl(config, image)));
+    const imageUrls = await Promise.all(references.slice(0, 4).map((image) => resolveSeedanceImageUrl(config, image)));
     const referenceVideos = await Promise.all(videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos).map(resolveSeedanceVideoUrl));
-    const referenceAudios = await Promise.all(audioReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.audios).map(resolveSeedanceAudioUrl));
-    const needsPrimaryImage = Boolean(referenceVideos.length || referenceAudios.length || imageUrls.length === 1);
-    const primaryImageUrl = needsPrimaryImage ? imageUrls[0] : "";
-    const extraImageUrls = needsPrimaryImage ? imageUrls.slice(1) : imageUrls;
-    const extraImageOffset = needsPrimaryImage ? 1 : 0;
+    const referenceAudios = await Promise.all(audioReferences.slice(0, 1).map(resolveSeedanceAudioUrl));
+    const primaryImageUrl = imageUrls[0] || "";
+    const extraImageUrls = imageUrls.slice(1);
     const payload = {
         model: modelOptionName(model),
         prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
+        resolution: normalizeCangyuanSeedanceResolution(config.vquality),
+        audio: boolConfig(config.videoGenerateAudio, true),
         ...(primaryImageUrl ? { image_url: primaryImageUrl } : {}),
-        ...(extraImageUrls.length ? { reference_images: extraImageUrls.map((url, index) => ({ url, name: references[index + extraImageOffset]?.name || `图片${index + extraImageOffset + 1}` })) } : {}),
+        ...(extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
         ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
         ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
     };
@@ -413,6 +418,10 @@ function normalizeCangyuanVideoRatio(value: string) {
 function normalizeCangyuanVideoDuration(value: string) {
     const duration = normalizeSeedanceDuration(value);
     return duration === -1 ? 5 : duration;
+}
+
+function normalizeCangyuanSeedanceResolution(value: string) {
+    return normalizeVideoResolution(value).toLowerCase() === "480p" ? "480p" : "720p";
 }
 
 function isCangyuanGrokVideoModel(model: string) {
