@@ -11,6 +11,11 @@ const resolutionOptions = [
     { value: "480", label: "480p" },
 ];
 
+const cangyuanSeedanceStandardResolutionOptions = [
+    { value: "480p", label: "480p" },
+    { value: "720p", label: "720p" },
+];
+
 const sizeOptions = [
     { value: "1280x720", label: "横屏", width: 1280, height: 720 },
     { value: "720x1280", label: "竖屏", width: 720, height: 1280 },
@@ -104,12 +109,15 @@ export function VideoSettingsPanel({ config, onConfigChange, onModelChange, them
 function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle, className }: VideoSettingsPanelProps) {
     const selectedModel = config.model || config.videoModel;
     const model = modelOptionName(selectedModel);
-    const resolution = normalizeSeedanceResolution(config.vquality, model);
+    const isCangyuanStandard = isCangyuanSeedanceStandardModel(config, model);
+    const rawResolution = normalizeSeedanceResolution(config.vquality, model);
+    const resolution = isCangyuanStandard && rawResolution !== "480p" ? "720p" : rawResolution;
     const fixedResolution = seedanceModelFixedResolution(model);
     const ratio = normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
+    const availableResolutionOptions = isCangyuanStandard ? cangyuanSeedanceStandardResolutionOptions : seedanceResolutionOptions;
     const updateResolution = (value: string) => {
         const matchedModel = findSeedanceModelOptionByResolution(config, selectedModel, value);
         if (matchedModel && matchedModel !== selectedModel) onModelChange?.(matchedModel);
@@ -122,7 +130,7 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {seedanceResolutionOptions.map((item) => {
+                        {availableResolutionOptions.map((item) => {
                             const switchTarget = findSeedanceModelOptionByResolution(config, selectedModel, item.value);
                             const lockedMismatch = Boolean(fixedResolution && item.value !== resolution && !switchTarget);
                             const disabled = lockedMismatch || (!fixedResolution && item.value === "1080p" && isSeedanceFastModel(model));
@@ -175,9 +183,18 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
     );
 }
 
-export function videoResolutionLabel(value: string, model = "") {
+function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
+    const name = modelOptionName(model).toLowerCase();
+    const baseUrl = config.baseUrl.toLowerCase();
+    return (config.apiFormat === "cangyuan" || baseUrl.includes("ai.cangyuansuanli.cn")) && (name === "seedance-2.0" || name === "seedance-2.0-fast");
+}
+
+export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
-    if (isSeedanceVideoModel(modelName)) return seedanceResolutionLabel(normalizeSeedanceResolution(value, modelName));
+    if (isSeedanceVideoModel(modelName)) {
+        const resolution = normalizeSeedanceResolution(value, modelName);
+        return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, modelName) && resolution !== "480p" ? "720p" : resolution);
+    }
     const resolution = normalizeVideoResolutionValue(value);
     return resolution === "4k" ? "4K" : `${resolution}p`;
 }
