@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
+import { BookOpen, Bot, Clapperboard, FileInput, FileText, FolderOpen, Grid2x2, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
@@ -3365,7 +3365,33 @@ function InfiniteCanvasPage() {
         return [
             { id: "upload", label: "上传", onClick: () => handleUploadRequest(undefined, position) },
             { id: "save-asset", label: "保存到我的资产", disabled: !canSaveAsset, onClick: () => selectedNode && void saveNodeAsset(selectedNode) },
-            { id: "add-node", label: "添加节点", onClick: () => createNode(CanvasNodeType.Image, position) },
+            {
+                id: "add-node",
+                label: "添加节点",
+                onClick: () => undefined,
+                children: [
+                    { id: "add-text", label: "文本", icon: <Type className="size-4" />, onClick: () => createNode(CanvasNodeType.Text, position) },
+                    { id: "add-script", label: "Script", icon: <FileText className="size-4" />, onClick: () => createNode(CanvasNodeType.Script, position) },
+                    { id: "add-image", label: "图片", icon: <ImageIcon className="size-4" />, onClick: () => createNode(CanvasNodeType.Image, position) },
+                    { id: "add-video", label: "视频", icon: <Video className="size-4" />, onClick: () => createNode(CanvasNodeType.Video, position) },
+                    { id: "add-audio", label: "音频", icon: <Music2 className="size-4" />, onClick: () => createNode(CanvasNodeType.Audio, position) },
+                    { id: "add-config", label: "生成配置", icon: <Settings2 className="size-4" />, onClick: () => createNode(CanvasNodeType.Config, position) },
+                    { id: "import-card", label: "导入角色卡", icon: <FileInput className="size-4" />, dividerBefore: true, onClick: handleMangaCardImportRequest },
+                    { id: "import-storyboard", label: "导入分镜", icon: <FileInput className="size-4" />, onClick: handleMangaStoryboardImportRequest },
+                    { id: "import-scene-360", label: "导入360场景", icon: <Grid2x2 className="size-4" />, onClick: handleScene360ImportRequest },
+                    { id: "upload-media", label: "上传素材", icon: <Upload className="size-4" />, onClick: () => handleUploadRequest(undefined, position) },
+                    { id: "open-assets", label: "我的素材", icon: <FolderOpen className="size-4" />, dividerBefore: true, onClick: () => setAssetPickerOpen(true) },
+                    {
+                        id: "open-director-desk",
+                        label: "3D导演台",
+                        icon: <Clapperboard className="size-4" />,
+                        onClick: () => {
+                            setLastDirectorDeskCanvasId(projectId);
+                            navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
+                        },
+                    },
+                ],
+            },
             { id: "undo", label: "撤销", shortcut: "⌘Z", disabled: !historyState.canUndo, dividerBefore: true, onClick: undoCanvas },
             { id: "redo", label: "重做", shortcut: "⇧⌘Z", disabled: !historyState.canRedo, onClick: redoCanvas },
             {
@@ -3378,7 +3404,7 @@ function InfiniteCanvasPage() {
                 },
             },
         ];
-    }, [contextMenu, createNode, handleUploadRequest, historyState.canRedo, historyState.canUndo, nodeById, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, saveNodeAsset, selectedNodeIds, undoCanvas]);
+    }, [contextMenu, createNode, handleMangaCardImportRequest, handleMangaStoryboardImportRequest, handleScene360ImportRequest, handleUploadRequest, historyState.canRedo, historyState.canUndo, navigate, nodeById, pasteCopiedNodes, pasteSystemClipboard, projectId, redoCanvas, saveNodeAsset, selectedNodeIds, undoCanvas]);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
