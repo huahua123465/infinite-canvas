@@ -322,6 +322,14 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             <AssetEditorField label="试听台词" value={editingAsset.voiceSampleText || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSampleText: value })} />
                                             <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
                                             {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? <audio src={editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey} controls className="mt-3 h-9 w-full" /> : <div className="mt-2 text-xs leading-5 text-cyan-100/70">生成后可在这里试听；后续视频会把这段声音作为角色音色参考。</div>}
+                                            <div className="mt-2 flex items-start gap-2 text-xs leading-5 text-cyan-100/60">
+                                                <span className="min-w-0 flex-1">{editingAsset.voiceAudioCacheHit === "shared" ? "已命中仓库共享试听缓存，本次不会重新请求语音 API。" : editingAsset.voiceAudioCacheHit === "local" ? "已命中本地试听缓存，本次不会重新请求语音 API。" : "首次生成会请求语音 API；同一模型、音色、语速、提示词和试听台词会自动复用缓存。"}</span>
+                                                {editingAsset.voiceAudioCacheKey ? (
+                                                    <Button size="small" type="text" className="!h-6 !px-1.5 !text-cyan-100/75" icon={<Copy className="size-3.5" />} onClick={() => void navigator.clipboard?.writeText(editingAsset.voiceAudioCacheKey || "")}>
+                                                        缓存 Key
+                                                    </Button>
+                                                ) : null}
+                                            </div>
                                             {editingAsset.voiceAudioError ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.voiceAudioError}</div> : null}
                                         </div>
                                     ) : null}
@@ -1005,6 +1013,10 @@ function AssetVoiceSpeakerField({ asset, suggestion, onChange }: { asset: Storyb
         searchText: [item.label, item.value, item.tone, ...item.tags].join(" "),
     }));
     const recommended = suggestion ? `${suggestion.label} · ${suggestion.value}` : "";
+    const handleSpeakerChange = (value: string | string[]) => {
+        const rawValue = Array.isArray(value) ? value[value.length - 1] || "" : value;
+        onChange(normalizeSpeakerInput(rawValue));
+    };
     return (
         <div className="mb-4">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -1015,21 +1027,29 @@ function AssetVoiceSpeakerField({ asset, suggestion, onChange }: { asset: Storyb
                     </Button>
                 ) : null}
             </div>
-            <input className="mb-2 block h-10 w-full rounded-lg border border-[#383838] bg-[#303030] px-3 text-sm text-[#f5f5f5] outline-none focus:border-[#777]" value={asset.voiceSpeaker || ""} placeholder={recommended || "火山 speaker ID，例如 zh_female_cancan_mars_bigtts"} onChange={(event) => onChange(event.target.value)} />
             <Select
                 allowClear
+                mode="tags"
                 showSearch
                 className="w-full"
                 popupMatchSelectWidth={false}
-                value={asset.voiceSpeaker || undefined}
-                placeholder="选择内置火山音色"
+                value={asset.voiceSpeaker ? [asset.voiceSpeaker] : []}
+                placeholder={recommended || "粘贴官方 Voice_type，或选择内置火山音色"}
                 options={options}
                 optionFilterProp="searchText"
-                onChange={(value) => onChange(value || "")}
+                maxCount={1}
+                tokenSeparators={[",", "，", "\n", "\t"]}
+                onChange={handleSpeakerChange}
+                onBlur={() => handleSpeakerChange(asset.voiceSpeaker || "")}
             />
+            <div className="mt-2 text-xs leading-5 text-cyan-100/60">请粘贴音色库里的 Voice_type，例如 zh_female_meilinvyou_uranus_bigtts；复制时出现空格会自动转成下划线。</div>
             {suggestion ? <div className="mt-2 truncate text-xs text-cyan-100/70">推荐：{recommended}</div> : null}
         </div>
     );
+}
+
+function normalizeSpeakerInput(value: string) {
+    return value.trim().replace(/\s+/g, "_");
 }
 
 function AssetEditorField({ label, value, textarea, tall, placeholder, onChange }: { label: string; value: string; textarea?: boolean; tall?: boolean; placeholder?: string; onChange: (value: string) => void }) {

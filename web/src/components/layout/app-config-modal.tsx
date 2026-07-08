@@ -282,7 +282,7 @@ export function AppConfigModal() {
                                                 <Form.Item label="Base URL" className="mb-0">
                                                     <Input placeholder={defaultBaseUrlForApiFormat(channel.apiFormat)} value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
                                                 </Form.Item>
-                                                <Form.Item label="API Key" className="mb-0">
+                                                <Form.Item label="API Key" extra={/openspeech\.bytedance\.com/i.test(channel.baseUrl) ? "火山 OpenSpeech 新版控制台填 API Key；旧版控制台填 APP ID|Access Token，不需要 Secret Key。" : undefined} className="mb-0">
                                                     <Input.Password value={channel.apiKey} onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })} />
                                                 </Form.Item>
                                                 <Form.Item label="模型列表" extra={channel.apiFormat === "ark" ? "方舟 Seedance 可填写模型 ID，或直接填写 Endpoint ID（ep-xxxx）" : undefined} className="mb-0 md:col-span-2">

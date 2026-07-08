@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 音频生成缓存：普通音频节点和脚本节点角色声音生成应先查 `/audio/voice-previews/manifest.json` 共享试听缓存，再查浏览器 IndexedDB 本地缓存；同一模型、音色、语速、提示词和试听台词重复生成时不应再次请求语音 API，角色编辑面板应显示本地缓存或共享缓存命中状态。火山 2.0 `*_uranus_bigtts` 音色应优先按 `seed-tts-2.0` 资源 ID 调用，内置火山音色候选应包含常用官方 2.0 Voice_type。
+
 - 沧元算力 Seedance 视频模型路由：选择 `seedance-2.0` / `seedance-2.0-fast` 后，视频工作台和画布视频节点都应把视频模型作为实际请求模型提交到 `/v1/videos`，请求体应使用 `image_url`、`reference_image_urls`、`reference_videos`、`reference_audios`、`resolution` 和 `audio` 字段；平台任务日志不应因前端残留默认模型而误走 Sora。
 
 - 视频任务恢复：画布视频生成创建任务后应把 `videoTaskId`、平台、模型和端点写入视频节点；生成中或失败节点应显示任务 ID。页面刷新、网络中断或平台已完成但画布未接回时，点击视频节点的“查询任务结果”应优先轮询已有任务并把成功视频保存回画布，避免重新提交任务扣费。旧节点没有保存任务 ID 时，可在视频节点里手动填写平台任务 ID 查询已有结果。

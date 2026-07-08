@@ -1,10 +1,18 @@
 import axios from "axios";
+import localforage from "localforage";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, suggestVolcengineSpeakerForText } from "@/lib/audio-generation";
-import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type RequestOptions = { signal?: AbortSignal };
+export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
+type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
+type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
+
+const audioCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "audio_generation_cache" });
+const sharedPreviewManifestUrl = "/audio/voice-previews/manifest.json";
+let sharedPreviewManifest: Promise<Map<string, SharedAudioCacheEntry>> | null = null;
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -55,7 +63,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
 async function requestVolcengineSpeech(config: AiConfig, resourceId: string, text: string, options?: RequestOptions): Promise<Blob> {
     const format = normalizeVolcengineAudioFormat(config.audioFormat);
     const speaker = normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(`${config.audioInstructions}\n${text}`).value;
-    const normalizedResourceId = normalizeVolcengineResourceId(resourceId);
+    const normalizedResourceId = normalizeVolcengineResourceId(resourceId, speaker);
     const requests = volcengineSpeechRequests(config.baseUrl);
     const payload = {
         user: { uid: "infinite-canvas" },
@@ -88,16 +96,109 @@ async function requestVolcengineSpeech(config: AiConfig, resourceId: string, tex
             await assertAudioBlob(audio);
             return audio;
         } catch (error) {
-            lastError = error;
+            lastError = withVolcengineSpeechContext(error, normalizedResourceId, speaker);
             if (!shouldTryNextVolcengineRequest(error, request)) break;
         }
     }
     throw new Error(await readAxiosError(lastError, requests[0]?.viaAgent ? "火山语音合成本地代理失败" : "火山语音合成失败"));
 }
 
+function withVolcengineSpeechContext(error: unknown, resourceId: string, speaker: string) {
+    if (!(error instanceof Error) || !/resource ID is mismatched with speaker related resource/i.test(error.message)) return error;
+    return new Error(`${error.message}。当前音频模型资源是 ${resourceId}，但 speaker 是 ${speaker}，两者不属于同一套火山语音资源；请使用当前服务详情音色列表里的 Voice_type，或切换到该 speaker 对应的资源模型。`);
+}
+
 export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
     const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
     return uploadMediaFile(audio, "audio");
+}
+
+export async function requestStoredAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<StoredAudioFile> {
+    const cacheKey = await audioGenerationCacheKey(config, prompt);
+    const cached = await readLocalAudioCache(cacheKey);
+    if (cached) return { ...cached, cacheKey, cacheHit: "local" };
+    const shared = await readSharedAudioCache(cacheKey, config.audioFormat);
+    if (shared) return { ...shared, cacheKey, cacheHit: "shared" };
+    const audio = await storeGeneratedAudio(await requestAudioGeneration(config, prompt, options), config.audioFormat);
+    await writeLocalAudioCache(cacheKey, audio);
+    return { ...audio, cacheKey };
+}
+
+async function readLocalAudioCache(cacheKey: string): Promise<UploadedFile | null> {
+    const record = await audioCacheStore.getItem<AudioCacheRecord>(cacheKey);
+    if (!record?.storageKey) return null;
+    const blob = await getMediaBlob(record.storageKey);
+    if (!blob) {
+        await audioCacheStore.removeItem(cacheKey);
+        return null;
+    }
+    const url = await resolveMediaUrl(record.storageKey, "");
+    return { url, storageKey: record.storageKey, bytes: record.bytes || blob.size, mimeType: record.mimeType || blob.type || "audio/mpeg", durationMs: record.durationMs };
+}
+
+async function readSharedAudioCache(cacheKey: string, format: string): Promise<UploadedFile | null> {
+    const manifest = await loadSharedAudioCacheManifest();
+    const entry = manifest.get(cacheKey);
+    if (!entry?.url) return null;
+    const response = await fetch(entry.url);
+    if (!response.ok) return null;
+    const type = entry.mimeType || response.headers.get("Content-Type") || audioMimeType(format);
+    const blob = new Blob([await response.arrayBuffer()], { type });
+    const audio = await storeGeneratedAudio(blob, format);
+    await writeLocalAudioCache(cacheKey, audio);
+    return { ...audio, bytes: entry.bytes || audio.bytes, mimeType: entry.mimeType || audio.mimeType, durationMs: entry.durationMs || audio.durationMs };
+}
+
+async function writeLocalAudioCache(cacheKey: string, audio: UploadedFile) {
+    await audioCacheStore.setItem<AudioCacheRecord>(cacheKey, {
+        storageKey: audio.storageKey,
+        bytes: audio.bytes,
+        mimeType: audio.mimeType,
+        durationMs: audio.durationMs,
+        createdAt: Date.now(),
+    });
+}
+
+async function loadSharedAudioCacheManifest() {
+    if (!sharedPreviewManifest) {
+        sharedPreviewManifest = fetch(sharedPreviewManifestUrl)
+            .then((response) => (response.ok ? response.json() : []))
+            .then((items: SharedAudioCacheEntry[]) => new Map((Array.isArray(items) ? items : []).filter((item) => item.key && item.url).map((item) => [item.key, { ...item, url: normalizeSharedAudioUrl(item.url) }])))
+            .catch(() => new Map<string, SharedAudioCacheEntry>());
+    }
+    return sharedPreviewManifest;
+}
+
+function normalizeSharedAudioUrl(url: string) {
+    if (/^https?:\/\//i.test(url) || url.startsWith("/")) return url;
+    return `/audio/voice-previews/${url.replace(/^\/+/, "")}`;
+}
+
+async function audioGenerationCacheKey(config: AiConfig, prompt: string) {
+    let requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
+    if (normalizeVolcengineSpeakerValue(requestConfig.audioVoice) && !isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim())) {
+        const volcengineModel = findVolcengineAudioModel(config);
+        if (volcengineModel) requestConfig = resolveModelRequestConfig(config, volcengineModel);
+    }
+    const payload = JSON.stringify({
+        v: 1,
+        baseUrl: requestConfig.baseUrl.trim().replace(/\/+$/, ""),
+        model: requestConfig.model.trim(),
+        voice: normalizeAudioVoiceValue(requestConfig.audioVoice),
+        format: normalizeAudioFormatValue(requestConfig.audioFormat),
+        speed: normalizeAudioSpeedValue(requestConfig.audioSpeed),
+        instructions: requestConfig.audioInstructions.trim(),
+        prompt: prompt.trim(),
+    });
+    return `audio-preview:${await sha256(payload)}`;
+}
+
+async function sha256(value: string) {
+    if (typeof crypto !== "undefined" && crypto.subtle) {
+        const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+        return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    return btoa(unescape(encodeURIComponent(value))).replace(/[+/=]/g, "").slice(0, 96);
 }
 
 function assertAudioConfig(config: AiConfig, model: string) {
@@ -206,12 +307,22 @@ function volcengineDevProxyUrl(targetUrl: string) {
     }
 }
 
-function normalizeVolcengineResourceId(value: string) {
+function normalizeVolcengineResourceId(value: string, speaker = "") {
+    const inferred = inferVolcengineResourceIdFromSpeaker(speaker);
+    if (inferred) return inferred;
     const resourceId = value.trim();
     if (/^tts-seedtts2/i.test(resourceId) || /seedtts2/i.test(resourceId)) return "seed-tts-2.0";
     if (/^tts-seedicl2/i.test(resourceId) || /seedicl2/i.test(resourceId)) return "seed-icl-2.0";
-    if (/^seed-(tts|icl)-/i.test(resourceId)) return resourceId;
+    if (/^(seed-(tts|icl)-|volc\.service_type\.)/i.test(resourceId)) return resourceId;
     return "seed-tts-2.0";
+}
+
+function inferVolcengineResourceIdFromSpeaker(value: string) {
+    const speaker = value.trim().toLowerCase();
+    if (!speaker) return "";
+    if (/(^s_|_icl_|clone|voiceclone)/i.test(speaker)) return "seed-icl-2.0";
+    if (/_uranus_bigtts$/i.test(speaker)) return "seed-tts-2.0";
+    return "";
 }
 
 function nanoConnectId() {

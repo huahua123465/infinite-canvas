@@ -52,6 +52,8 @@ export type StoryboardAsset = {
     voiceAudioVoice?: string;
     voiceAudioSpeed?: string;
     voiceAudioInstructions?: string;
+    voiceAudioCacheKey?: string;
+    voiceAudioCacheHit?: "local" | "shared";
     voiceSampleText?: string;
 };
 

@@ -119,7 +119,7 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
     if (!apiKey || !payload) return void res.status(400).json({ ok: false, error: "missing volcengine apiKey or payload" });
     const upstream = await fetch(safeVolcengineSpeechUrl(stringField(body.baseUrl)), {
         method: "POST",
-        headers: volcengineSpeechHeaders(apiKey, normalizeVolcengineResourceId(stringField(body.resourceId))),
+        headers: volcengineSpeechHeaders(apiKey, normalizeVolcengineResourceId(stringField(body.resourceId), volcengineSpeechSpeaker(payload))),
         body: JSON.stringify(payload),
     });
     const data = Buffer.from(await upstream.arrayBuffer());
@@ -192,12 +192,27 @@ function volcengineSpeechUrl(baseUrl: string) {
     return `${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}/api/v3/tts/unidirectional`;
 }
 
-function normalizeVolcengineResourceId(value: string) {
+function normalizeVolcengineResourceId(value: string, speaker = "") {
+    const inferred = inferVolcengineResourceIdFromSpeaker(speaker);
+    if (inferred) return inferred;
     const resourceId = value.trim();
     if (/^tts-seedtts2/i.test(resourceId) || /seedtts2/i.test(resourceId)) return "seed-tts-2.0";
     if (/^tts-seedicl2/i.test(resourceId) || /seedicl2/i.test(resourceId)) return "seed-icl-2.0";
-    if (/^seed-(tts|icl)-/i.test(resourceId)) return resourceId;
+    if (/^(seed-(tts|icl)-|volc\.service_type\.)/i.test(resourceId)) return resourceId;
     return "seed-tts-2.0";
+}
+
+function volcengineSpeechSpeaker(payload: object) {
+    const reqParams = (payload as { req_params?: unknown }).req_params;
+    return reqParams && typeof reqParams === "object" ? stringField((reqParams as { speaker?: unknown }).speaker) : "";
+}
+
+function inferVolcengineResourceIdFromSpeaker(value: string) {
+    const speaker = value.trim().toLowerCase();
+    if (!speaker) return "";
+    if (/(^s_|_icl_|clone|voiceclone)/i.test(speaker)) return "seed-icl-2.0";
+    if (/_uranus_bigtts$/i.test(speaker)) return "seed-tts-2.0";
+    return "";
 }
 
 function volcengineSpeechHeaders(apiKey: string, resourceId: string) {

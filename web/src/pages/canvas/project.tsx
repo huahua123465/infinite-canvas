@@ -5,7 +5,7 @@ import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
+import { requestStoredAudioGeneration } from "@/services/api/audio";
 import { requestVideoGeneration, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, resolveModelRequestConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -2317,15 +2317,15 @@ function InfiniteCanvasPage() {
                 if (!asset.voiceSpeaker?.trim()) message.info(`已按角色文本自动选择 speaker：${voiceProfile.voice}`);
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
+            updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceAudioCacheHit: undefined, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
                 const customVoicePrompt = asset.voicePrompt?.trim();
                 const audioInstructions = [generationConfig.audioInstructions, voiceProfile.instructions, customVoicePrompt].filter(Boolean).join("\n\n");
                 const audioConfig = { ...generationConfig, audioVoice: voiceProfile.voice, audioSpeed: voiceProfile.speed, audioInstructions };
-                const audio = await storeGeneratedAudio(await requestAudioGeneration(audioConfig, sampleText, { signal: controller.signal }), generationConfig.audioFormat);
-                updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceSampleText: sampleText });
+                const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal });
+                updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceAudioCacheKey: audio.cacheKey, voiceAudioCacheHit: audio.cacheHit, voiceSampleText: sampleText });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
                     setNodes((prev) =>
@@ -2340,7 +2340,7 @@ function InfiniteCanvasPage() {
                         ),
                     );
                 }
-                message.success("角色声音已生成，可以试听");
+                message.success(audio.cacheHit ? "已使用缓存声音，可以试听" : "角色声音已生成，可以试听");
             } catch (error) {
                 if (isGenerationCanceled(error)) {
                     updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioStatus: NODE_STATUS_IDLE, voiceAudioError: undefined });
@@ -3693,7 +3693,7 @@ function InfiniteCanvasPage() {
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
                     const controller = startGenerationRequest(audioId, nodeId, nodeId, runController);
                     try {
-                        const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal }), generationConfig.audioFormat);
+                        const audio = await requestStoredAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal });
                         setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));
                     } finally {
                         finishGenerationRequest(audioId, controller);
@@ -3911,7 +3911,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
-                    const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, prompt, { signal: controller.signal }), generationConfig.audioFormat);
+                    const audio = await requestStoredAudioGeneration(generationConfig, prompt, { signal: controller.signal });
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...audioMetadata(audio), prompt, ...buildAudioGenerationMetadata(generationConfig) } } : item)));
                     return;
                 }
