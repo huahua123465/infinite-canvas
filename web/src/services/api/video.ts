@@ -8,7 +8,7 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig 
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; video_url?: string; data?: Array<{ url?: string }> };
+type VideoResponse = { id: string; status?: string; progress?: number | string; error?: { code?: string; message?: string }; error_code?: string; message?: string; video_url?: string; video?: { url?: string }; raw_data?: { video_url?: string; url?: string }; data?: Array<{ url?: string }> | { progress?: number | string; status?: string; url?: string; video_url?: string; video?: { url?: string }; raw_data?: { video_url?: string; url?: string } } };
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
 type SeedanceTask = {
     id: string;
@@ -32,9 +32,9 @@ export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" 
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void };
 export type VideoGenerationTaskState =
-    | { status: "pending"; providerStatus?: string }
-    | { status: "completed"; result: VideoGenerationResult; providerStatus?: string }
-    | { status: "failed"; error: string; providerStatus?: string };
+    | { status: "pending"; providerStatus?: string; progress?: number }
+    | { status: "completed"; result: VideoGenerationResult; providerStatus?: string; progress?: number }
+    | { status: "failed"; error: string; providerStatus?: string; progress?: number };
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -63,7 +63,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
             options?.onProgress?.({ percent: 100, text: state.error, stage: "failed", providerStatus: state.providerStatus });
             throw new Error(state.error);
         }
-        options?.onProgress?.(videoPollingProgress(task.provider, state.providerStatus, attempt));
+        options?.onProgress?.(videoPollingProgress(task.provider, state.providerStatus, attempt, state.progress));
         if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : ""}视频生成超时，请稍后重试`);
         await delay(delayMs, options?.signal);
     }
@@ -165,15 +165,17 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
 async function pollCangyuanVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
-        if (video.status === "completed") {
-            const url = video.video_url || video.data?.find((item) => item.url)?.url;
-            if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: video.status };
+        const providerStatus = cangyuanVideoStatus(video);
+        const progress = cangyuanVideoProgress(video);
+        if (providerStatus === "completed") {
+            const url = cangyuanVideoUrl(video);
+            if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus, progress };
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
-            return { status: "completed", result: { blob: content.data }, providerStatus: video.status };
+            return { status: "completed", result: { blob: content.data }, providerStatus, progress };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: video.error?.message || "视频生成失败", providerStatus: video.status };
-        return { status: "pending", providerStatus: video.status || "in_progress" };
+        if (providerStatus === "failed" || providerStatus === "cancelled") return { status: "failed", error: cangyuanVideoError(video), providerStatus, progress };
+        return { status: "pending", providerStatus: providerStatus || "in_progress", progress };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
     }
@@ -351,6 +353,35 @@ function normalizeCangyuanVideoDuration(value: string) {
     return duration === -1 ? 5 : duration;
 }
 
+function cangyuanVideoStatus(video: VideoResponse) {
+    const nestedStatus = !Array.isArray(video.data) ? stringValue(video.data?.status) : "";
+    return (video.status || nestedStatus).toLowerCase();
+}
+
+function cangyuanVideoProgress(video: VideoResponse) {
+    const nestedProgress = !Array.isArray(video.data) ? video.data?.progress : undefined;
+    return normalizeProgress(video.progress ?? nestedProgress);
+}
+
+function cangyuanVideoUrl(video: VideoResponse) {
+    if (video.video_url) return video.video_url;
+    if (video.video?.url) return video.video.url;
+    if (video.raw_data?.video_url || video.raw_data?.url) return video.raw_data.video_url || video.raw_data.url;
+    if (Array.isArray(video.data)) return video.data.find((item) => item.url)?.url;
+    return video.data?.video_url || video.data?.url || video.data?.video?.url || video.data?.raw_data?.video_url || video.data?.raw_data?.url;
+}
+
+function cangyuanVideoError(video: VideoResponse) {
+    const message = stringValue(video.error?.message) || stringValue(video.message);
+    const code = stringValue(video.error_code) || stringValue(video.error?.code);
+    return [message || "视频生成失败", code].filter(Boolean).join("：");
+}
+
+function normalizeProgress(value: unknown) {
+    const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value.replace("%", "")) : NaN;
+    return Number.isFinite(numberValue) ? Math.max(0, Math.min(100, numberValue)) : undefined;
+}
+
 function unwrapVideoResponse(payload: ApiVideoResponse) {
     return unwrapEnvelope(payload, "接口没有返回视频任务");
 }
@@ -379,8 +410,15 @@ function readAxiosError(error: unknown, fallback: string) {
     return normalizeVideoErrorMessage(error instanceof Error ? error.message : fallback);
 }
 
-function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number): VideoGenerationProgress {
+function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number, progress?: number): VideoGenerationProgress {
     const normalized = status || "running";
+    if (provider === "cangyuan" && Number.isFinite(progress)) {
+        const percent = Math.max(16, Math.min(95, Math.round(progress!)));
+        if (normalized === "queued") {
+            return { percent, text: `沧元视频任务排队中，当前进度 ${percent}%`, stage: "queued", providerStatus: normalized };
+        }
+        return { percent, text: `沧元视频任务生成中，当前进度 ${percent}%`, stage: "running", providerStatus: normalized };
+    }
     if (normalized === "queued") {
         return { percent: Math.min(35, 22 + attempt * 2), text: provider === "seedance" ? "Seedance 任务排队中，正在等待调度" : "视频任务排队中", stage: "queued", providerStatus: normalized };
     }

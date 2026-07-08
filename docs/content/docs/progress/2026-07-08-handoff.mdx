@@ -49,10 +49,22 @@ git pull origin custom/jt-vite-merge
 
 - 沧元算力视频渠道走 `POST /v1/videos`。
 - 轮询走 `GET /v1/videos/{task_id}`。
-- 完成后优先读取 `video_url`，没有时再尝试 `/v1/videos/{task_id}/content`。
+- 完成后优先读取 `video_url`，并兼容 `video.url`、`raw_data.video_url`、`data.video_url`、`data.url`；没有时再尝试 `/v1/videos/{task_id}/content`。
 - 轮询间隔为 5 秒。
+- 轮询响应会读取 `progress` 并用于节点真实百分比显示，失败时尽量展示 `error.message` / `error_code`。
 - 参考视频或参考音频必须同时提供至少 1 张主参考图，符合沧元算力文档要求。
 - 沧元算力下的 `seedance-2.0-*` 不再误走方舟 Ark 的 `/contents/generations/tasks`。
+
+### 5. 单模型 API 文档补读
+
+- 已补读图二“单模型 API 说明”区域的数据源：`GET https://ai.cangyuansuanli.cn/api/pricing` 返回的 `api_doc` 字段，与模型广场“查看文档”弹窗一致。
+- 本次覆盖的视频模型：`seedance-2.0`、`seedance-2.0-fast`、`seedance-2.0-1080p`、`seedance-2.0-480p`、`seedance-2.0-4k`、`seedance-2.0-720p`、`seedance-2.0-fast-480p`、`seedance-2.0-fast-720p`、`seedance-2.0-mini-480p`、`seedance-2.0-mini-720p`、`omni-fast`、`omni-fast-no-water`、`omni-v2v`、`omni-v2v-no-water`、`sora2`、`grok-video`、`grok-video-1.5`。
+- 本次覆盖的图像模型：`flux-pro-2`、`gemini-banana-2.0-1/2k`、`gemini-banana-2.0-4k`、`gemini-banana-flash-lite`、`gemini-banana-pro-1/2k`、`gemini-banana-pro-4k`、`gpt-image-2`、`gpt-image-2-2k`、`gpt-image-2-4k`。
+- Seedance 2.0 系列统一走 `/v1/videos`、`/v1/videos/{task_id}`、可选 `/content`；分辨率/价格/快慢不同，但核心字段一致：`prompt`、`aspect_ratio`、`duration`、`image_url`、`reference_images`、`reference_videos`、`reference_audios`、`first_image_url`、`last_image_url`。
+- Omni 系列走 `/v1/videos` 和 `/v1/videos/{task_id}`；文生/图生支持 `image_url`、多图 `input_reference`、首尾帧 `first_image_url` / `last_image_url`，V2V 使用 `video_url`。
+- 文档中 `sora2` 的价格数据源里对应 `openai-sora2`，接口仍是 `/v1/videos` 和 `/v1/videos/{task_id}`，完成结果可能在 `video.url` 或 `raw_data.video_url`。
+- Grok 系列不是 `/v1/videos`，文档写的是 `POST /v1/video/generations` 和 `GET /v1/video/generations/{task_id}`；`grok-video` 支持文生、图生、多参考图和 `video_url` 视频编辑，`grok-video-1.5` 必须且只能单图参考。
+- 图像模型文档统一支持 `/v1/images/generations` 的同步/异步模式，异步结果轮询后从 `data[].url` 取图；Banana / GPT Image / Flux 的核心差异主要在模型名、尺寸、质量、是否推荐同步以及是否支持参考图。
 
 ## 明天重点验证
 
@@ -62,7 +74,9 @@ git pull origin custom/jt-vite-merge
 4. 使用 `gemini-banana-pro-4k` 做一次基础文生图，确认能取到图片 URL 并保存到画布。
 5. 使用 `gemini-banana-pro-4k` 做一次图生图，确认参考图通过 `image` / `images` 生效。
 6. 使用 `seedance-2.0-720p` 做一次基础文生视频，确认走 `/v1/videos`，不是 Ark 的 `/contents/generations/tasks`。
-7. 视频完成后确认 `video_url` 或 `/content` 下载都能正常进入画布。
+7. 生成中确认节点显示沧元返回的真实 `progress` 百分比，视频完成后确认 `video_url`、`video.url`、`raw_data.video_url` 或 `/content` 下载都能正常进入画布。
+8. 单独验证 `sora2` / `openai-sora2` 返回结构，确认通用视频结果 URL 兼容生效。
+9. Grok 系列需要后续补专用 `/v1/video/generations` 适配后再验证。
 
 ## 如果测试失败优先看
 
@@ -71,4 +85,3 @@ git pull origin custom/jt-vite-merge
 - 图像无返回：检查响应里是否是异步任务 ID；如果是，应看轮询接口是否返回 `completed` 和 `data[].url`。
 - 视频超时：确认任务状态是否停在 `queued` / `in_progress`，以及是否触发内容安全拦截。
 - Seedance 相关参数错误：优先看是否传了不支持的比例、时长、参考视频/音频，或缺少主参考图。
-
