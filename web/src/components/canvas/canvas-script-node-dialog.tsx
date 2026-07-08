@@ -155,7 +155,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
             className="canvas-script-node-dialog"
             open={open && Boolean(node)}
             footer={null}
-            closeIcon={editingAsset ? null : <X className="size-5" />}
+            closable={false}
             onCancel={onClose}
             width="100vw"
             centered
@@ -167,7 +167,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         >
             {node ? (
                 <div className="flex h-full flex-col bg-[#101010] text-[#f1f1f1]">
-                    <div className="flex min-h-20 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3">
+                    <div className="sticky top-0 z-30 flex min-h-20 shrink-0 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3 shadow-[0_10px_28px_rgba(0,0,0,.35)]">
                         <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
                             <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
                             <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
@@ -192,6 +192,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         {view === "prompts" ? (
                             <PromptStepToolbar node={node} rows={rows} actionKey={actionKey} videoPromptCount={videoPromptCount} onComposeFinalPrompt={onComposeFinalPrompt} />
                         ) : null}
+                        <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
                     {view === "assets" ? (
                         <AssetPrepView
@@ -454,7 +455,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                     </tbody>
                 </table>
             </div>
-            <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#121212] px-8">
+            <div className="sticky bottom-0 z-30 flex h-16 shrink-0 items-center justify-between border-t border-[#303030] bg-[#121212] px-8 shadow-[0_-10px_28px_rgba(0,0,0,.35)]">
                 <div className="flex items-center gap-2">
                     <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" onClick={onAddRow}>
                     添加镜头
@@ -549,7 +550,7 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                     </tbody>
                 </table>
             </div>
-            <div className="flex h-16 items-center justify-between border-t border-[#303030] bg-[#121212] px-8">
+            <div className="sticky bottom-0 z-30 flex h-16 shrink-0 items-center justify-between border-t border-[#303030] bg-[#121212] px-8 shadow-[0_-10px_28px_rgba(0,0,0,.35)]">
                 <div className="flex items-center gap-3">
                     <Button icon={<Plus className="size-4" />} type="text" className="!text-[#f1f1f1]" disabled={actionKey !== null} onClick={onAddRow}>
                         添加镜头
