@@ -4,7 +4,7 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -109,7 +109,7 @@ export function VideoSettingsPanel({ config, onConfigChange, onModelChange, them
 function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle, className }: VideoSettingsPanelProps) {
     const selectedModel = config.model || config.videoModel;
     const model = modelOptionName(selectedModel);
-    const isCangyuanStandard = isCangyuanSeedanceStandardModel(config, model);
+    const isCangyuanStandard = isCangyuanSeedanceStandardModel(config, selectedModel);
     const rawResolution = normalizeSeedanceResolution(config.vquality, model);
     const resolution = isCangyuanStandard && rawResolution !== "480p" ? "720p" : rawResolution;
     const fixedResolution = seedanceModelFixedResolution(model);
@@ -184,16 +184,17 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
 }
 
 function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
+    const requestConfig = resolveModelRequestConfig(config, model);
     const name = modelOptionName(model).toLowerCase();
-    const baseUrl = config.baseUrl.toLowerCase();
-    return (config.apiFormat === "cangyuan" || baseUrl.includes("ai.cangyuansuanli.cn")) && (name === "seedance-2.0" || name === "seedance-2.0-fast");
+    const baseUrl = requestConfig.baseUrl.toLowerCase();
+    return (requestConfig.apiFormat === "cangyuan" || baseUrl.includes("ai.cangyuansuanli.cn")) && (name === "seedance-2.0" || name === "seedance-2.0-fast");
 }
 
 export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
     if (isSeedanceVideoModel(modelName)) {
         const resolution = normalizeSeedanceResolution(value, modelName);
-        return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, modelName) && resolution !== "480p" ? "720p" : resolution);
+        return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, model) && resolution !== "480p" ? "720p" : resolution);
     }
     const resolution = normalizeVideoResolutionValue(value);
     return resolution === "4k" ? "4K" : `${resolution}p`;
