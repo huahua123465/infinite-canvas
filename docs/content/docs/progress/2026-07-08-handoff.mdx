@@ -63,20 +63,34 @@ git pull origin custom/jt-vite-merge
 - Seedance 2.0 系列统一走 `/v1/videos`、`/v1/videos/{task_id}`、可选 `/content`；分辨率/价格/快慢不同，但核心字段一致：`prompt`、`aspect_ratio`、`duration`、`image_url`、`reference_images`、`reference_videos`、`reference_audios`、`first_image_url`、`last_image_url`。
 - Omni 系列走 `/v1/videos` 和 `/v1/videos/{task_id}`；文生/图生支持 `image_url`、多图 `input_reference`、首尾帧 `first_image_url` / `last_image_url`，V2V 使用 `video_url`。
 - 文档中 `sora2` 的价格数据源里对应 `openai-sora2`，接口仍是 `/v1/videos` 和 `/v1/videos/{task_id}`，完成结果可能在 `video.url` 或 `raw_data.video_url`。
-- Grok 系列不是 `/v1/videos`，文档写的是 `POST /v1/video/generations` 和 `GET /v1/video/generations/{task_id}`；`grok-video` 支持文生、图生、多参考图和 `video_url` 视频编辑，`grok-video-1.5` 必须且只能单图参考。
+- Grok 系列不是 `/v1/videos`，文档写的是 `POST /v1/video/generations` 和 `GET /v1/video/generations/{task_id}`；本次已新增 Grok 分支，`grok-video` 支持文生、图生、多参考图和 `video_url` 视频编辑，`grok-video-1.5` 必须且只能单图参考。
 - 图像模型文档统一支持 `/v1/images/generations` 的同步/异步模式，异步结果轮询后从 `data[].url` 取图；Banana / GPT Image / Flux 的核心差异主要在模型名、尺寸、质量、是否推荐同步以及是否支持参考图。
+
+### 6. 模型价格显示
+
+- 新增沧元算力价格读取服务，模型选择器会按渠道 Base URL 推导并缓存 `/api/pricing`，读取失败时保持原选择器逻辑不变。
+- 沧元算力渠道的模型下拉项会在模型名后显示价格；`sora2` 会兼容价格数据源中的 `openai-sora2`。
+- 视频工作台、画布配置节点、视频节点提示面板和最终提示词弹窗会把当前视频秒数传给模型选择器，按秒计费模型显示估算金额，按条/按次/按张计费模型显示单价。
+
+### 7. 待处理：视频模型分辨率与参数分辨率冲突
+
+- 当前沧元算力部分视频模型名本身已经带分辨率档位，例如 `seedance-2.0-1080p`、`seedance-2.0-720p`、`seedance-2.0-480p`、`seedance-2.0-4k`。
+- 如果用户在模型选择器选了 `seedance-2.0-1080p`，但视频设置里仍选择 `720p`，容易造成 UI 表达和请求参数不一致。
+- 后续建议规则：带固定分辨率档位的模型以模型名为准，进入选择后自动同步视频设置里的分辨率，并禁用或隐藏不适用选项；无固定档位的模型才保留手动选择。
+- 这样价格、模型能力和请求参数保持一致，用户只需要先选“想要哪个档位”，参数面板负责展示当前档位而不是再制造第二个冲突来源。
 
 ## 明天重点验证
 
 1. 配置里新增渠道，调用格式选择“沧元算力”，Base URL 是否自动填入 `https://ai.cangyuansuanli.cn`。
 2. 填写 API Key 后点击“拉取模型”，确认能读取模型列表。
 3. 进入“模型”Tab，确认 `omni-*` 出现在视频模型可选项，`gemini-banana-*` 出现在图像模型可选项。
-4. 使用 `gemini-banana-pro-4k` 做一次基础文生图，确认能取到图片 URL 并保存到画布。
-5. 使用 `gemini-banana-pro-4k` 做一次图生图，确认参考图通过 `image` / `images` 生效。
-6. 使用 `seedance-2.0-720p` 做一次基础文生视频，确认走 `/v1/videos`，不是 Ark 的 `/contents/generations/tasks`。
-7. 生成中确认节点显示沧元返回的真实 `progress` 百分比，视频完成后确认 `video_url`、`video.url`、`raw_data.video_url` 或 `/content` 下载都能正常进入画布。
-8. 单独验证 `sora2` / `openai-sora2` 返回结构，确认通用视频结果 URL 兼容生效。
-9. Grok 系列需要后续补专用 `/v1/video/generations` 适配后再验证。
+4. 展开沧元算力模型选择器，确认模型名后能看到价格；切换 `seedance-2.0-720p` 等按秒计费模型和视频秒数后，估算金额应随秒数变化。
+5. 使用 `gemini-banana-pro-4k` 做一次基础文生图，确认能取到图片 URL 并保存到画布。
+6. 使用 `gemini-banana-pro-4k` 做一次图生图，确认参考图通过 `image` / `images` 生效。
+7. 使用 `seedance-2.0-720p` 做一次基础文生视频，确认走 `/v1/videos`，不是 Ark 的 `/contents/generations/tasks`。
+8. 生成中确认节点显示沧元返回的真实 `progress` 百分比，视频完成后确认 `video_url`、`video.url`、`raw_data.video_url` 或 `/content` 下载都能正常进入画布。
+9. 单独验证 `sora2` / `openai-sora2` 返回结构，确认通用视频结果 URL 兼容生效。
+10. 使用 `grok-video` 验证文生/图生是否走 `/v1/video/generations`，使用 `grok-video-1.5` 验证单图限制和结果保存。
 
 ## 如果测试失败优先看
 

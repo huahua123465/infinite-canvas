@@ -8,7 +8,31 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig 
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; progress?: number | string; error?: { code?: string; message?: string }; error_code?: string; message?: string; video_url?: string; video?: { url?: string }; raw_data?: { video_url?: string; url?: string }; data?: Array<{ url?: string }> | { progress?: number | string; status?: string; url?: string; video_url?: string; video?: { url?: string }; raw_data?: { video_url?: string; url?: string } } };
+type VideoResponseData = {
+    id?: string;
+    task_id?: string;
+    progress?: number | string;
+    status?: string;
+    state?: string;
+    url?: string;
+    video_url?: string;
+    video?: { url?: string };
+    raw_data?: { video_url?: string; url?: string };
+};
+type VideoResponse = {
+    id?: string;
+    task_id?: string;
+    status?: string;
+    state?: string;
+    progress?: number | string;
+    error?: { code?: string; message?: string };
+    error_code?: string;
+    message?: string;
+    video_url?: string;
+    video?: { url?: string };
+    raw_data?: { video_url?: string; url?: string };
+    data?: VideoResponseData[] | VideoResponseData;
+};
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
 type SeedanceTask = {
     id: string;
@@ -28,7 +52,7 @@ type SeedancePayload = {
 type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string; cangyuanEndpoint?: "videos" | "video-generations" };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void };
 export type VideoGenerationTaskState =
@@ -135,6 +159,9 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
 }
 
 async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (isCangyuanGrokVideoModel(model)) {
+        return createCangyuanGrokVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
+    }
     if ((videoReferences.length || audioReferences.length) && !references.length) {
         throw new Error("沧元算力视频参考视频/音频必须同时提供至少 1 张主参考图");
     }
@@ -155,26 +182,57 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     };
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
-        if (!created.id) throw new Error("视频接口没有返回任务 ID");
-        return { id: created.id, provider: "cangyuan", model };
+        const taskId = cangyuanVideoTaskId(created);
+        if (!taskId) throw new Error("视频接口没有返回任务 ID");
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
 }
 
+async function createCangyuanGrokVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (audioReferences.length) throw new Error("沧元 Grok 视频模型暂不支持音频参考，请移除音频后重试");
+    const modelName = modelOptionName(model);
+    const isGrok15 = modelName.toLowerCase().includes("grok-video-1.5");
+    if (isGrok15 && (references.length !== 1 || videoReferences.length)) throw new Error("grok-video-1.5 必须且只能连接 1 张参考图，不支持纯文生或视频参考");
+    if (!isGrok15 && references.length > 7) throw new Error("grok-video 最多支持 7 张参考图");
+    const imageUrls = await Promise.all(references.slice(0, 7).map((image) => resolveSeedanceImageUrl(config, image)));
+    const videoUrl = videoReferences[0] ? await resolveSeedanceVideoUrl(videoReferences[0]) : "";
+    const duration = normalizeCangyuanVideoDuration(config.videoSeconds);
+    const payload = {
+        model: modelName,
+        prompt: buildSeedancePromptText(prompt, references, videoReferences, []),
+        seconds: duration,
+        duration,
+        aspect_ratio: normalizeCangyuanGrokRatio(config.size),
+        resolution: normalizeCangyuanGrokResolution(config.vquality),
+        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+        ...(videoUrl ? { video_url: videoUrl } : {}),
+    };
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/video/generations"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const taskId = cangyuanVideoTaskId(created);
+        if (!taskId) throw new Error("Grok 视频接口没有返回任务 ID");
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "video-generations" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Grok 视频任务创建失败"));
+    }
+}
+
 async function pollCangyuanVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, cangyuanVideoTaskPath(task)), { headers: aiHeaders(config), signal: options?.signal })).data);
         const providerStatus = cangyuanVideoStatus(video);
         const progress = cangyuanVideoProgress(video);
-        if (providerStatus === "completed") {
+        if (isCangyuanVideoCompleted(providerStatus)) {
             const url = cangyuanVideoUrl(video);
             if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus, progress };
+            if (task.cangyuanEndpoint === "video-generations") return { status: "failed", error: "Grok 视频任务完成但没有返回视频 URL", providerStatus, progress };
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data }, providerStatus, progress };
         }
-        if (providerStatus === "failed" || providerStatus === "cancelled") return { status: "failed", error: cangyuanVideoError(video), providerStatus, progress };
+        if (isCangyuanVideoFailed(providerStatus)) return { status: "failed", error: cangyuanVideoError(video), providerStatus, progress };
         return { status: "pending", providerStatus: providerStatus || "in_progress", progress };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
@@ -353,9 +411,42 @@ function normalizeCangyuanVideoDuration(value: string) {
     return duration === -1 ? 5 : duration;
 }
 
+function isCangyuanGrokVideoModel(model: string) {
+    return modelOptionName(model).toLowerCase().startsWith("grok-video");
+}
+
+function normalizeCangyuanGrokRatio(value: string) {
+    const ratio = normalizeCangyuanVideoRatio(value);
+    return ratio === "9:16" ? "9:16" : "16:9";
+}
+
+function normalizeCangyuanGrokResolution(value: string) {
+    const resolution = normalizeVideoResolution(value).toLowerCase();
+    return resolution === "480p" ? "480p" : "720p";
+}
+
+function cangyuanVideoTaskPath(task: VideoGenerationTask) {
+    return task.cangyuanEndpoint === "video-generations" ? `/video/generations/${encodeURIComponent(task.id)}` : `/videos/${encodeURIComponent(task.id)}`;
+}
+
+function cangyuanVideoTaskId(video: VideoResponse) {
+    if (video.id) return video.id;
+    if (video.task_id) return video.task_id;
+    if (!Array.isArray(video.data)) return video.data?.id || video.data?.task_id || "";
+    return video.data.find((item) => item.id || item.task_id)?.id || video.data.find((item) => item.id || item.task_id)?.task_id || "";
+}
+
 function cangyuanVideoStatus(video: VideoResponse) {
-    const nestedStatus = !Array.isArray(video.data) ? stringValue(video.data?.status) : "";
-    return (video.status || nestedStatus).toLowerCase();
+    const nestedStatus = !Array.isArray(video.data) ? stringValue(video.data?.status) || stringValue(video.data?.state) : "";
+    return (video.status || video.state || nestedStatus).toLowerCase();
+}
+
+function isCangyuanVideoCompleted(status: string) {
+    return ["completed", "complete", "success", "succeeded", "done"].includes(status);
+}
+
+function isCangyuanVideoFailed(status: string) {
+    return ["failed", "fail", "error", "cancelled", "canceled", "expired", "timeout"].includes(status);
 }
 
 function cangyuanVideoProgress(video: VideoResponse) {
@@ -367,8 +458,11 @@ function cangyuanVideoUrl(video: VideoResponse) {
     if (video.video_url) return video.video_url;
     if (video.video?.url) return video.video.url;
     if (video.raw_data?.video_url || video.raw_data?.url) return video.raw_data.video_url || video.raw_data.url;
-    if (Array.isArray(video.data)) return video.data.find((item) => item.url)?.url;
-    return video.data?.video_url || video.data?.url || video.data?.video?.url || video.data?.raw_data?.video_url || video.data?.raw_data?.url;
+    if (Array.isArray(video.data)) {
+        const item = video.data.find((value) => value.video_url || value.video?.url || value.raw_data?.video_url || value.raw_data?.url || value.url);
+        return item?.video_url || item?.video?.url || item?.raw_data?.video_url || item?.raw_data?.url || item?.url;
+    }
+    return video.data?.video_url || video.data?.video?.url || video.data?.raw_data?.video_url || video.data?.raw_data?.url || video.data?.url;
 }
 
 function cangyuanVideoError(video: VideoResponse) {

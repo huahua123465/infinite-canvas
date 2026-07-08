@@ -1311,7 +1311,7 @@ function StoryboardVideoPromptPreviewModal({
                         <span className={`text-xs ${saveHint ? "text-blue-500 dark:text-blue-300" : "text-stone-500"}`}>{saveHint || "修改会自动保存"}</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={(model) => updateDraftConfig({ model })} onMissingConfig={() => openConfigDialog(true)} />
+                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={draftConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={(model) => updateDraftConfig({ model })} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover
                             config={draftConfig}
                             placement="bottomLeft"

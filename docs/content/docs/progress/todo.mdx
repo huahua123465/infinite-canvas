@@ -9,4 +9,4 @@ description: 当前项目后续值得处理的事项
 
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
 
-- 沧元算力 Grok 视频专用端点适配：单模型 API 文档里 `grok-video` / `grok-video-1.5` 使用 `POST /v1/video/generations` 和 `GET /v1/video/generations/{task_id}`，不同于 Seedance / Omni / Sora 的 `/v1/videos`；后续需要新增 Grok 分支，支持 `image_urls`、`image`、`video_url`、`seconds` / `duration`、`aspect_ratio`、`resolution`，并按文档区分 `grok-video-1.5` 必须且只能单图参考。
+- 沧元算力视频分辨率联动：当视频模型名已经包含 `480p`、`720p`、`1080p`、`4k` 等档位时，视频设置面板的分辨率应自动跟随模型档位，并禁用或隐藏不适用的分辨率选项；避免出现“选择 `seedance-2.0-1080p` 模型但参数仍传 `720p`”的冲突。无固定分辨率档位的模型才保留手动分辨率选择。
