@@ -86,11 +86,11 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
     };
 
-    const showOverlay = Boolean(activeLabels.length && !hasSelection && !isFocused);
+    const showOverlay = Boolean(highlightLabels && activeLabels.length && !hasSelection);
     const mergedStyle = {
         ...(style || {}),
-        color: showOverlay ? "transparent" : style?.color,
-        caretColor: style?.caretColor || style?.color || theme.node.text,
+        color: showOverlay ? colorWithAlpha(theme.node.text, 0.08) : style?.color,
+        caretColor: theme.node.text,
         ...(showOverlay ? { background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
     const menu = mention && textareaRef.current ? <MentionMenu textarea={textareaRef.current} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null;
@@ -112,6 +112,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 value={value}
                 className={className}
                 style={mergedStyle}
+                placeholder={showOverlay ? undefined : props.placeholder}
                 onChange={(event) => {
                     const next = event.target.value;
                     onChange(next);
@@ -310,4 +311,14 @@ function clamp(value: number, min: number, max: number) {
 
 function escapeRegExp(value: string) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function colorWithAlpha(color: string, alpha: number) {
+    const hex = color.trim().replace(/^#/, "");
+    if (!/^[\da-f]{6}$/i.test(hex)) return color;
+    const value = Number.parseInt(hex, 16);
+    const red = (value >> 16) & 255;
+    const green = (value >> 8) & 255;
+    const blue = value & 255;
+    return `rgba(${red},${green},${blue},${alpha})`;
 }
