@@ -53,7 +53,7 @@ type CanvasScriptNodeDialogProps = {
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, config }: CanvasScriptNodeDialogProps) {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const assets = node?.metadata?.storyboardAssets || [];
@@ -227,9 +227,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             onOpenImport={() => setShotImportOpen(true)}
                             onGenerateImage={onGenerateImage}
                             onGenerateVideo={onGenerateVideo}
-                            onBatchGenerateVideos={onBatchGenerateVideos}
                             promptCount={promptCount}
-                            videoPromptCount={videoPromptCount}
                         />
                     ) : (
                         <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
@@ -476,7 +474,7 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
     );
 }
 
-function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, promptCount, videoPromptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void; promptCount: number; videoPromptCount: number }) {
+function PromptComposeView({ node, rows, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; promptCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -562,9 +560,6 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                 </div>
                 <div className="flex items-center gap-2">
                     <ModelPicker config={config} value={model} capability="text" className="!h-10 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
-                    <Button className="!h-10 !rounded-lg !px-8" disabled={!videoPromptCount || actionKey !== null} icon={actionKey === "video:all" ? <LoaderCircle className="size-4 animate-spin" /> : <Video className="size-4" />} onClick={() => onBatchGenerateVideos(node)}>
-                        批量生成视频
-                    </Button>
                 </div>
             </div>
         </>
