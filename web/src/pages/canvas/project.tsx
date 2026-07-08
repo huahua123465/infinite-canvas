@@ -25,6 +25,7 @@ import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-
 import { buildPromptAssistantInstruction } from "@/lib/canvas/prompt-assistant";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
+import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
@@ -589,6 +590,7 @@ function InfiniteCanvasPage() {
             navigate("/canvas");
             return;
         }
+        setLastDirectorDeskCanvasId(projectId);
 
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
@@ -4317,7 +4319,10 @@ function InfiniteCanvasPage() {
                     onOpenMyAssets={() => {
                         setAssetPickerOpen(true);
                     }}
-                    onOpenDirectorDesk={() => navigate("/director-desk")}
+                    onOpenDirectorDesk={() => {
+                        setLastDirectorDeskCanvasId(projectId);
+                        navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
+                    }}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={minimapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}

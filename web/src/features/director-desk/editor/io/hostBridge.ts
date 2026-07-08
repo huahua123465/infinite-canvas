@@ -1,3 +1,5 @@
+import { appendDirectorDeskCapturesToCanvasProject } from "@/lib/canvas/director-desk-captures";
+import { getLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
 import { useDirectorStore } from "../store/directorStore";
 
 interface HostPanoramaPayload {
@@ -53,6 +55,14 @@ function getInitialHostTheme() {
     return normalizeTheme(new URLSearchParams(window.location.search).get("theme"));
   } catch {
     return null;
+  }
+}
+
+function getTargetCanvasId() {
+  try {
+    return normalizeString(new URLSearchParams(window.location.search).get("canvasId")) || getLastDirectorDeskCanvasId();
+  } catch {
+    return getLastDirectorDeskCanvasId();
   }
 }
 
@@ -158,6 +168,11 @@ export function postDirectorDeskCapturesToHost(
     },
     getHostOrigin()
   );
+
+  if (window.parent === window) {
+    const canvasId = getTargetCanvasId();
+    void appendDirectorDeskCapturesToCanvasProject(canvasId, normalizedCaptures);
+  }
 }
 
 function handleHostMessage(event: MessageEvent) {
