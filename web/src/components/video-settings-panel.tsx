@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 
@@ -25,14 +25,15 @@ const secondOptions = [6, 10, 12, 16, 20];
 type VideoSettingsPanelProps = {
     config: AiConfig;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onModelChange?: (model: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     if (isSeedanceVideoConfig(config)) {
-        return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     const seconds = config.videoSeconds || "6";
@@ -100,30 +101,40 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
-    const model = modelOptionName(config.model || config.videoModel);
+function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const selectedModel = config.model || config.videoModel;
+    const model = modelOptionName(selectedModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
+    const fixedResolution = seedanceModelFixedResolution(model);
     const ratio = normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
+    const updateResolution = (value: string) => {
+        const matchedModel = findSeedanceModelOptionByResolution(config, selectedModel, value);
+        if (matchedModel && matchedModel !== selectedModel) onModelChange?.(matchedModel);
+        if (!fixedResolution || matchedModel) onConfigChange("vquality", value);
+    };
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
                 <SettingGroup title="分辨率" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-4 gap-2.5">
                         {seedanceResolutionOptions.map((item) => {
-                            const disabled = item.value === "1080p" && isSeedanceFastModel(model);
+                            const switchTarget = findSeedanceModelOptionByResolution(config, selectedModel, item.value);
+                            const lockedMismatch = Boolean(fixedResolution && item.value !== resolution && !switchTarget);
+                            const disabled = lockedMismatch || (!fixedResolution && item.value === "1080p" && isSeedanceFastModel(model));
                             return (
-                                <OptionPill key={item.value} selected={resolution === item.value} disabled={disabled} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                <OptionPill key={item.value} selected={resolution === item.value} disabled={disabled} theme={theme} onClick={() => updateResolution(item.value)}>
                                     {item.label}
                                 </OptionPill>
                             );
                         })}
                     </div>
-                    {isSeedanceFastModel(model) ? <div className="text-[11px] leading-4 opacity-55">fast 模型不支持 1080p，会自动使用 720p。</div> : null}
+                    {fixedResolution ? <div className="text-[11px] leading-4 opacity-55">当前分辨率由模型档位锁定：{seedanceResolutionLabel(resolution)}；切换到可用档位会自动更换同系列模型。</div> : null}
+                    {!fixedResolution && isSeedanceFastModel(model) ? <div className="text-[11px] leading-4 opacity-55">fast 模型不支持 1080p，会自动使用 720p。</div> : null}
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
@@ -164,8 +175,11 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
     );
 }
 
-export function videoResolutionLabel(value: string) {
-    return `${normalizeVideoResolutionValue(value)}p`;
+export function videoResolutionLabel(value: string, model = "") {
+    const modelName = modelOptionName(model);
+    if (isSeedanceVideoModel(modelName)) return seedanceResolutionLabel(normalizeSeedanceResolution(value, modelName));
+    const resolution = normalizeVideoResolutionValue(value);
+    return resolution === "4k" ? "4K" : `${resolution}p`;
 }
 
 export function videoSizeLabel(value: string) {
@@ -188,9 +202,11 @@ export function normalizeVideoSizeValue(value: string) {
 }
 
 export function normalizeVideoResolutionValue(value: string) {
-    if (value === "480p" || value === "low") return "480";
-    if (value === "720p" || value === "auto" || value === "high" || value === "medium") return "720";
-    return value.replace(/p$/i, "") || "720";
+    const raw = String(value || "").trim().toLowerCase();
+    if (raw === "4k") return "4k";
+    if (raw === "480p" || raw === "low") return "480";
+    if (raw === "720p" || raw === "auto" || raw === "high" || raw === "medium") return "720";
+    return raw.replace(/p$/i, "") || "720";
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

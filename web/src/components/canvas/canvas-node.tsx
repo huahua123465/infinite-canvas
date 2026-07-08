@@ -7,6 +7,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { resolveImageUrl } from "@/services/image-storage";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
@@ -1260,6 +1261,11 @@ function StoryboardVideoPromptPreviewModal({
         });
     };
 
+    const updateDraftModel = (model: string) => {
+        const fixedResolution = seedanceModelFixedResolution(model);
+        updateDraftConfig(fixedResolution ? { model, vquality: fixedResolution } : { model });
+    };
+
     const updateDraftFinalPrompt = (value: string) => {
         setDraftFinalPrompt(value);
         saveDraft(draftConfig, value);
@@ -1311,12 +1317,13 @@ function StoryboardVideoPromptPreviewModal({
                         <span className={`text-xs ${saveHint ? "text-blue-500 dark:text-blue-300" : "text-stone-500"}`}>{saveHint || "修改会自动保存"}</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={draftConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={(model) => updateDraftConfig({ model })} onMissingConfig={() => openConfigDialog(true)} />
+                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={draftConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={updateDraftModel} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover
                             config={draftConfig}
                             placement="bottomLeft"
                             buttonClassName="!h-9 !min-w-[190px] !max-w-[260px] !justify-start !rounded-full !px-3"
                             onConfigChange={(key, value) => updateDraftConfig({ [key]: value } as Partial<AiConfig>)}
+                            onModelChange={updateDraftModel}
                         />
                     </div>
                 </section>

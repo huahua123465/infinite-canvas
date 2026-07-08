@@ -1,4 +1,4 @@
-import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { decodeChannelModel, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -15,6 +15,7 @@ export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },
     { value: "1080p", label: "1080p" },
+    { value: "4k", label: "4K" },
 ] as const;
 
 export const seedanceRatioOptions = [
@@ -54,6 +55,14 @@ const seedancePixels = {
         "9:16": "1080x1920",
         "21:9": "2206x946",
     },
+    "4k": {
+        "16:9": "3840x2160",
+        "4:3": "3328x2496",
+        "1:1": "2880x2880",
+        "3:4": "2496x3328",
+        "9:16": "2160x3840",
+        "21:9": "4412x1892",
+    },
 } as const;
 
 export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl" | "apiFormat">) {
@@ -71,6 +80,30 @@ export function isSeedanceFastModel(model: string) {
     return isSeedanceVideoModel(value) && value.includes("fast");
 }
 
+export function seedanceModelFixedResolution(model: string) {
+    const value = modelOptionName(model).toLowerCase();
+    const match = value.match(/(?:^|[-_])(480p|720p|1080p|4k)(?:$|[-_])/);
+    return match?.[1] || "";
+}
+
+export function seedanceResolutionLabel(value: string) {
+    return value.toLowerCase() === "4k" ? "4K" : value;
+}
+
+export function findSeedanceModelOptionByResolution(config: Pick<AiConfig, "models" | "videoModels">, currentModel: string, resolution: string) {
+    const target = normalizeResolutionToken(resolution).toLowerCase();
+    const currentName = modelOptionName(currentModel).toLowerCase();
+    const currentChannelId = decodeChannelModel(currentModel)?.channelId || "";
+    const baseName = stripSeedanceResolutionSuffix(currentName);
+    const candidates = [...config.videoModels, ...config.models];
+    return candidates.find((model) => {
+        const decoded = decodeChannelModel(model);
+        if (currentChannelId && decoded?.channelId !== currentChannelId) return false;
+        const name = modelOptionName(model).toLowerCase();
+        return stripSeedanceResolutionSuffix(name) === baseName && seedanceModelFixedResolution(name) === target;
+    });
+}
+
 export function isArkPlanBaseUrl(baseUrl: string) {
     return baseUrl.toLowerCase().includes("ark.cn-beijing.volces.com/api/plan/v3") || baseUrl.toLowerCase().includes("/api/plan/v3");
 }
@@ -81,6 +114,8 @@ export function isArkVideoBaseUrl(baseUrl: string) {
 }
 
 export function normalizeSeedanceResolution(value: string, model = "") {
+    const fixedResolution = seedanceModelFixedResolution(model);
+    if (fixedResolution) return fixedResolution;
     const normalized = normalizeResolutionToken(value);
     if (isSeedanceFastModel(model) && normalized === "1080p") return "720p";
     return seedanceResolutionOptions.some((item) => item.value === normalized) ? normalized : "720p";
@@ -93,7 +128,9 @@ export function normalizeSeedanceApiResolution(value: string, model = "") {
 export function normalizeResolutionToken(value: string) {
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = String(value || "").replace(/p$/i, "") || "720";
+    const raw = String(value || "").toLowerCase();
+    if (raw === "4k") return "4k";
+    const resolution = raw.replace(/p$/i, "") || "720";
     return `${resolution}p`;
 }
 
@@ -128,6 +165,10 @@ export function seedancePixelLabel(resolution: string, ratio: string) {
     const normalizedRatio = normalizeSeedanceRatio(ratio) as keyof (typeof seedancePixels)[typeof normalizedResolution] | "adaptive";
     if (normalizedRatio === "adaptive") return "自动匹配";
     return seedancePixels[normalizedResolution][normalizedRatio] || "";
+}
+
+function stripSeedanceResolutionSuffix(value: string) {
+    return value.replace(/[-_](480p|720p|1080p|4k)$/i, "");
 }
 
 export function boolConfig(value: string | undefined, fallback: boolean) {

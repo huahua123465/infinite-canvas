@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 沧元算力视频分辨率联动：当选择 `seedance-2.0-1080p`、`seedance-2.0-720p`、`seedance-2.0-480p`、`seedance-2.0-4k` 等模型档位时，视频设置面板应自动显示对应分辨率并同步 `vquality`；从设置面板点击同系列可用档位时，应自动切换到对应模型并刷新价格，不再出现“1080p 模型 + 720p 参数”的冲突。无固定档位的 Seedance 模型仍可手动选择分辨率。
+
 - 沧元算力模型价格显示：模型选择器应自动读取 `https://ai.cangyuansuanli.cn/api/pricing`，在沧元算力渠道的模型名后显示价格；按次/按条计费显示单价，按秒计费的视频模型在视频工作台、画布视频节点和最终提示词弹窗中应按当前视频秒数显示估算金额，价格接口读取失败时不应影响正常选择和生成。
 
 - 沧元算力模型渠道接入：配置里应支持新增“沧元算力”调用格式，默认 Base URL 为 `https://ai.cangyuansuanli.cn`；填写 API Key 后可通过“拉取模型”读取 `/v1/models`，并能把 `omni` 归类到视频模型、`gemini-banana-*` 归类到图像模型。图像生成/图生图应走 `/v1/images/generations`，同步取 `data[].url`、异步轮询 `/v1/images/generations/{task_id}`；视频生成应走 `/v1/videos` 和 `/v1/videos/{task_id}`，完成后优先取 `video_url`，并避免误走方舟 Ark 的 `/contents/generations/tasks`。
