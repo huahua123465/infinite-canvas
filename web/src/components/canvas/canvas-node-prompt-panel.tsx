@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, LoaderCircle, Sparkles, Square } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowUp, LoaderCircle, Maximize2, Minimize2, Sparkles, Square } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -43,6 +44,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const panelRef = useRef<HTMLDivElement | null>(null);
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
     const [promptExpanded, setPromptExpanded] = useState(false);
+    const [promptComposerOpen, setPromptComposerOpen] = useState(false);
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
@@ -52,6 +54,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
         setPromptExpanded(false);
+        setPromptComposerOpen(false);
     }, [hasTextContent, node.id]);
 
     useEffect(() => {
@@ -85,35 +88,31 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     if (isStoryboardVideo) return null;
 
-    return (
-        <div
-            ref={panelRef}
-            className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
-            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-            onMouseDown={(event) => event.stopPropagation()}
+    const renderPromptTextarea = (large = false) => (
+        <CanvasResourceMentionTextarea
+            value={prompt}
+            references={mentionReferences}
+            onChange={updatePrompt}
+            onSubmit={submit}
+            onFocus={() => setPromptExpanded(true)}
+            onBlur={collapsePromptEditorIfFocusLeft}
+            onWheel={(event) => {
+                event.stopPropagation();
+                if (!promptExpanded && !large) return;
+                const target = event.currentTarget;
+                if (target.scrollHeight <= target.clientHeight) return;
+                event.preventDefault();
+                target.scrollTop += event.deltaY;
+            }}
             onPointerDown={(event) => event.stopPropagation()}
-            onWheel={(event) => event.stopPropagation()}
-        >
-            <CanvasResourceMentionTextarea
-                value={prompt}
-                references={mentionReferences}
-                onChange={updatePrompt}
-                onSubmit={submit}
-                onFocus={() => setPromptExpanded(true)}
-                onBlur={collapsePromptEditorIfFocusLeft}
-                onWheel={(event) => {
-                    event.stopPropagation();
-                    if (!promptExpanded) return;
-                    const target = event.currentTarget;
-                    if (target.scrollHeight <= target.clientHeight) return;
-                    event.preventDefault();
-                    target.scrollTop += event.deltaY;
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                className="thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none transition-[height] duration-150"
-                style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
-                placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
-            />
+            className={`thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full min-h-0" : "pr-10 transition-[height] duration-150"}`}
+            style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, overflowY: large || promptExpanded ? "auto" : "hidden" }}
+            placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
+        />
+    );
+
+    const renderReferenceHint = () => (
+        <>
             {mode === "image" && activeImageReferences.length ? (
                 <div className="mt-1.5 text-[11px] opacity-60">
                     将传入参考图：{activeImageReferences.map((item) => item.label).join("、")}
@@ -121,69 +120,110 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 </div>
             ) : null}
             {mode === "video" && activeImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
+        </>
+    );
 
-            <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                    {isScriptNode ? null : <CanvasPromptLibrary onSelect={updatePrompt} />}
-                    {onPromptAssistant ? (
-                        <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
-                            AI改提示词
-                        </Button>
-                    ) : null}
-                    {mode === "image" ? (
+    const renderPromptControls = () => (
+        <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                {isScriptNode ? null : <CanvasPromptLibrary onSelect={updatePrompt} />}
+                {onPromptAssistant ? (
+                    <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
+                        AI改提示词
+                    </Button>
+                ) : null}
+                {mode === "image" ? (
+                    <>
+                        <ModelPicker config={config} value={config.model} onChange={updateModel} capability="image" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                        <CanvasImageSettingsPopover
+                            config={config}
+                            placement="topLeft"
+                            buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3"
+                            onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                            onMissingConfig={() => openConfigDialog(true)}
+                            onOpenChange={onImageSettingsOpenChange}
+                        />
+                    </>
+                ) : mode === "video" ? (
+                    <>
+                        <ModelPicker config={config} value={config.model} onChange={updateModel} capability="video" estimateSeconds={config.videoSeconds} className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                        <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} onModelChange={(model) => onConfigChange(node.id, videoModelPatch(model))} />
+                    </>
+                ) : mode === "audio" ? (
+                    <>
+                        <ModelPicker config={config} value={config.model} onChange={updateModel} capability="audio" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                        <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                    </>
+                ) : (
+                    <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                )}
+            </div>
+            <Button
+                type="primary"
+                className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
+                danger={isRunning}
+                disabled={!isRunning && !prompt.trim() && !isScriptNode}
+                onClick={() => (isRunning ? onStop(node.id) : submit())}
+                aria-label={isRunning ? "停止生成" : "生成"}
+            >
+                <span className="flex items-center gap-1.5">
+                    {isRunning ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={updateModel} capability="image" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
-                            <CanvasImageSettingsPopover
-                                config={config}
-                                placement="topLeft"
-                                buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3"
-                                onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
-                                onMissingConfig={() => openConfigDialog(true)}
-                                onOpenChange={onImageSettingsOpenChange}
-                            />
-                        </>
-                    ) : mode === "video" ? (
-                        <>
-                            <ModelPicker config={config} value={config.model} onChange={updateModel} capability="video" estimateSeconds={config.videoSeconds} className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
-                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} onModelChange={(model) => onConfigChange(node.id, videoModelPatch(model))} />
-                        </>
-                    ) : mode === "audio" ? (
-                        <>
-                            <ModelPicker config={config} value={config.model} onChange={updateModel} capability="audio" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
-                            <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                            <LoaderCircle className="size-4 animate-spin" />
+                            <Square className="size-3.5 fill-current" />
+                            <span className="text-xs font-medium">停止</span>
                         </>
                     ) : (
-                        <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                        <>
+                            <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
+                                <CreditSymbol />
+                                {credits.toLocaleString()}
+                            </span>
+                            <ArrowUp className="size-4" />
+                        </>
                     )}
-                </div>
-                <Button
-                    type="primary"
-                    className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                    danger={isRunning}
-                    disabled={!isRunning && !prompt.trim() && !isScriptNode}
-                    onClick={() => (isRunning ? onStop(node.id) : submit())}
-                    aria-label={isRunning ? "停止生成" : "生成"}
-                >
-                    <span className="flex items-center gap-1.5">
-                        {isRunning ? (
-                            <>
-                                <LoaderCircle className="size-4 animate-spin" />
-                                <Square className="size-3.5 fill-current" />
-                                <span className="text-xs font-medium">停止</span>
-                            </>
-                        ) : (
-                            <>
-                                <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
-                                    <CreditSymbol />
-                                    {credits.toLocaleString()}
-                                </span>
-                                <ArrowUp className="size-4" />
-                            </>
-                        )}
-                    </span>
-                </Button>
-            </div>
+                </span>
+            </Button>
         </div>
+    );
+
+    return (
+        <>
+            <div
+                ref={panelRef}
+                className="relative rounded-2xl border p-3 shadow-2xl backdrop-blur"
+                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onWheel={(event) => event.stopPropagation()}
+            >
+                <Button type="text" className="!absolute !right-4 !top-4 z-10 !grid !size-8 !place-items-center !rounded-lg !p-0" style={{ color: theme.node.muted }} title="放大编辑提示词" icon={<Maximize2 className="size-4" />} onClick={() => setPromptComposerOpen(true)} />
+                {renderPromptTextarea()}
+                {renderReferenceHint()}
+                {renderPromptControls()}
+            </div>
+            {promptComposerOpen
+                ? createPortal(
+                    <div className="fixed inset-0 z-[1100] bg-black/25 backdrop-blur-[1px]" data-canvas-no-zoom onPointerDown={() => setPromptComposerOpen(false)} onWheel={(event) => event.stopPropagation()}>
+                        <div
+                            className="absolute left-1/2 top-1/2 flex h-[min(76vh,680px)] w-[min(760px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border p-3 shadow-2xl"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onWheel={(event) => event.stopPropagation()}
+                        >
+                            <Button type="text" className="!absolute !right-4 !top-4 z-10 !grid !size-8 !place-items-center !rounded-lg !p-0" style={{ color: theme.node.muted }} title="收起提示词编辑器" icon={<Minimize2 className="size-4" />} onClick={() => setPromptComposerOpen(false)} />
+                            <div className="min-h-0 flex-1 pr-10">
+                                {renderPromptTextarea(true)}
+                            </div>
+                            {renderReferenceHint()}
+                            {renderPromptControls()}
+                        </div>
+                    </div>,
+                    document.body,
+                )
+                : null}
+        </>
     );
 }
 
