@@ -100,10 +100,10 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
-    const selectedModel = (config.videoModel || config.model).trim();
+    const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
-    if (requestConfig.apiFormat === "cangyuan") {
+    if (requestConfig.apiFormat === "cangyuan" || isCangyuanSeedanceVideoRequest(requestConfig, selectedModel)) {
         return createCangyuanVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (isSeedanceVideoConfig(requestConfig)) {
@@ -426,6 +426,12 @@ function normalizeCangyuanSeedanceResolution(value: string) {
 
 function isCangyuanGrokVideoModel(model: string) {
     return modelOptionName(model).toLowerCase().startsWith("grok-video");
+}
+
+function isCangyuanSeedanceVideoRequest(config: AiConfig, model: string) {
+    const baseUrl = config.baseUrl.toLowerCase();
+    const modelName = modelOptionName(model).toLowerCase();
+    return baseUrl.includes("ai.cangyuansuanli.cn") && modelName.startsWith("seedance-2.0");
 }
 
 function normalizeCangyuanGrokRatio(value: string) {
