@@ -32,7 +32,7 @@ import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CANVAS_AGENT_PANEL_MOTION_MS, CanvasAssistantPanel } from "@/components/canvas/canvas-assistant-panel";
-import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
+import { CanvasNodeContextMenu, type CanvasContextMenuAction } from "@/components/canvas/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
@@ -1324,11 +1324,11 @@ function InfiniteCanvasPage() {
         };
     }, []);
 
-    const pasteCopiedNodes = useCallback(() => {
+    const pasteCopiedNodes = useCallback((targetPosition?: Position) => {
         const clipboard = clipboardRef.current;
         if (!clipboard?.nodes.length) return false;
 
-        const center = getCanvasCenter();
+        const center = targetPosition || getCanvasCenter();
         const bounds = clipboard.nodes.reduce(
             (acc, node) => ({
                 left: Math.min(acc.left, node.position.x),
@@ -1737,12 +1737,12 @@ function InfiniteCanvasPage() {
     }, []);
 
     const createTextNodeFromClipboard = useCallback(
-        (text: string) => {
+        (text: string, targetPosition?: Position) => {
             const trimmed = text.trim();
             if (!trimmed) return false;
 
             const node = {
-                ...createCanvasNode(CanvasNodeType.Text, getCanvasCenter(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
+                ...createCanvasNode(CanvasNodeType.Text, targetPosition || getCanvasCenter(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
                 title: trimmed.slice(0, 32) || "剪切板文本",
             };
 
@@ -1756,7 +1756,7 @@ function InfiniteCanvasPage() {
         [getCanvasCenter],
     );
 
-    const pasteSystemClipboard = useCallback(async () => {
+    const pasteSystemClipboard = useCallback(async (targetPosition?: Position) => {
         if (!navigator.clipboard) return;
 
         try {
@@ -1767,7 +1767,7 @@ function InfiniteCanvasPage() {
                 if (!imageType) return;
                 const blob = await imageItem.getType(imageType);
                 const file = new File([blob], "clipboard-image.png", { type: imageType });
-                void createImageFileNode(file, getCanvasCenter());
+                void createImageFileNode(file, targetPosition || getCanvasCenter());
                 message.success("已从剪切板添加图片");
                 return;
             }
@@ -1777,7 +1777,7 @@ function InfiniteCanvasPage() {
 
         try {
             const text = await navigator.clipboard.readText();
-            if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
+            if (createTextNodeFromClipboard(text, targetPosition)) message.success("已从剪切板添加文本");
         } catch (error) {
             if (isClipboardPermissionError(error)) message.warning("浏览器拒绝读取剪切板，请使用拖拽/上传或先授权剪切板权限");
             else throw error;
@@ -3347,10 +3347,38 @@ function InfiniteCanvasPage() {
     }, [projectId, renameProject, titleDraft]);
 
     const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
-        if ((event.target as HTMLElement).closest("[data-node-id]")) return;
+        const target = event.target as HTMLElement;
+        if (target.closest("[data-node-id],[data-connection-id],[data-connection-create-menu],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown")) return;
         event.preventDefault();
-        setContextMenu(null);
-    }, []);
+        setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY) });
+    }, [screenToCanvas]);
+
+    const canvasContextMenuActions = useMemo<CanvasContextMenuAction[]>(() => {
+        if (contextMenu?.type !== "canvas") return [];
+        const position = contextMenu.position;
+        const selectedNode = selectedNodeIds.size === 1 ? nodeById.get(Array.from(selectedNodeIds)[0]) || null : null;
+        const canSaveAsset = Boolean(
+            selectedNode &&
+                ((selectedNode.type === CanvasNodeType.Text && selectedNode.metadata?.content?.trim()) ||
+                    ((selectedNode.type === CanvasNodeType.Image || selectedNode.type === CanvasNodeType.Video) && selectedNode.metadata?.content)),
+        );
+        return [
+            { id: "upload", label: "上传", onClick: () => handleUploadRequest(undefined, position) },
+            { id: "save-asset", label: "保存到我的资产", disabled: !canSaveAsset, onClick: () => selectedNode && void saveNodeAsset(selectedNode) },
+            { id: "add-node", label: "添加节点", onClick: () => createNode(CanvasNodeType.Image, position) },
+            { id: "undo", label: "撤销", shortcut: "⌘Z", disabled: !historyState.canUndo, dividerBefore: true, onClick: undoCanvas },
+            { id: "redo", label: "重做", shortcut: "⇧⌘Z", disabled: !historyState.canRedo, onClick: redoCanvas },
+            {
+                id: "paste",
+                label: "粘贴",
+                shortcut: "⌘V",
+                dividerBefore: true,
+                onClick: () => {
+                    if (!pasteCopiedNodes(position)) void pasteSystemClipboard(position);
+                },
+            },
+        ];
+    }, [contextMenu, createNode, handleUploadRequest, historyState.canRedo, historyState.canUndo, nodeById, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, saveNodeAsset, selectedNodeIds, undoCanvas]);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -4332,6 +4360,7 @@ function InfiniteCanvasPage() {
                 {contextMenu ? (
                     <CanvasNodeContextMenu
                         menu={contextMenu}
+                        canvasActions={canvasContextMenuActions}
                         onClose={() => setContextMenu(null)}
                         onDuplicate={() => {
                             if (contextMenu.type !== "node") return;
