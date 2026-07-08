@@ -46,6 +46,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
+    const videoImageReferences = mode === "video" ? mentionReferences.filter((item) => item.kind === "image" && item.active) : [];
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -112,6 +113,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: promptEditorHeight, overflowY: promptExpanded ? "auto" : "hidden" }}
                 placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
+            {videoImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
