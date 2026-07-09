@@ -1,0 +1,4 @@
+interface:
+  display_name: "Infinite Canvas Change"
+  short_description: "Safe workflow for Infinite Canvas code changes."
+  default_prompt: "Use this skill before modifying Infinite Canvas canvas features."
