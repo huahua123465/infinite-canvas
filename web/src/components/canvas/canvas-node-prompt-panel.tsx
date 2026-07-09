@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, LoaderCircle, Maximize2, Minimize2, Sparkles, Square } from "lucide-react";
-import { Button } from "antd";
+import { ArrowUp, Clipboard, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
+import { App, Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -29,9 +29,12 @@ type CanvasNodePromptPanelProps = {
     mentionReferences?: CanvasResourceReference[];
     onImageSettingsOpenChange?: (open: boolean) => void;
     onPromptAssistant?: (node: CanvasNodeData) => void;
+    onApplyPromptAssistantPending?: (node: CanvasNodeData, mode: "append" | "replace") => void;
+    onDiscardPromptAssistantPending?: (nodeId: string) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant, onApplyPromptAssistantPending, onDiscardPromptAssistantPending }: CanvasNodePromptPanelProps) {
+    const { message } = App.useApp();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -50,6 +53,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
     const activeImageReferences = mentionReferences.filter((item) => item.kind === "image" && item.active);
     const mentionedImageLabels = activeImageReferences.filter((item) => promptIncludesReferenceLabel(prompt, item.label)).map((item) => item.label);
+    const promptAssistantPendingPrompt = node.metadata?.promptAssistantPendingPrompt?.trim() || "";
+    const promptAssistantStatus = node.metadata?.promptAssistantStatus;
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -122,6 +127,60 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             {mode === "video" && activeImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
         </>
     );
+
+    const copyPromptAssistantPending = () => {
+        if (!promptAssistantPendingPrompt) return;
+        void navigator.clipboard?.writeText(promptAssistantPendingPrompt).then(
+            () => message.success("已复制AI优化结果"),
+            () => message.error("复制失败"),
+        );
+    };
+
+    const renderPromptAssistantPending = () => {
+        if (promptAssistantStatus === "loading") {
+            return (
+                <div className="mt-2 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs" style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.muted }}>
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                    <span>AI正在优化提示词，关闭弹窗也会继续完成。</span>
+                </div>
+            );
+        }
+        if (promptAssistantStatus === "error" && node.metadata?.promptAssistantError) {
+            return (
+                <div className="mt-2 rounded-xl border px-3 py-2 text-xs" style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.muted }}>
+                    <div className="flex items-start justify-between gap-2">
+                        <span className="leading-5">AI优化失败：{node.metadata.promptAssistantError}</span>
+                        <Button size="small" type="text" className="!h-7 !px-2" icon={<X className="size-3.5" />} onClick={() => onDiscardPromptAssistantPending?.(node.id)}>
+                            忽略
+                        </Button>
+                    </div>
+                </div>
+            );
+        }
+        if (!promptAssistantPendingPrompt) return null;
+        return (
+            <div className="mt-2 rounded-xl border px-3 py-2 text-xs" style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="font-medium">AI优化结果待处理</span>
+                    <Button size="small" type="text" className="!h-7 !px-2" icon={<X className="size-3.5" />} onClick={() => onDiscardPromptAssistantPending?.(node.id)}>
+                        忽略
+                    </Button>
+                </div>
+                <div className="thin-scrollbar max-h-16 overflow-auto whitespace-pre-wrap leading-5 opacity-75">{promptAssistantPendingPrompt}</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    <Button size="small" icon={<Plus className="size-3.5" />} onClick={() => onApplyPromptAssistantPending?.(node, "append")}>
+                        追加到尾部
+                    </Button>
+                    <Button size="small" icon={<Replace className="size-3.5" />} onClick={() => onApplyPromptAssistantPending?.(node, "replace")}>
+                        替换
+                    </Button>
+                    <Button size="small" icon={<Clipboard className="size-3.5" />} onClick={copyPromptAssistantPending}>
+                        复制
+                    </Button>
+                </div>
+            </div>
+        );
+    };
 
     const renderPromptControls = () => (
         <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -200,6 +259,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 <Button type="text" className="!absolute !right-4 !top-4 z-10 !grid !size-8 !place-items-center !rounded-lg !p-0" style={{ color: theme.node.muted }} title="放大编辑提示词" icon={<Maximize2 className="size-4" />} onClick={() => setPromptComposerOpen(true)} />
                 {renderPromptTextarea()}
                 {renderReferenceHint()}
+                {renderPromptAssistantPending()}
                 {renderPromptControls()}
             </div>
             {promptComposerOpen
@@ -217,6 +277,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 {renderPromptTextarea(true)}
                             </div>
                             {renderReferenceHint()}
+                            {renderPromptAssistantPending()}
                             {renderPromptControls()}
                         </div>
                     </div>,

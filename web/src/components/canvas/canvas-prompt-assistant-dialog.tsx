@@ -54,7 +54,8 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, confi
         }
     };
 
-    const canApply = Boolean(draftPrompt.trim()) && !loading && !aiLoading;
+    const isAiLoading = loading || aiLoading;
+    const canApply = Boolean(draftPrompt.trim()) && !isAiLoading;
     const nodeTypeLabel = node.type === CanvasNodeType.Config ? "生成配置" : node.type === CanvasNodeType.Image ? "图片节点" : node.type === CanvasNodeType.Script ? "脚本节点" : node.type === CanvasNodeType.Text ? "文本节点" : "节点";
 
     return (
@@ -101,11 +102,11 @@ export function CanvasPromptAssistantDialog({ node, open, loading = false, confi
                     <TextArea value={requirement} onChange={(event) => setRequirement(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} placeholder="例如：保留脸型五官，换现代穿搭，发型改成自然披发，不要古装。" />
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                         <ModelPicker config={config} value={selectedModel} onChange={onModelChange} capability="text" placeholder="选择文本模型" onMissingConfig={onMissingConfig} />
-                        <Button type="default" icon={<WandSparkles className="size-4" />} loading={aiLoading} onClick={rewriteWithAi}>
+                        <Button type="default" icon={<WandSparkles className="size-4" />} loading={isAiLoading} onClick={rewriteWithAi}>
                             AI智能优化
                         </Button>
                     </div>
-                    <div className="mt-1 text-xs text-stone-500">需要先在右上角配置里设置文本模型和 API Key；快捷模板不需要模型。</div>
+                    <div className="mt-1 text-xs text-stone-500">需要先在右上角配置里设置文本模型和 API Key；关闭弹窗后优化会继续，完成后会回到节点里待处理。</div>
                 </section>
 
                 <section>

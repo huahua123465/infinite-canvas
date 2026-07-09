@@ -506,6 +506,7 @@ function InfiniteCanvasPage() {
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const generationBatchControllersRef = useRef(new Map<string, AbortController>());
     const tailFrameBackfillRef = useRef(new Set<string>());
+    const promptAssistantRequestSeqRef = useRef(0);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -2831,7 +2832,7 @@ function InfiniteCanvasPage() {
             if (mode === "text") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
                 const textNode = createCanvasNode(CanvasNodeType.Text, { x: node.position.x + node.width / 2, y: node.position.y + node.height + 88 + spec.height / 2 }, { content: text, prompt: text, status: NODE_STATUS_SUCCESS, fontSize: 14 });
-                setNodes((prev) => [...prev, textNode]);
+                setNodes((prev) => [...prev.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, clearPromptAssistantPendingPatch()) : item)), textNode]);
                 setSelectedNodeIds(new Set([textNode.id]));
                 setSelectedConnectionId(null);
                 setDialogNodeId(textNode.id);
@@ -2839,9 +2840,25 @@ function InfiniteCanvasPage() {
                 return;
             }
             const nextPrompt = mergePromptForNode(node, text, mode);
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, promptPatchForNode(item, nextPrompt)) : item)));
+            setNodes((prev) => prev.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, { ...promptPatchForNode(item, nextPrompt), ...clearPromptAssistantPendingPatch() }) : item)));
             setDialogNodeId(node.id);
             message.success(mode === "append" ? "已追加到当前提示词" : "已替换当前提示词");
+        },
+        [message],
+    );
+
+    const applyPendingPromptAssistantResult = useCallback(
+        (node: CanvasNodeData, mode: "replace" | "append") => {
+            const prompt = node.metadata?.promptAssistantPendingPrompt?.trim();
+            if (prompt) applyPromptAssistantResult(node, prompt, mode);
+        },
+        [applyPromptAssistantResult],
+    );
+
+    const discardPromptAssistantPending = useCallback(
+        (nodeId: string) => {
+            setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, clearPromptAssistantPendingPatch()) : node)));
+            message.success("已忽略AI优化结果");
         },
         [message],
     );
@@ -2854,7 +2871,15 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 throw new Error("请先在右上角配置里设置文本模型、API Base 和 API Key");
             }
+            const requestId = String(++promptAssistantRequestSeqRef.current);
             const instruction = buildPromptAssistantInstruction(prompt || readNodePrompt(node), requirement);
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === node.id
+                        ? applyNodeConfigPatch(item, { promptAssistantStatus: "loading", promptAssistantRequestId: requestId, promptAssistantPendingPrompt: "", promptAssistantError: undefined })
+                        : item,
+                ),
+            );
             const textMessages: AiTextMessage[] = [
                 {
                     role: "user" as const,
@@ -2893,7 +2918,26 @@ function InfiniteCanvasPage() {
                     output = "";
                     result = await run(textMessages);
                 }
-                return (result || output).trim();
+                const nextPrompt = (result || output).trim();
+                if (!nextPrompt) throw new Error("AI 未返回有效提示词");
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === node.id && item.metadata?.promptAssistantRequestId === requestId
+                            ? applyNodeConfigPatch(item, { promptAssistantStatus: "success", promptAssistantPendingPrompt: nextPrompt, promptAssistantError: undefined, promptAssistantRequestId: undefined })
+                            : item,
+                    ),
+                );
+                return nextPrompt;
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : "AI 优化失败";
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === node.id && item.metadata?.promptAssistantRequestId === requestId
+                            ? applyNodeConfigPatch(item, { promptAssistantStatus: "error", promptAssistantError: errorMessage, promptAssistantRequestId: undefined })
+                            : item,
+                    ),
+                );
+                throw error;
             } finally {
                 setPromptAssistantLoading(false);
             }
@@ -4239,6 +4283,8 @@ function InfiniteCanvasPage() {
                                         onGenerate={handleGenerateNode}
                                         onStop={confirmStopGeneration}
                                         onPromptAssistant={openPromptAssistant}
+                                        onApplyPromptAssistantPending={applyPendingPromptAssistantResult}
+                                        onDiscardPromptAssistantPending={discardPromptAssistantPending}
                                         onImageSettingsOpenChange={(open) => {
                                             setNodeImageSettingsOpen(open);
                                             if (open) setToolbarNodeId(null);
@@ -5062,6 +5108,15 @@ function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeDat
     const spec = node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = typeof safePatch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(safePatch.size, spec.width, spec.height) : null;
     return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
+}
+
+function clearPromptAssistantPendingPatch(): Partial<CanvasNodeMetadata> {
+    return {
+        promptAssistantPendingPrompt: "",
+        promptAssistantStatus: undefined,
+        promptAssistantError: undefined,
+        promptAssistantRequestId: undefined,
+    };
 }
 
 function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {

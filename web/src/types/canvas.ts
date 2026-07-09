@@ -153,6 +153,10 @@ export type CanvasNodeMetadata = {
     characterReferenceVariantTitles?: string[];
     composerContent?: string;
     prompt?: string;
+    promptAssistantPendingPrompt?: string;
+    promptAssistantStatus?: "loading" | "success" | "error";
+    promptAssistantError?: string;
+    promptAssistantRequestId?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
     fontSize?: number;
