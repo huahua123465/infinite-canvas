@@ -254,7 +254,7 @@ async function buildStoryboardFinalPromptInstruction() {
     return [
         STORYBOARD_FINAL_PROMPT_PROMPT,
         "【运行时读取的 seedance-20 技能包】",
-        "下面内容来自本地 seedance-2.0-5.3.0/seedance-2.0-5.3.0 技能包。合成 videoMotionPrompt 时必须优先吸收这些文件里的导演公式、模式判断、动作/运镜契约和排障自检；如果与上方 JSON 输出格式冲突，仍保持上方 JSON 格式。",
+        "下面内容来自本地 seedance-2.0-5.3.0/seedance-2.0-5.3.0 技能包，是第三步合成提示词的专业规则源，而不是普通参考资料。合成 videoMotionPrompt 时必须按 seedance-prompt 的 Director Formula、reference-workflow 的资产角色映射、camera/motion/characters/audio 的专项契约、antislop 的去空话规则、filter 的安全改写和 troubleshoot 的保守重试自检来写；如果与上方 JSON 输出格式冲突，仍保持上方 JSON 格式。",
         context.root ? `技能包路径：${context.root}` : "",
         ...context.files.map((file) => `--- ${file.path} ---\n${file.content.trim()}`),
     ]
@@ -265,7 +265,7 @@ async function buildStoryboardFinalPromptInstruction() {
 async function loadSeedance20SkillContext(): Promise<Seedance20SkillContext | null> {
     if (typeof window === "undefined") return null;
     try {
-        const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
+        const endpoint = (localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371").trim().replace(/\/+$/, "");
         const token = (localStorage.getItem("canvas-agent-token") || "").trim();
         if (!endpoint || !token) return null;
         const response = await fetch(`${endpoint}/api/skills/seedance-20/context?token=${encodeURIComponent(token)}`);

@@ -177,7 +177,14 @@ const SEEDANCE_20_FILES = [
     "skills/seedance-prompt/SKILL.md",
     "skills/seedance-camera/SKILL.md",
     "skills/seedance-motion/SKILL.md",
+    "skills/seedance-characters/SKILL.md",
+    "skills/seedance-audio/SKILL.md",
+    "skills/seedance-antislop/SKILL.md",
+    "skills/seedance-filter/SKILL.md",
     "skills/seedance-troubleshoot/SKILL.md",
+    "references/quick-ref.md",
+    "references/reference-workflow.md",
+    "references/storytelling-framework.md",
 ] as const;
 
 async function loadSeedance20Context() {
