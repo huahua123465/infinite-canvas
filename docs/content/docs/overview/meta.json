@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "quick-start",
+    "config-preferences-tabs",
     "codex-app-plugin",
     "local-codex-canvas",
     "features",

@@ -3,6 +3,7 @@
 ## 项目介绍
 
 - [快速开始](/docs/overview/quick-start)
+- [配置与用户偏好页签说明](/docs/overview/config-preferences-tabs)
 - [功能介绍](/docs/overview/features)
 - [本地 Codex 连接画布原理](/docs/overview/local-codex-canvas)
 - [Render 部署](/docs/overview/render)
