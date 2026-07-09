@@ -51,7 +51,7 @@ type SeedanceTask = {
 type SeedancePayload = {
     model: string;
     content: Array<Record<string, unknown>>;
-    aspect_ratio: string;
+    ratio: string;
     resolution: string;
     duration: number;
     generate_audio: boolean;
@@ -304,7 +304,7 @@ function buildSeedancePayload(config: AiConfig, model: string, content: Array<Re
     return {
         model: modelName,
         content,
-        aspect_ratio: normalizeSeedanceRatio(config.size),
+        ratio: normalizeSeedanceRatio(config.size),
         resolution: normalizeSeedanceApiResolution(config.vquality, modelName),
         duration: normalizeSeedanceDuration(config.videoSeconds),
         generate_audio: boolConfig(config.videoGenerateAudio, true),
@@ -599,7 +599,7 @@ function normalizeVideoErrorMessage(message: string) {
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
         return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。\n\n原始错误：${message}`;
     }
-    if (/input\.media|aspect_ratio|parameters\.(resolution|duration|generate_audio|watermark)|resolution|duration|generate_audio|watermark/i.test(message)) {
+    if (/input\.media|aspect_ratio|\bratio\b|parameters\.(resolution|duration|generate_audio|watermark)|resolution|duration|generate_audio|watermark/i.test(message)) {
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;
     }
     return message;

@@ -103,7 +103,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Seedance 视频审核：单镜头“生成视频”改为先创建待审核视频节点并打开最终提示词确认页；需验证普通视频和分镜视频参考图只使用已生成/上传的资产图、首帧和尾帧，不再插入官方素材引用。
 - Seedance 提示词技能：恢复 `.agents/skills/seedance-video-prompting`，需确认 Codex 后续生成/审查 Seedance 视频提示词时能继续读取该 skill。
 - 视频工作区与连续性：迁入待审核视频节点、参考资产编辑、首帧/参考/尾帧角色、非写实角色参考图提醒、视频阶段式进度条、成功后提取尾帧并传给下一镜首帧，需验证节点显示“已使用上一镜尾帧作为首帧”。
-- Seedance REST 接口：保留 custom/jt 的官方接口修正，需用方舟环境验证 `POST /contents/generations/tasks`、`GET /contents/generations/tasks/{id}`、`content` 数组、`aspect_ratio`、`generate_audio`、大写 `480P/720P/1080P`、30 秒轮询、9 张参考图上限和 400 原始错误展示。
+- Seedance REST 接口：保留 custom/jt 的官方接口修正，需用方舟环境验证 `POST /contents/generations/tasks`、`GET /contents/generations/tasks/{id}`、`content` 数组、`ratio`、`generate_audio`、大写 `480P/720P/1080P`、30 秒轮询、9 张参考图上限和 400 原始错误展示。
 - Gemini 渠道：保留官方 v0.5.0 的 Gemini 调用格式、模型渠道配置和 Gemini 生图入口，需验证本次 Seedance/Script 迁移没有覆盖 `use-config-store`、image API 和模型选择器里的 Gemini 支持。
 - Codex App 插件文档：新增插件安装教程，区分 AI 自动安装、手动安装和本仓库开发调试安装；同步优化插件 README 与技能说明。
 - 配置与用户偏好：每个模型渠道新增 OpenAI / Gemini 调用格式选择，默认 OpenAI，切换默认格式时同步更新默认 Base URL；渠道 Tab 增加紧凑醒目的提醒，说明模型是否可选需要到“模型”Tab 选择。
