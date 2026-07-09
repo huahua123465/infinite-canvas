@@ -4,6 +4,7 @@
 
 - [快速开始](/docs/overview/quick-start)
 - [功能介绍](/docs/overview/features)
+- [本地 Codex 连接画布原理](/docs/overview/local-codex-canvas)
 - [Render 部署](/docs/overview/render)
 - [Docker 部署](/docs/overview/docker)
 - [第三方 GitHub 提示词仓库](/docs/overview/third-party-prompt-repositories)

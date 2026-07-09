@@ -5,6 +5,7 @@
   "pages": [
     "quick-start",
     "codex-app-plugin",
+    "local-codex-canvas",
     "features",
     "render",
     "docker",
