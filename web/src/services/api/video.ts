@@ -15,7 +15,9 @@ type VideoResponseData = {
     status?: string;
     state?: string;
     url?: string;
+    result_url?: string;
     video_url?: string;
+    content?: { video_url?: string; url?: string } | null;
     video?: { url?: string };
     raw_data?: { video_url?: string; url?: string };
 };
@@ -28,17 +30,23 @@ type VideoResponse = {
     error?: { code?: string; message?: string };
     error_code?: string;
     message?: string;
+    url?: string;
+    result_url?: string;
     video_url?: string;
+    content?: { video_url?: string; url?: string } | null;
     video?: { url?: string };
     raw_data?: { video_url?: string; url?: string };
     data?: VideoResponseData[] | VideoResponseData;
 };
-type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
+type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type SeedanceTask = {
     id: string;
-    status?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+    status?: "queued" | "running" | "succeeded" | "completed" | "failed" | "cancelled" | "expired";
     error?: { code?: string; message?: string } | null;
-    content?: { video_url?: string; last_frame_url?: string } | null;
+    content?: { video_url?: string; url?: string; last_frame_url?: string } | null;
+    url?: string;
+    result_url?: string;
+    video_url?: string;
 };
 type SeedancePayload = {
     model: string;
@@ -49,7 +57,7 @@ type SeedancePayload = {
     generate_audio: boolean;
     watermark: boolean;
 };
-type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
+type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string; cangyuanEndpoint?: "videos" | "video-generations" };
@@ -124,7 +132,13 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+    if (result.url) {
+        try {
+            return await uploadMediaFile(result.url, "video");
+        } catch {
+            return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+        }
+    }
     throw new Error("视频接口没有返回可播放的视频");
 }
 
@@ -150,6 +164,8 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const url = videoResultUrl(video);
+        if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: video.status };
         if (video.status === "completed") {
             options?.onProgress?.({ percent: 90, text: "视频任务完成，正在下载视频", stage: "saving", providerStatus: video.status });
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
@@ -270,8 +286,8 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
 async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const state = unwrapSeedanceTask((await axios.get<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config, task.id), { headers: aiHeaders(config), signal: options?.signal })).data);
-        if (state.status === "succeeded") {
-            const url = state.content?.video_url;
+        if (state.status === "succeeded" || state.status === "completed") {
+            const url = videoResultUrl(state);
             if (!url) return { status: "failed", error: "Seedance 任务成功但没有返回视频 URL", providerStatus: state.status };
             options?.onProgress?.({ percent: 90, text: "Seedance 任务成功，正在下载视频", stage: "saving", providerStatus: state.status });
             return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: state.status };
@@ -474,14 +490,15 @@ function cangyuanVideoProgress(video: VideoResponse) {
 }
 
 function cangyuanVideoUrl(video: VideoResponse) {
+    if (videoResultUrl(video)) return videoResultUrl(video);
     if (video.video_url) return video.video_url;
     if (video.video?.url) return video.video.url;
     if (video.raw_data?.video_url || video.raw_data?.url) return video.raw_data.video_url || video.raw_data.url;
     if (Array.isArray(video.data)) {
-        const item = video.data.find((value) => value.video_url || value.video?.url || value.raw_data?.video_url || value.raw_data?.url || value.url);
-        return item?.video_url || item?.video?.url || item?.raw_data?.video_url || item?.raw_data?.url || item?.url;
+        const item = video.data.find((value) => videoResultUrl(value) || value.video_url || value.video?.url || value.raw_data?.video_url || value.raw_data?.url || value.url);
+        return (item ? videoResultUrl(item) : "") || item?.video_url || item?.video?.url || item?.raw_data?.video_url || item?.raw_data?.url || item?.url;
     }
-    return video.data?.video_url || video.data?.video?.url || video.data?.raw_data?.video_url || video.data?.raw_data?.url || video.data?.url;
+    return (video.data ? videoResultUrl(video.data) : "") || video.data?.video_url || video.data?.video?.url || video.data?.raw_data?.video_url || video.data?.raw_data?.url || video.data?.url;
 }
 
 function cangyuanVideoError(video: VideoResponse) {
@@ -505,12 +522,20 @@ function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {
 
 function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
     if (!payload) throw new Error(emptyMessage);
-    if (typeof payload === "object" && "code" in payload && typeof payload.code === "number") {
-        if (payload.code !== 0) throw new Error(payload.msg || "请求失败");
+    if (typeof payload === "object" && "code" in payload && payload.code !== undefined) {
+        if (payload.code === "0") {
+            if (!payload.data) throw new Error(emptyMessage);
+            return payload.data;
+        }
+        if (payload.code !== 0) throw new Error(payload.msg || payload.message || payload.error?.message || "请求失败");
         if (!payload.data) throw new Error(emptyMessage);
         return payload.data;
     }
     return payload as T;
+}
+
+function videoResultUrl(payload: VideoResponse | VideoResponseData | SeedanceTask) {
+    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
 function readAxiosError(error: unknown, fallback: string) {
