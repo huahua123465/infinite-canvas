@@ -29,6 +29,7 @@ export function VolcengineVoiceCloneModal({ open, config, currentSpeaker, onClos
     const [error, setError] = useState("");
     const draggable = useDraggableLayer(open);
     const selected = useMemo(() => items.find((item) => item.speakerId === currentSpeaker), [currentSpeaker, items]);
+    useVoiceCloneModalOutsideClose(open, onClose);
 
     useEffect(() => {
         if (!open) return;
@@ -81,6 +82,7 @@ export function VolcengineVoiceCloneModal({ open, config, currentSpeaker, onClos
             width={780}
             zIndex={1800}
             closeIcon={<X className="size-5" />}
+            maskClosable={false}
             onCancel={onClose}
             modalRender={(modal) => <div style={draggable.style}>{modal}</div>}
             styles={{ mask: { background: "rgba(0,0,0,.68)" }, content: { padding: 0, overflow: "hidden", borderRadius: 12, background: "#172325" }, body: { padding: 0 } }}
@@ -165,6 +167,22 @@ export function VolcengineVoiceCloneModal({ open, config, currentSpeaker, onClos
             </div>
         </Modal>
     );
+}
+
+function isVoiceCloneModalInnerTarget(target: EventTarget | null) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(".ant-modal, .ant-select-dropdown, .ant-dropdown, .ant-picker-dropdown, .ant-popover"));
+}
+
+function useVoiceCloneModalOutsideClose(open: boolean, onClose: () => void) {
+    useEffect(() => {
+        if (!open) return;
+        const handlePointerDown = (event: PointerEvent) => {
+            if (!isVoiceCloneModalInnerTarget(event.target)) onClose();
+        };
+        document.addEventListener("pointerdown", handlePointerDown, true);
+        return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+    }, [open, onClose]);
 }
 
 function voiceCloneStatusLabel(status?: number) {

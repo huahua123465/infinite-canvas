@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Button, Input, Modal } from "antd";
 import { Check, Copy, LoaderCircle, Volume2, X } from "lucide-react";
 
-import { volcengineVoiceOptions } from "@/lib/audio-generation";
+import { volcengineVoiceOptions, type VolcengineVoiceOption } from "@/lib/audio-generation";
 import { useDraggableLayer } from "@/hooks/use-draggable-layer";
 import { requestStoredAudioGeneration } from "@/services/api/audio";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -19,7 +19,10 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
     const filteredVoices = useMemo(() => {
         const source = keyword.trim().toLowerCase();
         if (!source) return volcengineVoiceOptions;
-        return volcengineVoiceOptions.filter((voice) => [voice.label, voice.value, voice.tone, voice.gender, voice.age, ...voice.tags].join(" ").toLowerCase().includes(source));
+        const matched = volcengineVoiceOptions.filter((voice) => [voice.label, voice.value, voice.tone, voice.gender, voice.age, ...voice.tags].join(" ").toLowerCase().includes(source));
+        const pastedVoiceId = normalizePastedVoiceId(source);
+        if (!pastedVoiceId || matched.some((voice) => voice.value === pastedVoiceId)) return matched;
+        return [createPastedVoiceOption(pastedVoiceId), ...matched];
     }, [keyword]);
     const previewVoice = async (voice: (typeof volcengineVoiceOptions)[number]) => {
         const text = sampleText.trim();
@@ -136,4 +139,23 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
 
 function voicePreviewKey(voice: string, text: string) {
     return `${voice}::${text.trim()}`;
+}
+
+function normalizePastedVoiceId(value: string) {
+    const voice = value.trim().replace(/^["'`]+|["'`]+$/g, "");
+    if (!/^[a-z0-9][a-z0-9_:-]{5,}$/i.test(voice)) return "";
+    if (/^(zh|en|ja|ko|multi|yue|cmn|wuu|custom|s|icl)_/i.test(voice) || /(_bigtts|_icl|_mars|_venus|_uranus)/i.test(voice)) return voice;
+    return "";
+}
+
+function createPastedVoiceOption(value: string): VolcengineVoiceOption {
+    const gender = value.includes("_male_") ? "male" : "female";
+    return {
+        value,
+        label: "使用粘贴的 Voice_type",
+        gender,
+        age: "adult",
+        tone: "来自官方音色库复制的 Voice_type，本地列表暂未收录",
+        tags: ["官方复制", "自定义ID"],
+    };
 }
