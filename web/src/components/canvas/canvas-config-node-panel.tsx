@@ -5,6 +5,7 @@ import { Button, Segmented } from "antd";
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -35,7 +36,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
-    const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
+    const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : mode === "audio" ? audioModelPatch(config, model) : { model });
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -181,6 +182,10 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
 function videoModelPatch(model: string) {
     const fixedResolution = seedanceModelFixedResolution(model);
     return fixedResolution ? { model, vquality: fixedResolution } : { model };
+}
+
+function audioModelPatch(config: AiConfig, model: string) {
+    return { model, audioVoice: normalizeAudioVoiceForProvider(config, model) };
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {

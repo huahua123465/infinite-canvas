@@ -3,10 +3,12 @@ import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react"
 import { useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
 import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import { audioFormatOptions, normalizeAudioVoiceValue, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
+import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
@@ -63,6 +65,7 @@ export function AppConfigModal() {
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
+    const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
@@ -75,6 +78,8 @@ export function AppConfigModal() {
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const modelOptions = config.models.map((model) => ({ label: modelOptionLabel(config, model), value: model }));
     const webdavReady = Boolean(webdav.url.trim());
+    const audioProvider = resolveAudioProvider(config, config.audioModel || config.model);
+    const volcengineSpeaker = normalizeVolcengineSpeakerValue(config.audioVoice) || DEFAULT_VOLCENGINE_SPEAKER;
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -153,7 +158,16 @@ export function AppConfigModal() {
     const updateCapabilityModels = (group: ModelGroup, models: string[]) => {
         const next = uniqueModels(models.map((model) => normalizeModelOptionValue(model, config.channels)).filter(Boolean));
         updateConfig(group.modelsKey, next);
-        if (!next.includes(config[group.modelKey])) updateConfig(group.modelKey, next[0] || "");
+        if (!next.includes(config[group.modelKey])) {
+            const nextModel = next[0] || "";
+            updateConfig(group.modelKey, nextModel);
+            if (group.modelKey === "audioModel") updateConfig("audioVoice", normalizeAudioVoiceForProvider(config, nextModel));
+        }
+    };
+
+    const updateDefaultModel = (group: ModelGroup, model: string) => {
+        updateConfig(group.modelKey, model);
+        if (group.modelKey === "audioModel") updateConfig("audioVoice", normalizeAudioVoiceForProvider(config, model));
     };
 
     const testWebdav = async () => {
@@ -323,7 +337,7 @@ export function AppConfigModal() {
                                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                     {modelGroups.map((group) => (
                                         <Form.Item key={group.modelKey} label={group.defaultLabel} className="mb-0">
-                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} fullWidth />
+                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateDefaultModel(group, model)} capability={group.capability} fullWidth />
                                         </Form.Item>
                                     ))}
                                 </div>
@@ -346,8 +360,20 @@ export function AppConfigModal() {
                                             onBlur={(event) => updateConfig("canvasImageCount", normalizeImageCount(event.target.value))}
                                         />
                                     </Form.Item>
-                                    <Form.Item label="默认音频声音" className="mb-4">
-                                        <Input value={config.audioVoice} placeholder="OpenAI voice 或火山 speaker ID，例如 zh_female_..._bigtts" onChange={(event) => updateConfig("audioVoice", event.target.value)} onBlur={(event) => updateConfig("audioVoice", normalizeAudioVoiceValue(event.target.value))} />
+                                    <Form.Item label={audioProvider.kind === "volcengine" ? "默认火山音色" : "默认 OpenAI 声音"} className="mb-4">
+                                        {audioProvider.kind === "volcengine" ? (
+                                            <div className="space-y-2">
+                                                <div className="rounded border border-stone-200 px-2 py-1.5 text-xs leading-5 text-stone-500 dark:border-stone-800">{volcengineVoiceLabel(volcengineSpeaker)}</div>
+                                                <div className="flex gap-2">
+                                                    <Input className="min-w-0 flex-1" value={config.audioVoice} placeholder="例如 zh_female_meilinvyou_uranus_bigtts" onChange={(event) => updateConfig("audioVoice", event.target.value)} onBlur={(event) => updateConfig("audioVoice", normalizeVolcengineSpeakerValue(event.target.value) || DEFAULT_VOLCENGINE_SPEAKER)} />
+                                                    <Button onClick={() => setVoiceLibraryOpen(true)}>音色库</Button>
+                                                </div>
+                                            </div>
+                                        ) : audioProvider.kind === "unsupported" ? (
+                                            <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs leading-5 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">当前默认音频模型暂不支持音频生成。</div>
+                                        ) : (
+                                            <Select value={normalizeAudioVoiceForProvider(config, config.audioModel)} options={audioVoiceOptions} onChange={(value) => updateConfig("audioVoice", value)} />
+                                        )}
                                     </Form.Item>
                                     <Form.Item label="默认音频格式" className="mb-4">
                                         <Select value={config.audioFormat} options={audioFormatOptions} onChange={(value) => updateConfig("audioFormat", value)} />
@@ -419,6 +445,7 @@ export function AppConfigModal() {
                     },
                 ]}
             />
+            <VolcengineVoiceLibraryModal open={voiceLibraryOpen} config={config} currentSpeaker={volcengineSpeaker} onClose={() => setVoiceLibraryOpen(false)} onSelect={(value) => updateConfig("audioVoice", value)} />
         </Modal>
     );
 }

@@ -1,7 +1,9 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
+import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
+import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -18,31 +20,68 @@ type AudioSettingsPanelProps = {
 };
 
 export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
-    const voice = normalizeAudioVoiceValue(config.audioVoice);
+    const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
+    const modelValue = config.model || config.audioModel;
+    const provider = resolveAudioProvider(config, modelValue);
+    const isVolcengine = provider.kind === "volcengine";
+    const voice = provider.kind === "openai" ? normalizeAudioVoiceForProvider(config, modelValue) : normalizeAudioVoiceValue(config.audioVoice);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const speed = normalizeAudioSpeedValue(config.audioSpeed);
+    const volcengineSpeaker = normalizeVolcengineSpeakerValue(config.audioVoice) || DEFAULT_VOLCENGINE_SPEAKER;
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-lg font-semibold">音频设置</div> : null}
-                <SettingGroup title="声音" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {audioVoiceOptions.map((item) => (
-                            <OptionPill key={item.value} selected={voice === item.value} theme={theme} onClick={() => onConfigChange("audioVoice", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
+                {showTitle ? (
+                    <div>
+                        <div className="text-lg font-semibold">音频设置</div>
+                        <div className="mt-1 text-xs" style={{ color: theme.node.muted }}>
+                            当前服务：{provider.label}
+                        </div>
                     </div>
-                    <input
-                        className="h-9 w-full rounded-full border bg-transparent px-3 text-sm outline-none"
-                        style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
-                        value={config.audioVoice || ""}
-                        placeholder="OpenAI voice 或火山 speaker ID，例如 zh_female_..._bigtts"
-                        onChange={(event) => onConfigChange("audioVoice", event.target.value)}
-                        onBlur={(event) => onConfigChange("audioVoice", normalizeAudioVoiceValue(event.target.value))}
-                        onMouseDown={(event) => event.stopPropagation()}
-                    />
+                ) : null}
+                <SettingGroup title={isVolcengine ? "火山音色 / Voice_type" : "OpenAI 声音"} color={theme.node.muted}>
+                    {provider.kind === "unsupported" ? (
+                        <div className="rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                            当前音频模型暂不支持生成，请切换到 OpenAI TTS 或火山 OpenSpeech 模型。
+                        </div>
+                    ) : isVolcengine ? (
+                        <>
+                            <div className="rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+                                {volcengineVoiceLabel(volcengineSpeaker)}
+                            </div>
+                            <div className="flex gap-2">
+                                <input
+                                    className="h-9 min-w-0 flex-1 rounded-full border bg-transparent px-3 text-sm outline-none"
+                                    style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
+                                    value={config.audioVoice || ""}
+                                    placeholder="例如 zh_female_meilinvyou_uranus_bigtts"
+                                    onChange={(event) => onConfigChange("audioVoice", event.target.value)}
+                                    onBlur={(event) => onConfigChange("audioVoice", normalizeVolcengineSpeakerValue(event.target.value) || DEFAULT_VOLCENGINE_SPEAKER)}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                />
+                                <button type="button" className="h-9 shrink-0 cursor-pointer rounded-full border px-3 text-sm transition hover:opacity-80" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => setVoiceLibraryOpen(true)} onMouseDown={(event) => event.stopPropagation()}>
+                                    音色库
+                                </button>
+                            </div>
+                            <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
+                                试听会调用当前火山语音 API，成功后会写入缓存。
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-3 gap-2.5">
+                                {audioVoiceOptions.map((item) => (
+                                    <OptionPill key={item.value} selected={voice === item.value} theme={theme} onClick={() => onConfigChange("audioVoice", item.value)}>
+                                        {item.label}
+                                    </OptionPill>
+                                ))}
+                            </div>
+                            <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
+                                OpenAI TTS 使用官方 voice 生成；切换到火山模型后才会显示 Voice_type 和火山音色库。
+                            </div>
+                        </>
+                    )}
                 </SettingGroup>
                 <SettingGroup title="格式" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
@@ -84,6 +123,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         onMouseDown={(event) => event.stopPropagation()}
                     />
                 </SettingGroup>
+                <VolcengineVoiceLibraryModal open={voiceLibraryOpen} config={config} modelValue={modelValue} currentSpeaker={volcengineSpeaker} onClose={() => setVoiceLibraryOpen(false)} onSelect={(value) => onConfigChange("audioVoice", value)} />
             </div>
         </ImageSettingsTheme>
     );

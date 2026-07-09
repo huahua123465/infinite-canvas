@@ -6,6 +6,7 @@ import { App, Button } from "antd";
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -50,7 +51,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [promptComposerOpen, setPromptComposerOpen] = useState(false);
     const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
-    const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model });
+    const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : mode === "audio" ? audioModelPatch(config, model) : { model });
     const activeImageReferences = mentionReferences.filter((item) => item.kind === "image" && item.active);
     const mentionedImageLabels = activeImageReferences.filter((item) => promptIncludesReferenceLabel(prompt, item.label)).map((item) => item.label);
     const promptAssistantPendingPrompt = node.metadata?.promptAssistantPendingPrompt?.trim() || "";
@@ -350,6 +351,10 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
 function videoModelPatch(model: string) {
     const fixedResolution = seedanceModelFixedResolution(model);
     return fixedResolution ? { model, vquality: fixedResolution } : { model };
+}
+
+function audioModelPatch(config: AiConfig, model: string) {
+    return { model, audioVoice: normalizeAudioVoiceForProvider(config, model) };
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
