@@ -2,7 +2,7 @@
 setlocal
 
 set "WEB_DIR=%~dp0web"
-set "CANVAS_URL=http://localhost:3000"
+set "CANVAS_URL=http://127.0.0.1:3000/"
 
 if not exist "%WEB_DIR%\package.json" (
   echo Cannot find web\package.json.

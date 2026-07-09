@@ -34,6 +34,7 @@
 
 - [更新日志](/docs/progress/changelog)
 - [custom/jt-vite-merge 融合记录](/docs/progress/jt-vite-merge-notes)
+- [画布修改护栏](/docs/progress/infinite-canvas-change-guardrail)
 - [2026-07-08 工作交接](/docs/progress/2026-07-08-handoff)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)

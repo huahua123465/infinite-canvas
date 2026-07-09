@@ -1,0 +1,62 @@
+---
+title: 画布修改护栏
+description: 说明 infinite-canvas-change skill 的作用、使用方式和对后续画布开发的约束。
+---
+
+# 画布修改护栏
+
+本文记录 `.agents/skills/infinite-canvas-change/SKILL.md` 的用途。它不是运行时代码，也不是新功能，而是给后续 AI / 自动化开发画布功能时使用的修改协议。
+
+## 解决什么问题
+
+当前画布已经包含基础无限画布、节点编辑、图片 / 视频 / 音频生成、脚本节点、分镜短剧、Seedance 提示词、多模型渠道和本地 Agent 等能力。很多逻辑集中在 `web/src/pages/canvas/project.tsx`、`web/src/types/canvas.ts` 和多个 `web/src/components/canvas/` 组件里。
+
+如果后续每次修改都直接进大文件改代码，容易出现三个问题：
+
+- 改动范围过大，排查问题困难。
+- 和官方上游更新合并时更容易冲突。
+- 业务线互相影响，例如修分镜视频时误动普通视频节点或模型渠道。
+
+`infinite-canvas-change` 的目标是让每次画布修改先分类、再读取固定入口文件、最后小范围落地。
+
+## 使用方式
+
+复杂画布改动开始前，先按下面工作流判断本次属于哪一类：
+
+- `canvas-interaction`：拖拽、缩放、选择框、右键菜单、快捷键、粘贴、上传。
+- `node-rendering`：节点主体、悬浮工具栏、提示词面板、弹窗、缩放、视觉状态。
+- `generation-pipeline`：图片、文本、音频、视频生成，重试、取消、参考图、任务进度。
+- `storyboard-workflow`：脚本节点、分镜表、资产、Seedance 提示词、场景锁定、角色声音、尾帧连续性。
+- `provider-routing`：OpenAI、Gemini、Ark、沧元、Seedance、火山 OpenSpeech 等渠道路由。
+- `local-agent`：本地 Canvas Agent、skill 上下文读取、工具队列、agent 操作。
+- `docs-progress`：进度文档、待办、待测试、功能文档和变更说明。
+
+确定分类后，只读取该分类要求的入口文件，不为了“顺手理解全局”大范围翻改无关文件。
+
+## 修改边界
+
+后续画布开发默认遵守这些边界：
+
+- 不主动大拆 `web/src/pages/canvas/project.tsx`，除非用户明确要求重构。
+- 不做整文件格式化、目录重排、路由重排或大规模组件移动。
+- 新增逻辑优先复用现有 helper、store action、组件和 API wrapper。
+- 只有当逻辑稳定且可复用时，才新增小 helper 到 `web/src/lib/canvas/`。
+- 状态逻辑复杂到影响阅读时，才新增页面私有 hook。
+- 不随便扩展 `CanvasNodeMetadata`；新增字段必须有清楚的业务归属和读写路径。
+- 画布 UI 保持中文文案，并继续使用 `canvasThemes`、`useThemeStore`、Ant Design token 和现有节点面板 / Modal 风格。
+
+## 对项目的效果
+
+这个护栏不会改变当前项目运行效果，因为它不修改 `web/src` 运行时代码。它的价值主要体现在后续开发：
+
+- 降低误改范围。
+- 降低和官方上游更新合并时的冲突概率。
+- 让每次画布改动都能说明属于哪条业务线。
+- 保持“功能小切片”开发方式，方便回滚和排查。
+- 提醒每次结束前检查 `todo.mdx` 和 `pending-test.mdx` 是否需要同步。
+
+## 相关文件
+
+- `.agents/skills/infinite-canvas-change/SKILL.md`
+- `.agents/skills/infinite-canvas-change/agents/openai.yaml`
+- `AGENTS.md`
