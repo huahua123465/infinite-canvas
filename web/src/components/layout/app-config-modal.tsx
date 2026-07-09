@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
 import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
@@ -9,7 +9,7 @@ import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent }
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
 import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
-import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -61,7 +61,8 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
 
 export function AppConfigModal() {
     const { message } = App.useApp();
-    const [activeTab, setActiveTab] = useState("channels");
+    const configTab = useConfigStore((state) => state.configTab);
+    const [activeTab, setActiveTab] = useState<ConfigTabKey>(configTab);
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -80,6 +81,8 @@ export function AppConfigModal() {
     const webdavReady = Boolean(webdav.url.trim());
     const audioProvider = resolveAudioProvider(config, config.audioModel || config.model);
     const volcengineSpeaker = normalizeVolcengineSpeakerValue(config.audioVoice) || DEFAULT_VOLCENGINE_SPEAKER;
+
+    useEffect(() => setActiveTab(configTab), [configTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -242,7 +245,7 @@ export function AppConfigModal() {
         >
             <Tabs
                 activeKey={activeTab}
-                onChange={setActiveTab}
+                onChange={(key) => setActiveTab(key as ConfigTabKey)}
                 items={[
                     {
                         key: "channels",

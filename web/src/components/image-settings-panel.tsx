@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { isPlainEnterKey } from "@/lib/keyboard-event";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -186,7 +187,7 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
                 key={`${prefix}-${value}`}
                 onBlur={(event) => commit(event.currentTarget)}
                 onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (isPlainEnterKey(event)) event.currentTarget.blur();
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
             />

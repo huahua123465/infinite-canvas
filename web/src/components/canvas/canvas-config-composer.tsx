@@ -4,6 +4,7 @@ import { Button, Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video, X } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 
@@ -151,7 +152,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                                 setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
                                 return;
                             }
-                            if (event.key === "Enter") {
+                            if (event.key === "Enter" && !isImeComposing(event)) {
                                 event.preventDefault();
                                 insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
                                 return;

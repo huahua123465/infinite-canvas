@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { resolveImageUrl } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -153,7 +154,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                             setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
                             return;
                         }
-                        if (event.key === "Enter") {
+                        if (event.key === "Enter" && !isImeComposing(event)) {
                             event.preventDefault();
                             insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
                             return;
@@ -164,7 +165,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                             return;
                         }
                     }
-                    if (event.key === "Enter" && onSubmit && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                    if (onSubmit && isPlainEnterKey(event)) {
                         event.preventDefault();
                         onSubmit();
                         return;
