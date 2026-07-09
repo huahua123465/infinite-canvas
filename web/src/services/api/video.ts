@@ -4,6 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -387,8 +388,20 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
         return { blob: response.data };
     } catch (error) {
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
+        const blob = await downloadVideoViaAgent(url, options).catch(() => null);
+        if (blob) return { blob };
         return { url, mimeType: "video/mp4" };
     }
+}
+
+async function downloadVideoViaAgent(url: string, options?: RequestOptions) {
+    const agent = useCanvasAgentStore.getState();
+    const endpoint = agent.url.trim().replace(/\/$/, "");
+    const token = agent.token.trim();
+    if (!endpoint || !token || !isPublicMediaUrl(url)) return null;
+    const response = await axios.post<Blob>(`${endpoint}/api/proxy/media/download?token=${encodeURIComponent(token)}`, { url }, { headers: { "Content-Type": "application/json" }, responseType: "blob", signal: options?.signal });
+    await assertVideoBlob(response.data);
+    return response.data;
 }
 
 function assertVideoConfig(config: AiConfig, model: string) {

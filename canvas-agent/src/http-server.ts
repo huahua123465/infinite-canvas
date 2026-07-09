@@ -42,6 +42,7 @@ export function startHttpServer() {
     });
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
+    app.post("/api/proxy/media/download", route(proxyMediaDownload));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.get("/agent/codex/workspace", (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.query.canvasId || ""));
@@ -132,6 +133,19 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
     res.send(data);
 }
 
+async function proxyMediaDownload(req: Request, res: Response) {
+    const url = safeRemoteMediaUrl(stringField((req.body || {}).url));
+    if (!url) return void res.status(400).json({ ok: false, error: "missing media url" });
+    const upstream = await fetch(url);
+    const data = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+    const length = upstream.headers.get("content-length");
+    if (length) res.setHeader("Content-Length", length);
+    res.send(data);
+}
+
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
 }
@@ -183,6 +197,13 @@ function requestUrl(req: Request, config: CanvasAgentConfig) {
 function safeVolcengineSpeechUrl(baseUrl: string) {
     const url = new URL(volcengineSpeechUrl(baseUrl || "https://openspeech.bytedance.com"));
     if (url.protocol !== "https:" || url.hostname !== "openspeech.bytedance.com") throw new Error("only openspeech.bytedance.com is allowed");
+    return url.toString();
+}
+
+function safeRemoteMediaUrl(value: string) {
+    if (!value) return "";
+    const url = new URL(value);
+    if (url.protocol !== "https:") throw new Error("only https media urls are allowed");
     return url.toString();
 }
 
