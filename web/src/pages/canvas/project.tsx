@@ -2810,6 +2810,13 @@ function InfiniteCanvasPage() {
         setEditRequestNonce((value) => value + 1);
     }, []);
 
+    const openNodePromptPanel = useCallback((node: CanvasNodeData) => {
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        setToolbarNodeId(null);
+        setDialogNodeId(node.id);
+    }, []);
+
     const handleNodePromptChange = useCallback((nodeId: string, prompt: string) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt } } : node)));
     }, []);
@@ -4342,6 +4349,7 @@ function InfiniteCanvasPage() {
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={(node, patch) => void handleRetryNode(node, patch)}
+                            onEditPrompt={openNodePromptPanel}
                             onGenerateImage={generateImageFromTextNode}
                             onOpenScript={(node) => setScriptNodeId(node.id)}
                             onViewImage={(node) => setPreviewNodeId(node.id)}

@@ -14,9 +14,10 @@ type CanvasVideoSettingsPopoverProps = {
     onModelChange?: (model: string) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
+    portalContainer?: HTMLElement | null;
 };
 
-export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
+export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChange, buttonClassName, placement = "topLeft", portalContainer }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -44,7 +45,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChan
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} /> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} portalContainer={portalContainer} /> : null;
 
     return (
         <>
@@ -68,6 +69,7 @@ function VideoSettingsPortal({
     config,
     onConfigChange,
     onModelChange,
+    portalContainer,
 }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
@@ -76,6 +78,7 @@ function VideoSettingsPortal({
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     onModelChange?: (model: string) => void;
+    portalContainer?: HTMLElement | null;
 }) {
     const width = 356;
     const gap = 8;
@@ -109,6 +112,6 @@ function VideoSettingsPortal({
         >
             <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} onModelChange={(model) => (onModelChange ? onModelChange(model) : onConfigChange("model", model))} theme={theme} className="space-y-4" />
         </div>,
-        document.body,
+        portalContainer || document.body,
     );
 }

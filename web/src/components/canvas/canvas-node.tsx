@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Empty, Input, Modal } from "antd";
-import { AlertTriangle, ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, Pencil, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
@@ -57,6 +57,7 @@ type CanvasNodeProps = {
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
+    onEditPrompt?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
@@ -82,6 +83,7 @@ type NodeContentRendererProps = {
     storyboardReferenceAssets: StoryboardVideoReference[];
     storyboardVideoResults: CanvasNodeData[];
     onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
+    onEditPrompt?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onOpenScript?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
@@ -122,6 +124,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
+    onEditPrompt,
     onGenerateImage,
     onOpenScript,
     onViewImage,
@@ -344,6 +347,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onStoryboardScreenshotImport={onStoryboardScreenshotImport}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
+                        onEditPrompt={onEditPrompt}
                         onGenerateImage={onGenerateImage}
                         onOpenScript={onOpenScript}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
@@ -377,7 +381,7 @@ function NodeContent(props: NodeContentRendererProps) {
         return <VideoNodeContent {...props} />;
     }
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
-    if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
+    if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onEditPrompt={props.onEditPrompt} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
     return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
@@ -402,23 +406,38 @@ function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
     );
 }
 
-function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
+function ErrorContent({ node, theme, onRetry, onEditPrompt }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry" | "onEditPrompt">) {
     return (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
             <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "生成失败"}</div>
-            <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
-                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                onClick={(event) => {
-                    event.stopPropagation();
-                    onRetry?.(node);
-                }}
-                onMouseDown={(event) => event.stopPropagation()}
-            >
-                <RefreshCw className="size-3.5" />
-                重试
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                    type="button"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onEditPrompt?.(node);
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    <Pencil className="size-3.5" />
+                    修改提示词
+                </button>
+                <button
+                    type="button"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
+                    style={{ background: theme.node.fill, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onRetry?.(node);
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    <RefreshCw className="size-3.5" />
+                    直接重试
+                </button>
+            </div>
         </div>
     );
 }
@@ -745,7 +764,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             props.node.metadata?.status === "loading" ? (
                 <LoadingContent theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
-                <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
+                <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onEditPrompt={props.onEditPrompt} />
             ) : (
                 <EmptyImageContent {...props} isBatchRoot={false} />
             );
@@ -1340,6 +1359,7 @@ function StoryboardVideoPromptPreviewModal({
     const mentionReferences = storyboardReferencesToCanvasResources([...referenceCandidates, ...draftReferences]);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
     const [saveHint, setSaveHint] = useState("");
+    const [modalContentElement, setModalContentElement] = useState<HTMLDivElement | null>(null);
     const saveHintTimerRef = useRef<number | null>(null);
     const finalPromptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -1419,7 +1439,7 @@ function StoryboardVideoPromptPreviewModal({
             closable={false}
             modalRender={renderCanvasModal}
         >
-            <div className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            <div ref={setModalContentElement} className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
                     卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
                 </div>
@@ -1439,6 +1459,7 @@ function StoryboardVideoPromptPreviewModal({
                             buttonClassName="!h-9 !min-w-[190px] !max-w-[260px] !justify-start !rounded-full !px-3"
                             onConfigChange={(key, value) => updateDraftConfig({ [key]: value } as Partial<AiConfig>)}
                             onModelChange={updateDraftModel}
+                            portalContainer={modalContentElement}
                         />
                     </div>
                 </section>
