@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Clipboard, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
 import { App, Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -24,7 +24,7 @@ type CanvasNodePromptPanelProps = {
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
-    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: { useCurrentImageAsReference?: boolean }) => void;
     onStop: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     onImageSettingsOpenChange?: (open: boolean) => void;
@@ -55,6 +55,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const mentionedImageLabels = activeImageReferences.filter((item) => promptIncludesReferenceLabel(prompt, item.label)).map((item) => item.label);
     const promptAssistantPendingPrompt = node.metadata?.promptAssistantPendingPrompt?.trim() || "";
     const promptAssistantStatus = node.metadata?.promptAssistantStatus;
+    const canUseCurrentImageAsReference = mode === "image" && node.type === CanvasNodeType.Image && Boolean(node.metadata?.content && node.metadata?.generationType);
 
     useEffect(() => {
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
@@ -217,32 +218,40 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
                 )}
             </div>
-            <Button
-                type="primary"
-                className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                danger={isRunning}
-                disabled={!isRunning && !prompt.trim() && !isScriptNode}
-                onClick={() => (isRunning ? onStop(node.id) : submit())}
-                aria-label={isRunning ? "停止生成" : "生成"}
-            >
-                <span className="flex items-center gap-1.5">
-                    {isRunning ? (
-                        <>
-                            <LoaderCircle className="size-4 animate-spin" />
-                            <Square className="size-3.5 fill-current" />
-                            <span className="text-xs font-medium">停止</span>
-                        </>
-                    ) : (
-                        <>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
-                                <CreditSymbol />
-                                {credits.toLocaleString()}
-                            </span>
-                            <ArrowUp className="size-4" />
-                        </>
-                    )}
-                </span>
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+                {canUseCurrentImageAsReference && !isRunning ? (
+                    <Button className="!h-10 !rounded-full !px-3" icon={<ImagePlus className="size-4" />} disabled={!prompt.trim()} title="基于当前结果图继续图生图修改" onClick={() => onGenerate(node.id, mode, prompt.trim(), { useCurrentImageAsReference: true })}>
+                        续修
+                    </Button>
+                ) : null}
+                <Button
+                    type="primary"
+                    className="!h-10 !min-w-16 !rounded-full !px-3"
+                    danger={isRunning}
+                    disabled={!isRunning && !prompt.trim() && !isScriptNode}
+                    onClick={() => (isRunning ? onStop(node.id) : submit())}
+                    aria-label={isRunning ? "停止生成" : "生成"}
+                    title={canUseCurrentImageAsReference ? "重新生成一版，优先使用原始参考图" : undefined}
+                >
+                    <span className="flex items-center gap-1.5">
+                        {isRunning ? (
+                            <>
+                                <LoaderCircle className="size-4 animate-spin" />
+                                <Square className="size-3.5 fill-current" />
+                                <span className="text-xs font-medium">停止</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
+                                    <CreditSymbol />
+                                    {credits.toLocaleString()}
+                                </span>
+                                <ArrowUp className="size-4" />
+                            </>
+                        )}
+                    </span>
+                </Button>
+            </div>
         </div>
     );
 

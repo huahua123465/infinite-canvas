@@ -497,7 +497,7 @@ function InfiniteCanvasPage() {
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
-    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
+    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: { useCurrentImageAsReference?: boolean }) => Promise<void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
@@ -3451,7 +3451,7 @@ function InfiniteCanvasPage() {
     }, [contextMenu, createNode, handleMangaCardImportRequest, handleMangaStoryboardImportRequest, handleScene360ImportRequest, handleUploadRequest, historyState.canRedo, historyState.canUndo, navigate, nodeById, pasteCopiedNodes, pasteSystemClipboard, projectId, redoCanvas, saveNodeAsset, selectedNodeIds, undoCanvas]);
 
     const handleGenerateNode = useCallback(
-        async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
+        async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: { useCurrentImageAsReference?: boolean }) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
             if (sourceNode?.type === CanvasNodeType.Script) {
                 await generateStoryboardShotsFromInputs(sourceNode);
@@ -3492,11 +3492,22 @@ function InfiniteCanvasPage() {
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
+                    const shouldUseCurrentImageAsReference = Boolean(options?.useCurrentImageAsReference || (isImageNode && sourceNode?.metadata?.content && !sourceNode.metadata?.generationType));
+                    let restoredReferenceImages: ReferenceImage[] | null | undefined;
+                    if (isImageNode && sourceNode?.metadata?.generationType && !options?.useCurrentImageAsReference) {
+                        restoredReferenceImages = await resolveMetadataReferences(sourceNode.metadata);
+                        if (restoredReferenceImages === null) {
+                            message.error("原始参考图已丢失，无法重新生成；可以点“续修”改为基于当前图继续修改");
+                            finishGenerationRequest(nodeId, runController);
+                            setRunningNodeId(null);
+                            return;
+                        }
+                    }
                     const sourceReference =
-                        isImageNode && sourceNode?.metadata?.content
+                        shouldUseCurrentImageAsReference && sourceNode?.metadata?.content
                             ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
                             : [];
-                    const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                    const referenceImages = restoredReferenceImages !== undefined ? restoredReferenceImages : sourceReference.length ? sourceReference : generationContext.referenceImages;
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const useMultiViewGrid = generationType === "generation" && shouldUseMultiViewGrid(effectivePrompt, sourceNode?.metadata);
                     const characterReferencePrompts = isConfigNode ? (sourceNode.metadata?.characterReferenceVariantPrompts || []).map((item) => item.trim()).filter(Boolean) : [];
@@ -3570,7 +3581,16 @@ function InfiniteCanvasPage() {
                             ...generationMetadata,
                         },
                     }));
-                    const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
+                    const restoredReferenceSourceNodes = restoredReferenceImages?.length ? findReferenceSourceNodes(sourceNode?.metadata?.references || [], nodesRef.current) : [];
+                    const shouldConnectCurrentNode = !isImageNode || shouldUseCurrentImageAsReference || !sourceNode?.metadata?.generationType;
+                    const rootInputConnections = isEmptyImageNode
+                        ? []
+                        : restoredReferenceSourceNodes.length
+                          ? restoredReferenceSourceNodes.map((referenceNode) => ({ id: nanoid(), fromNodeId: referenceNode.id, toNodeId: rootId }))
+                          : shouldConnectCurrentNode
+                            ? [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]
+                            : [];
+                    const batchConnections = [...rootInputConnections, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
                     setNodes((prev) => [
                         ...prev.map((node) =>
@@ -4915,6 +4935,20 @@ function generationReferenceUrls(context: { referenceImages: ReferenceImage[]; r
         ...context.referenceVideos.map((video) => video.storageKey || video.url).filter((url): url is string => Boolean(url)),
         ...(context.referenceAudios || []).map((audio) => audio.storageKey || audio.url).filter((url): url is string => Boolean(url)),
     ];
+}
+
+function findReferenceSourceNodes(referenceUrls: string[], nodes: CanvasNodeData[]) {
+    if (!referenceUrls.length) return [];
+    const referenceSet = new Set(referenceUrls);
+    const seen = new Set<string>();
+    return nodes.filter((node) => {
+        if (seen.has(node.id) || node.type !== CanvasNodeType.Image || !node.metadata?.content) return false;
+        const imageRef = sourceNodeReferenceImages(node)[0];
+        const candidates = [imageRef ? referenceUrl(imageRef) : undefined, node.metadata.storageKey, node.metadata.content && !node.metadata.content.startsWith("data:") ? node.metadata.content : undefined].filter(Boolean);
+        const matched = candidates.some((item) => referenceSet.has(item as string));
+        if (matched) seen.add(node.id);
+        return matched;
+    });
 }
 
 async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
