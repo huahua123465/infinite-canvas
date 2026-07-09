@@ -7,6 +7,7 @@ import { AudioSettingsPanel } from "@/components/audio-settings-panel";
 import { audioFormatLabel, audioSpeedLabel, audioVoiceLabel, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
 import { normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useDraggableLayer } from "@/hooks/use-draggable-layer";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -36,6 +37,7 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
             const target = event.target;
             if (!(target instanceof Node)) return;
             if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest(".ant-modal-root")) return;
             setOpen(false);
         };
 
@@ -81,6 +83,7 @@ function AudioSettingsPortal({
     config: AiConfig;
     onConfigChange: (key: CanvasAudioSettingKey, value: string) => void;
 }) {
+    const draggable = useDraggableLayer();
     const width = 356;
     const gap = 8;
     const margin = 12;
@@ -100,6 +103,7 @@ function AudioSettingsPortal({
         padding: 18,
         overflowY: "auto",
         color: theme.node.text,
+        ...draggable.style,
     } as const;
 
     return createPortal(
@@ -107,11 +111,14 @@ function AudioSettingsPortal({
             ref={panelRef}
             className="canvas-image-settings-popover"
             style={style}
-            onPointerDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => {
+                event.stopPropagation();
+                draggable.handleProps.onPointerDown(event);
+            }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <AudioSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <AudioSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" titleDragHandleProps={draggable.handleProps} />
         </div>,
         document.body,
     );

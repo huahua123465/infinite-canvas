@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useState, type HTMLAttributes, type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
+import { VolcengineVoiceCloneModal } from "@/components/volcengine-voice-clone-modal";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
 import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
 import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
@@ -17,10 +18,12 @@ type AudioSettingsPanelProps = {
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    titleDragHandleProps?: HTMLAttributes<HTMLDivElement>;
 };
 
-export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
+export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", titleDragHandleProps }: AudioSettingsPanelProps) {
     const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
+    const [voiceCloneOpen, setVoiceCloneOpen] = useState(false);
     const modelValue = config.model || config.audioModel;
     const provider = resolveAudioProvider(config, modelValue);
     const isVolcengine = provider.kind === "volcengine";
@@ -33,7 +36,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? (
-                    <div>
+                    <div {...titleDragHandleProps} className={titleDragHandleProps?.className}>
                         <div className="text-lg font-semibold">音频设置</div>
                         <div className="mt-1 text-xs" style={{ color: theme.node.muted }}>
                             当前服务：{provider.label}
@@ -64,6 +67,9 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                     音色库
                                 </button>
                             </div>
+                            <button type="button" className="h-9 w-full cursor-pointer rounded-full border px-3 text-sm transition hover:opacity-80" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => setVoiceCloneOpen(true)} onMouseDown={(event) => event.stopPropagation()}>
+                                声音复刻 / 上传自己的声音
+                            </button>
                             <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
                                 试听会调用当前火山语音 API，成功后会写入缓存。
                             </div>
@@ -124,6 +130,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     />
                 </SettingGroup>
                 <VolcengineVoiceLibraryModal open={voiceLibraryOpen} config={config} modelValue={modelValue} currentSpeaker={volcengineSpeaker} onClose={() => setVoiceLibraryOpen(false)} onSelect={(value) => onConfigChange("audioVoice", value)} />
+                <VolcengineVoiceCloneModal open={voiceCloneOpen} config={config} currentSpeaker={config.audioVoice || ""} onClose={() => setVoiceCloneOpen(false)} onSelect={(value) => onConfigChange("audioVoice", value)} />
             </div>
         </ImageSettingsTheme>
     );

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Button, Input, Modal } from "antd";
-import { Check, LoaderCircle, Volume2, X } from "lucide-react";
+import { Check, Copy, LoaderCircle, Volume2, X } from "lucide-react";
 
 import { volcengineVoiceOptions } from "@/lib/audio-generation";
+import { useDraggableLayer } from "@/hooks/use-draggable-layer";
 import { requestStoredAudioGeneration } from "@/services/api/audio";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -14,6 +15,7 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
     const [previewing, setPreviewing] = useState("");
     const [previews, setPreviews] = useState<Record<string, { url: string; cacheHit?: "local" | "shared" }>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const draggable = useDraggableLayer(open);
     const filteredVoices = useMemo(() => {
         const source = keyword.trim().toLowerCase();
         if (!source) return volcengineVoiceOptions;
@@ -50,6 +52,9 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
         onSelect(value);
         onClose();
     };
+    const copyVoice = async (value: string) => {
+        await navigator.clipboard?.writeText(value);
+    };
     return (
         <Modal
             open={open}
@@ -57,12 +62,14 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
             footer={null}
             centered
             width={760}
+            zIndex={1800}
             closeIcon={<X className="size-5" />}
             onCancel={onClose}
+            modalRender={(modal) => <div style={draggable.style}>{modal}</div>}
             styles={{ mask: { background: "rgba(0,0,0,.68)" }, content: { padding: 0, overflow: "hidden", borderRadius: 12, background: "#172325" }, body: { padding: 0 } }}
         >
-            <div className="flex max-h-[82vh] flex-col border border-cyan-500/20 bg-[#172325] text-cyan-50">
-                <div className="border-b border-cyan-500/15 px-5 py-4 pr-12">
+            <div className={`flex max-h-[82vh] flex-col border border-cyan-500/20 bg-[#172325] text-cyan-50 ${draggable.handleProps.className}`} onPointerDown={draggable.handleProps.onPointerDown}>
+                <div {...draggable.handleProps} className={`border-b border-cyan-500/15 px-5 py-4 pr-12 ${draggable.handleProps.className}`}>
                     <div className="flex items-center gap-2 text-sm font-semibold">
                         <Volume2 className="size-4" />
                         火山音色试听库
@@ -101,6 +108,9 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
                                         <div className="flex shrink-0 items-center gap-2">
                                             <Button size="small" icon={loading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />} disabled={loading} onClick={() => void previewVoice(voice)}>
                                                 生成试听
+                                            </Button>
+                                            <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void copyVoice(voice.value)}>
+                                                复制 ID
                                             </Button>
                                             <Button size="small" type={active ? "primary" : "default"} icon={<Check className="size-3.5" />} onClick={() => selectVoice(voice.value)}>
                                                 选择

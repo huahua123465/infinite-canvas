@@ -9,8 +9,47 @@ type RequestOptions = { signal?: AbortSignal };
 export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
 type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
 type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
+export type VolcengineVoiceCloneStatus = 0 | 1 | 2 | 3 | 4;
+export type VolcengineVoiceCloneModelStatus = { model_type?: number; demo_audio?: string };
+export type VolcengineVoiceCloneRecord = {
+    id: string;
+    name: string;
+    speakerId: string;
+    customSpeakerId?: string;
+    status?: VolcengineVoiceCloneStatus;
+    language?: number;
+    sampleText?: string;
+    demoText?: string;
+    demoAudioUrl?: string;
+    demoAudioStorageKey?: string;
+    sourceAudioStorageKey?: string;
+    createdAt: number;
+    updatedAt: number;
+    speakerStatus?: VolcengineVoiceCloneModelStatus[];
+};
+export type VolcengineVoiceCloneInput = {
+    file: File;
+    name?: string;
+    speakerId?: string;
+    customSpeakerId?: string;
+    text?: string;
+    demoText?: string;
+    language?: number;
+    enableAudioDenoise?: boolean;
+};
+type VolcengineVoiceCloneResponse = {
+    code?: number;
+    message?: string;
+    available_training_times?: number;
+    create_time?: number;
+    language?: number;
+    speaker_id?: string;
+    status?: VolcengineVoiceCloneStatus;
+    speaker_status?: VolcengineVoiceCloneModelStatus[];
+};
 
 const audioCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "audio_generation_cache" });
+const voiceCloneStore = localforage.createInstance({ name: "infinite-canvas", storeName: "volcengine_voice_clones" });
 const sharedPreviewManifestUrl = "/audio/voice-previews/manifest.json";
 let sharedPreviewManifest: Promise<Map<string, SharedAudioCacheEntry>> | null = null;
 
@@ -108,6 +147,96 @@ function withVolcengineSpeechContext(error: unknown, resourceId: string, speaker
     return new Error(`${error.message}。当前音频模型资源是 ${resourceId}，但 speaker 是 ${speaker}，两者不属于同一套火山语音资源；请使用当前服务详情音色列表里的 Voice_type，或切换到该 speaker 对应的资源模型。`);
 }
 
+export async function listVolcengineVoiceClones(): Promise<VolcengineVoiceCloneRecord[]> {
+    const items: VolcengineVoiceCloneRecord[] = [];
+    await voiceCloneStore.iterate<VolcengineVoiceCloneRecord, void>((value) => {
+        if (value?.speakerId) items.push(value);
+    });
+    const hydrated = await Promise.all(
+        items.map(async (item) => ({
+            ...item,
+            demoAudioUrl: item.demoAudioStorageKey ? await resolveMediaUrl(item.demoAudioStorageKey, item.demoAudioUrl) : item.demoAudioUrl,
+        })),
+    );
+    return hydrated.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function requestVolcengineVoiceClone(config: AiConfig, input: VolcengineVoiceCloneInput, options?: RequestOptions): Promise<VolcengineVoiceCloneRecord> {
+    const requestConfig = resolveVolcengineAudioRequestConfig(config);
+    assertAudioConfig(requestConfig, requestConfig.model || "seed-icl-2.0");
+    const customSpeakerId = normalizeCustomSpeakerId(input.customSpeakerId || `custom_zh_${Date.now().toString(36)}`);
+    const audio = await fileToBase64Audio(input.file);
+    const payload = {
+        speaker_id: input.speakerId?.trim() || "custom_speaker_id",
+        custom_speaker_id: input.speakerId?.trim() ? undefined : customSpeakerId,
+        audio,
+        ...(input.text?.trim() ? { text: input.text.trim() } : {}),
+        language: input.language ?? 0,
+        extra_params: {
+            voice_clone_denoise_model_id: "",
+            ...(input.demoText?.trim() ? { demo_text: input.demoText.trim() } : {}),
+            ...(typeof input.enableAudioDenoise === "boolean" ? { enable_audio_denoise: input.enableAudioDenoise } : {}),
+        },
+    };
+    const response = await requestVolcengineJson<VolcengineVoiceCloneResponse>(requestConfig, "/api/v3/tts/voice_clone", payload, options);
+    const speakerId = response.speaker_id || input.speakerId?.trim() || customSpeakerId;
+    const sourceAudio = await uploadMediaFile(input.file, "voice-clone-source");
+    const record = await storeVolcengineVoiceClone({
+        id: speakerId,
+        name: input.name?.trim() || input.file.name.replace(/\.[^.]+$/, "") || speakerId,
+        speakerId,
+        customSpeakerId: input.speakerId?.trim() ? undefined : customSpeakerId,
+        status: response.status,
+        language: response.language ?? input.language ?? 0,
+        sampleText: input.text?.trim(),
+        demoText: input.demoText?.trim(),
+        sourceAudioStorageKey: sourceAudio.storageKey,
+        speakerStatus: response.speaker_status,
+        createdAt: response.create_time || Date.now(),
+        updatedAt: Date.now(),
+    });
+    return saveVoiceCloneDemoAudio(record, options);
+}
+
+export async function requestVolcengineVoiceCloneStatus(config: AiConfig, record: VolcengineVoiceCloneRecord, options?: RequestOptions): Promise<VolcengineVoiceCloneRecord> {
+    const requestConfig = resolveVolcengineAudioRequestConfig(config);
+    assertAudioConfig(requestConfig, requestConfig.model || "seed-icl-2.0");
+    const payload = record.customSpeakerId ? { speaker_id: "custom_speaker_id", custom_speaker_id: record.customSpeakerId } : { speaker_id: record.speakerId };
+    const response = await requestVolcengineJson<VolcengineVoiceCloneResponse>(requestConfig, "/api/v3/tts/get_voice", payload, options);
+    const next = await storeVolcengineVoiceClone({
+        ...record,
+        speakerId: response.speaker_id || record.speakerId,
+        status: response.status,
+        language: response.language ?? record.language,
+        speakerStatus: response.speaker_status,
+        updatedAt: Date.now(),
+    });
+    return saveVoiceCloneDemoAudio(next, options);
+}
+
+async function storeVolcengineVoiceClone(record: VolcengineVoiceCloneRecord) {
+    await voiceCloneStore.setItem(record.id, record);
+    return record;
+}
+
+async function saveVoiceCloneDemoAudio(record: VolcengineVoiceCloneRecord, options?: RequestOptions) {
+    const demoAudio = record.speakerStatus?.find((item) => item.demo_audio)?.demo_audio;
+    if (!demoAudio || record.demoAudioStorageKey) return record;
+    try {
+        const proxyUrl = mediaDownloadAgentProxyUrl();
+        if (!proxyUrl) throw new Error("missing local media proxy");
+        const response = await axios.post<Blob>(
+            proxyUrl,
+            { url: demoAudio },
+            { headers: { "Content-Type": "application/json" }, responseType: "blob", signal: options?.signal },
+        );
+        const audio = await storeGeneratedAudio(response.data, "mp3");
+        return storeVolcengineVoiceClone({ ...record, demoAudioUrl: audio.url, demoAudioStorageKey: audio.storageKey, updatedAt: Date.now() });
+    } catch {
+        return storeVolcengineVoiceClone({ ...record, demoAudioUrl: demoAudio, updatedAt: Date.now() });
+    }
+}
+
 export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
     const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
     return uploadMediaFile(audio, "audio");
@@ -180,11 +309,13 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string) {
         const volcengineModel = findVolcengineAudioModel(config);
         if (volcengineModel) requestConfig = resolveModelRequestConfig(config, volcengineModel);
     }
+    const voice = normalizeAudioVoiceValue(requestConfig.audioVoice);
+    const model = isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim()) ? normalizeVolcengineResourceId(requestConfig.model, voice) : requestConfig.model.trim();
     const payload = JSON.stringify({
         v: 1,
         baseUrl: requestConfig.baseUrl.trim().replace(/\/+$/, ""),
-        model: requestConfig.model.trim(),
-        voice: normalizeAudioVoiceValue(requestConfig.audioVoice),
+        model,
+        voice,
         format: normalizeAudioFormatValue(requestConfig.audioFormat),
         speed: normalizeAudioSpeedValue(requestConfig.audioSpeed),
         instructions: requestConfig.audioInstructions.trim(),
@@ -222,6 +353,48 @@ function findVolcengineAudioModel(config: AiConfig) {
     const channel = config.channels.find((item) => /openspeech\.bytedance\.com/i.test(item.baseUrl) && item.models.length);
     const model = channel?.models.find((item) => /^seed-(tts|icl)-/i.test(item)) || channel?.models[0];
     return channel && model ? `${channel.id}::${model}` : "";
+}
+
+function resolveVolcengineAudioRequestConfig(config: AiConfig) {
+    const volcengineModel = findVolcengineAudioModel(config);
+    return resolveModelRequestConfig(config, volcengineModel || config.audioModel || config.model);
+}
+
+async function requestVolcengineJson<T>(config: AiConfig, path: string, payload: object, options?: RequestOptions): Promise<T> {
+    const requests = volcengineJsonRequests(config.baseUrl, path);
+    let lastError: unknown;
+    for (const request of requests) {
+        try {
+            const response = await axios.post<T>(
+                request.url,
+                request.viaAgent ? { baseUrl: config.baseUrl, apiKey: config.apiKey, path, payload } : payload,
+                {
+                    headers: request.viaAgent ? { "Content-Type": "application/json" } : volcengineJsonHeaders(config.apiKey),
+                    signal: options?.signal,
+                },
+            );
+            return response.data;
+        } catch (error) {
+            lastError = error;
+            if (!shouldTryNextVolcengineRequest(error, request)) break;
+        }
+    }
+    throw new Error(await readAxiosError(lastError, requests[0]?.viaAgent ? "火山语音本地代理请求失败" : "火山语音请求失败"));
+}
+
+function volcengineJsonRequests(baseUrl: string, path: string): VolcengineSpeechRequest[] {
+    const agentPath = path.includes("get_voice") ? "get-voice" : "voice-clone";
+    const agentUrl = volcengineAgentProxyUrl(agentPath);
+    const directUrl = volcengineDevProxyUrl(volcengineApiUrl(baseUrl, path)) || volcengineApiUrl(baseUrl, path);
+    return [
+        ...(agentUrl ? [{ url: agentUrl, viaAgent: true }] : []),
+        { url: directUrl, viaAgent: false },
+    ];
+}
+
+function volcengineApiUrl(baseUrl: string, path: string) {
+    const base = baseUrl.trim().replace(/\/+$/, "") || "https://openspeech.bytedance.com";
+    return `${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}${path}`;
 }
 
 function volcengineSpeechUrl(baseUrl: string) {
@@ -283,12 +456,23 @@ function parseVolcengineLegacyAuth(value: string) {
     return parts.length >= 2 && /^\d{6,}$/.test(parts[0]) ? { appId: parts[0], accessToken: parts[1] } : null;
 }
 
-function volcengineAgentProxyUrl() {
+function volcengineAgentProxyUrl(proxyPath = "tts") {
     if (typeof window === "undefined") return "";
     try {
         const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
         const token = (localStorage.getItem("canvas-agent-token") || "").trim();
-        return endpoint && token ? `${endpoint}/api/proxy/volcengine/tts?token=${encodeURIComponent(token)}` : "";
+        return endpoint && token ? `${endpoint}/api/proxy/volcengine/${proxyPath}?token=${encodeURIComponent(token)}` : "";
+    } catch {
+        return "";
+    }
+}
+
+function mediaDownloadAgentProxyUrl() {
+    if (typeof window === "undefined") return "";
+    try {
+        const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
+        const token = (localStorage.getItem("canvas-agent-token") || "").trim();
+        return endpoint && token ? `${endpoint}/api/proxy/media/download?token=${encodeURIComponent(token)}` : "";
     } catch {
         return "";
     }
@@ -320,9 +504,57 @@ function normalizeVolcengineResourceId(value: string, speaker = "") {
 function inferVolcengineResourceIdFromSpeaker(value: string) {
     const speaker = value.trim().toLowerCase();
     if (!speaker) return "";
-    if (/(^s_|_icl_|clone|voiceclone)/i.test(speaker)) return "seed-icl-2.0";
+    if (/(^s_|^icl_|^custom_|_icl_|clone|voiceclone)/i.test(speaker)) return "seed-icl-2.0";
     if (/_uranus_bigtts$/i.test(speaker)) return "seed-tts-2.0";
     return "";
+}
+
+function volcengineJsonHeaders(apiKey: string) {
+    const legacy = parseVolcengineLegacyAuth(apiKey);
+    if (legacy) {
+        return {
+            "Content-Type": "application/json",
+            "X-Api-App-Key": legacy.appId,
+            "X-Api-App-Id": legacy.appId,
+            "X-Api-Access-Key": legacy.accessToken,
+            "X-Api-Request-Id": nanoConnectId(),
+        };
+    }
+    return {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+        "X-Api-Request-Id": nanoConnectId(),
+    };
+}
+
+async function fileToBase64Audio(file: File) {
+    const data = await blobToBase64(file);
+    return { data, format: audioFileFormat(file) };
+}
+
+function blobToBase64(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").replace(/^data:[^;]+;base64,/, ""));
+        reader.onerror = () => reject(reader.error || new Error("读取音频失败"));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function audioFileFormat(file: File) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".wav")) return "wav";
+    if (name.endsWith(".ogg")) return "ogg";
+    if (name.endsWith(".m4a")) return "m4a";
+    if (name.endsWith(".aac")) return "aac";
+    if (name.endsWith(".pcm")) return "pcm";
+    return "mp3";
+}
+
+function normalizeCustomSpeakerId(value: string) {
+    const source = value.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+    const prefixed = /^[a-zA-Z]/.test(source) ? source : `custom_${source}`;
+    return prefixed.replace(/[-_]+$/g, "").slice(0, 256).padEnd(8, "0");
 }
 
 function nanoConnectId() {

@@ -44,6 +44,8 @@ export function startHttpServer() {
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
+    app.post("/api/proxy/volcengine/voice-clone", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/voice_clone")));
+    app.post("/api/proxy/volcengine/get-voice", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/get_voice")));
     app.get("/agent/codex/workspace", (req, res) => {
         const workspace = ensureCanvasWorkspace(config, String(req.query.canvasId || ""));
         res.json({ ok: true, workspace });
@@ -133,6 +135,26 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
     res.send(data);
 }
 
+async function proxyVolcengineJson(req: Request, res: Response, fallbackPath: string) {
+    const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown; path?: unknown; payload?: unknown };
+    const apiKey = stringField(body.apiKey);
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
+    if (!apiKey || !payload) return void res.status(400).json({ ok: false, error: "missing volcengine apiKey or payload" });
+    const upstream = await fetch(safeVolcengineApiUrl(stringField(body.baseUrl), stringField(body.path) || fallbackPath), {
+        method: "POST",
+        headers: volcengineJsonHeaders(apiKey),
+        body: JSON.stringify(payload),
+    });
+    const data = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    for (const name of ["x-tt-logid", "x-tt-log-id"]) {
+        const value = upstream.headers.get(name);
+        if (value) res.setHeader(name, value);
+    }
+    res.send(data);
+}
+
 async function proxyMediaDownload(req: Request, res: Response) {
     const url = safeRemoteMediaUrl(stringField((req.body || {}).url));
     if (!url) return void res.status(400).json({ ok: false, error: "missing media url" });
@@ -200,6 +222,15 @@ function safeVolcengineSpeechUrl(baseUrl: string) {
     return url.toString();
 }
 
+function safeVolcengineApiUrl(baseUrl: string, apiPath: string) {
+    const path = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
+    if (!["/api/v3/tts/voice_clone", "/api/v3/tts/get_voice"].includes(path)) throw new Error("unsupported volcengine api path");
+    const base = baseUrl.trim().replace(/\/+$/, "") || "https://openspeech.bytedance.com";
+    const url = new URL(`${base.replace(/\/api\/v3\/tts(?:\/.*)?$/i, "")}${path}`);
+    if (url.protocol !== "https:" || url.hostname !== "openspeech.bytedance.com") throw new Error("only openspeech.bytedance.com is allowed");
+    return url.toString();
+}
+
 function safeRemoteMediaUrl(value: string) {
     if (!value) return "";
     const url = new URL(value);
@@ -252,6 +283,24 @@ function volcengineSpeechHeaders(apiKey: string, resourceId: string) {
         "X-Api-Key": apiKey,
         "X-Api-Connect-Id": cryptoRandomId(),
         "X-Api-Resource-Id": resourceId,
+    };
+}
+
+function volcengineJsonHeaders(apiKey: string) {
+    const legacy = parseVolcengineLegacyAuth(apiKey);
+    if (legacy) {
+        return {
+            "Content-Type": "application/json",
+            "X-Api-App-Key": legacy.appId,
+            "X-Api-App-Id": legacy.appId,
+            "X-Api-Access-Key": legacy.accessToken,
+            "X-Api-Request-Id": cryptoRandomId(),
+        };
+    }
+    return {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+        "X-Api-Request-Id": cryptoRandomId(),
     };
 }
 
