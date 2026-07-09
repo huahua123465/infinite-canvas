@@ -59,10 +59,14 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
     );
 }
 
-export function AppConfigModal() {
+type AppConfigPanelProps = {
+    showDoneButton?: boolean;
+    initialTab?: ConfigTabKey;
+};
+
+export function AppConfigPanel({ showDoneButton = false, initialTab = "channels" }: AppConfigPanelProps) {
     const { message } = App.useApp();
-    const configTab = useConfigStore((state) => state.configTab);
-    const [activeTab, setActiveTab] = useState<ConfigTabKey>(configTab);
+    const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -73,7 +77,6 @@ export function AppConfigModal() {
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
-    const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
@@ -82,7 +85,7 @@ export function AppConfigModal() {
     const audioProvider = resolveAudioProvider(config, config.audioModel || config.model);
     const volcengineSpeaker = normalizeVolcengineSpeakerValue(config.audioVoice) || DEFAULT_VOLCENGINE_SPEAKER;
 
-    useEffect(() => setActiveTab(configTab), [configTab]);
+    useEffect(() => setActiveTab(initialTab), [initialTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -225,24 +228,7 @@ export function AppConfigModal() {
     };
 
     return (
-        <Modal
-            title={
-                <div>
-                    <div className="text-lg font-semibold">配置与用户偏好</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">渠道聚合、模型选择和同步偏好</div>
-                </div>
-            }
-            open={isConfigOpen}
-            width={980}
-            centered
-            onCancel={() => setConfigDialogOpen(false)}
-            styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
-            footer={
-                <Button type="primary" onClick={finishConfig}>
-                    完成
-                </Button>
-            }
-        >
+        <>
             <Tabs
                 activeKey={activeTab}
                 onChange={(key) => setActiveTab(key as ConfigTabKey)}
@@ -449,6 +435,38 @@ export function AppConfigModal() {
                 ]}
             />
             <VolcengineVoiceLibraryModal open={voiceLibraryOpen} config={config} currentSpeaker={volcengineSpeaker} onClose={() => setVoiceLibraryOpen(false)} onSelect={(value) => updateConfig("audioVoice", value)} />
+            {showDoneButton ? (
+                <div className="mt-4 flex justify-end">
+                    <Button type="primary" onClick={finishConfig}>
+                        完成
+                    </Button>
+                </div>
+            ) : null}
+        </>
+    );
+}
+
+export function AppConfigModal() {
+    const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
+    const configTab = useConfigStore((state) => state.configTab);
+    const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
+
+    return (
+        <Modal
+            title={
+                <div>
+                    <div className="text-lg font-semibold">配置与用户偏好</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500">渠道聚合、模型选择和同步偏好</div>
+                </div>
+            }
+            open={isConfigOpen}
+            width={980}
+            centered
+            onCancel={() => setConfigDialogOpen(false)}
+            styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
+            footer={null}
+        >
+            <AppConfigPanel showDoneButton initialTab={configTab} />
         </Modal>
     );
 }
