@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Button, Input, Modal } from "antd";
+import { Button, Input, Modal, Segmented } from "antd";
 import { Check, Copy, LoaderCircle, Volume2, X } from "lucide-react";
 
 import { volcengineVoiceOptions, type VolcengineVoiceOption } from "@/lib/audio-generation";
@@ -8,9 +8,17 @@ import { requestStoredAudioGeneration } from "@/services/api/audio";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const VOICE_LIBRARY_SAMPLE_TEXT = "你好，我是这个声音。我们先听听这段配音是否适合当前角色。";
+type VoiceAbilityFilter = "all" | "instruction" | "emotion";
+
+const voiceAbilityFilterOptions = [
+    { label: "全部", value: "all" },
+    { label: "支持声音指令", value: "instruction" },
+    { label: "情感音色", value: "emotion" },
+] satisfies { label: string; value: VoiceAbilityFilter }[];
 
 export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentSpeaker, roleName, onClose, onSelect }: { open: boolean; config: AiConfig; modelValue?: string; currentSpeaker: string; roleName?: string; onClose: () => void; onSelect: (value: string) => void }) {
     const [keyword, setKeyword] = useState("");
+    const [abilityFilter, setAbilityFilter] = useState<VoiceAbilityFilter>("all");
     const [sampleText, setSampleText] = useState(VOICE_LIBRARY_SAMPLE_TEXT);
     const [previewing, setPreviewing] = useState("");
     const [previews, setPreviews] = useState<Record<string, { url: string; cacheHit?: "local" | "shared" }>>({});
@@ -18,12 +26,13 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
     const draggable = useDraggableLayer(open);
     const filteredVoices = useMemo(() => {
         const source = keyword.trim().toLowerCase();
-        if (!source) return volcengineVoiceOptions;
-        const matched = volcengineVoiceOptions.filter((voice) => [voice.label, voice.value, voice.tone, voice.gender, voice.age, ...voice.tags].join(" ").toLowerCase().includes(source));
+        const candidates = abilityFilter === "instruction" ? volcengineVoiceOptions.filter(hasVoiceInstruction) : abilityFilter === "emotion" ? volcengineVoiceOptions.filter(hasVoiceEmotion) : volcengineVoiceOptions;
+        if (!source) return candidates;
+        const matched = candidates.filter((voice) => [voice.label, voice.value, voice.tone, voice.gender, voice.age, ...voice.tags].join(" ").toLowerCase().includes(source));
         const pastedVoiceId = normalizePastedVoiceId(source);
-        if (!pastedVoiceId || matched.some((voice) => voice.value === pastedVoiceId)) return matched;
+        if (!pastedVoiceId || volcengineVoiceOptions.some((voice) => voice.value === pastedVoiceId) || matched.some((voice) => voice.value === pastedVoiceId)) return matched;
         return [createPastedVoiceOption(pastedVoiceId), ...matched];
-    }, [keyword]);
+    }, [abilityFilter, keyword]);
     const previewVoice = async (voice: (typeof volcengineVoiceOptions)[number]) => {
         const text = sampleText.trim();
         if (!text) {
@@ -82,6 +91,13 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
                 </div>
                 <div className="grid gap-3 border-b border-cyan-500/15 p-4">
                     <Input.Search value={keyword} placeholder="搜索音色名、Voice_type 或标签" allowClear onChange={(event) => setKeyword(event.target.value)} />
+                    <Segmented
+                        block
+                        size="small"
+                        value={abilityFilter}
+                        options={voiceAbilityFilterOptions}
+                        onChange={(value) => setAbilityFilter(value as VoiceAbilityFilter)}
+                    />
                     <Input.TextArea className="!min-h-16 !resize-none" value={sampleText} onChange={(event) => setSampleText(event.target.value)} placeholder="试听文案" />
                 </div>
                 <div className="thin-scrollbar min-h-0 flex-1 overflow-auto p-3">
@@ -90,6 +106,7 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
                             const preview = previews[voicePreviewKey(voice.value, sampleText.trim())];
                             const active = currentSpeaker === voice.value;
                             const loading = previewing === voice.value;
+                            const abilityBadges = voiceAbilityBadges(voice);
                             return (
                                 <div key={voice.value} className={`rounded-lg border p-3 ${active ? "border-cyan-300/55 bg-cyan-400/10" : "border-cyan-500/15 bg-black/20"}`}>
                                     <div className="flex items-start gap-3">
@@ -97,6 +114,11 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <div className="truncate text-sm font-semibold text-cyan-50">{voice.label}</div>
                                                 {active ? <span className="shrink-0 rounded bg-cyan-300 px-1.5 py-0.5 text-[10px] font-semibold text-[#112426]">当前选择</span> : null}
+                                                {abilityBadges.map((badge) => (
+                                                    <span key={badge.label} className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}>
+                                                        {badge.label}
+                                                    </span>
+                                                ))}
                                             </div>
                                             <div className="mt-1 truncate text-xs text-cyan-100/60">{voice.value}</div>
                                             <div className="mt-1 text-xs leading-5 text-cyan-100/75">{voice.tone}</div>
@@ -139,6 +161,31 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
 
 function voicePreviewKey(voice: string, text: string) {
     return `${voice}::${text.trim()}`;
+}
+
+function voiceAbilityText(voice: VolcengineVoiceOption) {
+    return [voice.tone, ...voice.tags].join(" ");
+}
+
+function hasVoiceInstruction(voice: VolcengineVoiceOption) {
+    return voiceAbilityText(voice).includes("指令遵循");
+}
+
+function hasVoiceEmotion(voice: VolcengineVoiceOption) {
+    return /情感|情绪|情感变化/.test(voiceAbilityText(voice));
+}
+
+function hasVoiceQa(voice: VolcengineVoiceOption) {
+    return voiceAbilityText(voice).includes("QA");
+}
+
+function voiceAbilityBadges(voice: VolcengineVoiceOption) {
+    const badges: { label: string; className: string }[] = [];
+    if (hasVoiceInstruction(voice)) badges.push({ label: "支持指令", className: "bg-emerald-300 text-[#0f2f25]" });
+    if (hasVoiceEmotion(voice)) badges.push({ label: "情感变化", className: "bg-pink-300 text-[#361425]" });
+    if (hasVoiceQa(voice)) badges.push({ label: "QA", className: "bg-sky-300 text-[#102436]" });
+    if (!badges.length) badges.push({ label: "普通音色", className: "bg-cyan-100/15 text-cyan-100/70" });
+    return badges.slice(0, 2);
 }
 
 function normalizePastedVoiceId(value: string) {
