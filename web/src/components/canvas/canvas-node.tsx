@@ -1525,17 +1525,26 @@ function StoryboardVideoPromptPreviewModal({
             mask={{ closable: true }}
             keyboard
             width={900}
+            centered
             destroyOnHidden
             closable={false}
             modalRender={renderCanvasModal}
+            styles={{
+                wrapper: { overflow: "hidden" },
+                container: { height: "min(92dvh, 900px)", display: "flex", flexDirection: "column" },
+                header: { flex: "none" },
+                body: { minHeight: 0, flex: 1, display: "flex", flexDirection: "column" },
+            }}
         >
-            <div ref={setModalContentElement} className="space-y-5" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
-                    卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
-                </div>
-                <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${modalFirstFrameSource ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"}`}>
-                    {modalFirstFrameSource ? `当前首帧来自：${modalFirstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "当前未接入上一镜尾帧，可在“编辑参考”里手动添加上一镜尾帧。" : "第一镜通常不需要接入上一镜尾帧。"}
-                </div>
+            <div ref={setModalContentElement} className="flex min-h-0 flex-1 flex-col" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pb-4 pr-2">
+                    <div className="space-y-5">
+                        <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
+                            卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
+                        </div>
+                        <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${modalFirstFrameSource ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"}`}>
+                            {modalFirstFrameSource ? `当前首帧来自：${modalFirstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "当前未接入上一镜尾帧，可在“编辑参考”里手动添加上一镜尾帧。" : "第一镜通常不需要接入上一镜尾帧。"}
+                        </div>
                 <section className="rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-950/60">
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold">视频生成设置</div>
@@ -1635,7 +1644,9 @@ function StoryboardVideoPromptPreviewModal({
                         {draftAssetLinks.length ? draftAssetLinks.map((link) => <StoryboardAssetChip key={link.mention} link={link} compact theme={theme} />) : <span className="text-xs text-stone-500">暂未识别到 @ 资产</span>}
                     </div>
                 </section>
-                <div className="flex items-center justify-between border-t border-stone-200 pt-4 dark:border-stone-800">
+                    </div>
+                </div>
+                <div className="flex shrink-0 items-center justify-between gap-4 border-t border-stone-200 pt-4 dark:border-stone-800">
                     <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
                     <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim()} onClick={generate}>
                         <span className="flex items-center gap-1.5">
