@@ -224,6 +224,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             <CanvasVideoSettingsPopover
                                 config={scriptVideoConfig}
                                 buttonClassName="!h-10 !min-w-[96px] !max-w-[118px] !justify-start !rounded-full !px-3"
+                                smartDurationLabel="按分镜"
+                                smartDurationHint="后续视频将按分镜表逐镜读取时长"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
                                 onModelChange={(model) => updateGlobalConfig("videoModel", model)}
                             />

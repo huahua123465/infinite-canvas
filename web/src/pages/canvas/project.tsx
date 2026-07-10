@@ -1959,7 +1959,7 @@ function InfiniteCanvasPage() {
                     .filter(Boolean)
                     .join("\n\n")
                     .trim() || storyboardSourceTextForNode(scriptNode);
-            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(sourceText);
+            const videoSettingsPatch = storyboardVideoSettingsFallbackPatch(scriptNode, sourceText);
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
                 return;
@@ -2614,7 +2614,7 @@ function InfiniteCanvasPage() {
     const generateStoryboardVideo = useCallback(
         async (node: CanvasNodeData, rowIndex: number) => {
             let scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
-            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(storyboardSourceTextForNode(scriptNode));
+            const videoSettingsPatch = storyboardVideoSettingsFallbackPatch(scriptNode, storyboardSourceTextForNode(scriptNode));
             if (Object.keys(videoSettingsPatch).length) {
                 scriptNode = { ...scriptNode, metadata: { ...scriptNode.metadata, ...videoSettingsPatch } };
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
@@ -2683,7 +2683,7 @@ function InfiniteCanvasPage() {
     const batchGenerateStoryboardVideos = useCallback(
         async (node: CanvasNodeData) => {
             let scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
-            const videoSettingsPatch = storyboardVideoSettingsPatchFromText(storyboardSourceTextForNode(scriptNode));
+            const videoSettingsPatch = storyboardVideoSettingsFallbackPatch(scriptNode, storyboardSourceTextForNode(scriptNode));
             if (Object.keys(videoSettingsPatch).length) {
                 scriptNode = { ...scriptNode, metadata: { ...scriptNode.metadata, ...videoSettingsPatch } };
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
@@ -2822,7 +2822,21 @@ function InfiniteCanvasPage() {
     }, []);
 
     const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
+        setNodes((prev) => {
+            const sourceNode = prev.find((node) => node.id === nodeId);
+            if (!sourceNode) return prev;
+            const nextSourceNode = applyNodeConfigPatch(sourceNode, patch);
+            const videoSettingsPatch = storyboardVideoSettingsOnlyPatch(patch);
+            const syncStoryboardDrafts = sourceNode.type === CanvasNodeType.Script && Object.keys(videoSettingsPatch).length > 0;
+            const storyboardRows = syncStoryboardDrafts ? parseStoryboardRows(nextSourceNode.metadata?.storyboardRows) : [];
+            return prev.map((node) => {
+                if (node.id === nodeId) return nextSourceNode;
+                if (!syncStoryboardDrafts || node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== nodeId || node.metadata?.content || node.metadata?.storyboardVideoDraftNodeId || node.metadata?.storyboardVideoConfigCustomized) return node;
+                const row = storyboardRows[node.metadata.storyboardRowIndex ?? -1];
+                const draftPatch = videoSettingsPatch.seconds === undefined ? videoSettingsPatch : { ...videoSettingsPatch, seconds: storyboardVideoSecondsForRow(videoSettingsPatch.seconds, row) };
+                return applyNodeConfigPatch(node, draftPatch);
+            });
+        });
     }, []);
 
     const openPromptAssistant = useCallback((node: CanvasNodeData) => {
@@ -3925,6 +3939,14 @@ function InfiniteCanvasPage() {
                           count: "1",
                       }
                     : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
+            if (node.type === CanvasNodeType.Video && (node.metadata?.seconds === "-1" || generationConfig.videoSeconds === "-1")) {
+                const rowSeconds = storyboardVideoRowSeconds(node, nodesRef.current);
+                if (!rowSeconds) {
+                    message.warning("当前镜头没有读取到分镜时长，请先检查分镜表时长");
+                    return;
+                }
+                generationConfig.videoSeconds = rowSeconds;
+            }
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -4292,6 +4314,7 @@ function InfiniteCanvasPage() {
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
                             storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes, connections)}
                             storyboardVideoResults={storyboardVideoResultsByDraftId.get(node.id) || []}
+                            storyboardDurationSeconds={storyboardVideoRowSeconds(node, nodes)}
                             renderPanel={(panelNode) =>
                                 panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
@@ -5070,8 +5093,29 @@ function storyboardVideoSettingsPatchFromText(text: string): Partial<CanvasNodeM
     return patch;
 }
 
+function storyboardVideoSettingsOnlyPatch(patch: Partial<CanvasNodeMetadata>): Partial<CanvasNodeMetadata> {
+    const settings: Partial<CanvasNodeMetadata> = {};
+    if (patch.size !== undefined) settings.size = patch.size;
+    if (patch.vquality !== undefined) settings.vquality = patch.vquality;
+    if (patch.seconds !== undefined) settings.seconds = patch.seconds;
+    if (patch.generateAudio !== undefined) settings.generateAudio = patch.generateAudio;
+    if (patch.watermark !== undefined) settings.watermark = patch.watermark;
+    return settings;
+}
+
+function storyboardVideoSettingsFallbackPatch(node: CanvasNodeData, text: string): Partial<CanvasNodeMetadata> {
+    const parsed = storyboardVideoSettingsPatchFromText(text);
+    const patch: Partial<CanvasNodeMetadata> = {};
+    if (!node.metadata?.size && parsed.size) patch.size = parsed.size;
+    if (!node.metadata?.vquality && parsed.vquality) patch.vquality = parsed.vquality;
+    if (!node.metadata?.seconds && parsed.seconds) patch.seconds = parsed.seconds;
+    if (!node.metadata?.generateAudio && parsed.generateAudio) patch.generateAudio = parsed.generateAudio;
+    if (!node.metadata?.watermark && parsed.watermark) patch.watermark = parsed.watermark;
+    return patch;
+}
+
 function withStoryboardVideoSettings(node: CanvasNodeData): CanvasNodeData {
-    const patch = storyboardVideoSettingsPatchFromText(storyboardSourceTextForNode(node));
+    const patch = storyboardVideoSettingsFallbackPatch(node, storyboardSourceTextForNode(node));
     return Object.keys(patch).length ? { ...node, metadata: { ...node.metadata, ...patch } } : node;
 }
 
@@ -6198,7 +6242,20 @@ function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?
 }
 
 function parseStoryboardRowSeconds(row?: string[]) {
-    return parseStoryboardVideoSeconds(row?.[1] || "");
+    const value = row?.[1]?.trim() || "";
+    return value.match(/^(1[0-5]|[4-9])\s*(?:s|秒)?$/i)?.[1] || parseStoryboardVideoSeconds(value);
+}
+
+function storyboardVideoRowSeconds(node: CanvasNodeData, nodes: CanvasNodeData[]) {
+    if (node.type !== CanvasNodeType.Video || !node.metadata?.storyboardSourceNodeId || node.metadata.storyboardRowIndex === undefined) return "";
+    const scriptNode = nodes.find((item) => item.id === node.metadata?.storyboardSourceNodeId);
+    return parseStoryboardRowSeconds(parseStoryboardRows(scriptNode?.metadata?.storyboardRows)[node.metadata.storyboardRowIndex]);
+}
+
+function storyboardVideoSecondsForRow(templateSeconds: string | undefined, row?: string[]) {
+    const seconds = String(templateSeconds || "").trim();
+    if (seconds === "-1") return parseStoryboardRowSeconds(row) || "-1";
+    return seconds || parseStoryboardRowSeconds(row) || "-1";
 }
 
 function mergeStoryboardSceneLockReferences(base: StoryboardVideoReference[], autoReferences: StoryboardVideoReference[]) {
@@ -6230,9 +6287,9 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections);
     const finalVideoReferences = mergeStoryboardVideoReferences(baseVideoReferences, previousTailFrame);
     const customConfig = existing?.metadata?.storyboardVideoConfigCustomized ? existing.metadata : undefined;
-    const videoModel = existing?.metadata?.model || generationConfig.model;
+    const videoModel = customConfig?.model || generationConfig.model;
     const videoSize = customConfig?.size || generationConfig.size;
-    const videoSeconds = customConfig?.seconds || parseStoryboardRowSeconds(row) || generationConfig.videoSeconds;
+    const videoSeconds = customConfig?.seconds || storyboardVideoSecondsForRow(generationConfig.videoSeconds, row);
     const videoQuality = customConfig?.vquality || generationConfig.vquality;
     const videoGenerateAudio = customConfig?.generateAudio || generationConfig.videoGenerateAudio;
     const videoWatermark = customConfig?.watermark || generationConfig.videoWatermark;

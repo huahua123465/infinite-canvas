@@ -34,11 +34,13 @@ type VideoSettingsPanelProps = {
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    smartDurationLabel?: string;
+    smartDurationHint?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", smartDurationLabel = "智能", smartDurationHint = "由模型智能决定视频时长" }: VideoSettingsPanelProps) {
     if (isSeedanceVideoConfig(config)) {
-        return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} smartDurationLabel={smartDurationLabel} smartDurationHint={smartDurationHint} />;
     }
 
     const seconds = config.videoSeconds || "6";
@@ -106,7 +108,7 @@ export function VideoSettingsPanel({ config, onConfigChange, onModelChange, them
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle, className, smartDurationLabel, smartDurationHint }: VideoSettingsPanelProps) {
     const selectedModel = config.model || config.videoModel;
     const model = modelOptionName(selectedModel);
     const isCangyuanStandard = isCangyuanSeedanceStandardModel(config, selectedModel);
@@ -166,11 +168,11 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                     <div className="grid grid-cols-4 gap-2.5">
                         {seedanceDurationOptions.map((value) => (
                             <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                {value === -1 ? "智能" : `${value}s`}
+                                {value === -1 ? smartDurationLabel : `${value}s`}
                             </OptionPill>
                         ))}
                     </div>
-                    <NumberInput value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    {duration === -1 ? <div className="text-[11px] leading-4 opacity-55">{smartDurationHint}</div> : <NumberInput value={String(duration)} min={4} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />}
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>

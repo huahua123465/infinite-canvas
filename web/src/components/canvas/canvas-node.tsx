@@ -38,6 +38,7 @@ type CanvasNodeProps = {
     mentionReferences?: CanvasResourceReference[];
     storyboardReferenceAssets?: StoryboardVideoReference[];
     storyboardVideoResults?: CanvasNodeData[];
+    storyboardDurationSeconds?: string;
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     batchCount?: number;
@@ -82,6 +83,7 @@ type NodeContentRendererProps = {
     mentionReferences: CanvasResourceReference[];
     storyboardReferenceAssets: StoryboardVideoReference[];
     storyboardVideoResults: CanvasNodeData[];
+    storyboardDurationSeconds?: string;
     onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
     onEditPrompt?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
@@ -105,6 +107,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     mentionReferences = [],
     storyboardReferenceAssets = [],
     storyboardVideoResults = [],
+    storyboardDurationSeconds,
     renderPanel,
     renderNodeContent,
     batchCount = 0,
@@ -342,6 +345,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         mentionReferences={mentionReferences}
                         storyboardReferenceAssets={storyboardReferenceAssets}
                         storyboardVideoResults={storyboardVideoResults}
+                        storyboardDurationSeconds={storyboardDurationSeconds}
                         onContentChange={onContentChange}
                         onMetadataChange={onMetadataChange}
                         onStoryboardScreenshotImport={onStoryboardScreenshotImport}
@@ -808,7 +812,7 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVideoResults, onMetadataChange, onRetry }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVideoResults, storyboardDurationSeconds, onMetadataChange, onRetry }: NodeContentRendererProps) {
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
     const [videoHistoryOpen, setVideoHistoryOpen] = useState(false);
@@ -930,6 +934,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                             open={promptPreviewOpen}
                             references={assetPreviews}
                             scriptReferences={storyboardReferenceAssets}
+                            storyboardDurationSeconds={storyboardDurationSeconds}
                             assetLinks={assetLinks}
                             theme={theme}
                             onClose={() => setPromptPreviewOpen(false)}
@@ -1323,6 +1328,7 @@ function StoryboardVideoPromptPreviewModal({
     open,
     references,
     scriptReferences,
+    storyboardDurationSeconds,
     assetLinks,
     theme,
     onClose,
@@ -1333,6 +1339,7 @@ function StoryboardVideoPromptPreviewModal({
     open: boolean;
     references: StoryboardVideoReference[];
     scriptReferences: StoryboardVideoReference[];
+    storyboardDurationSeconds?: string;
     assetLinks: StoryboardAssetMentionLink[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onClose: () => void;
@@ -1362,6 +1369,8 @@ function StoryboardVideoPromptPreviewModal({
     const [modalContentElement, setModalContentElement] = useState<HTMLDivElement | null>(null);
     const saveHintTimerRef = useRef<number | null>(null);
     const finalPromptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const followsStoryboardDuration = draftConfig.videoSeconds === "-1";
+    const currentVideoSeconds = followsStoryboardDuration ? storyboardDurationSeconds : draftConfig.videoSeconds || globalConfig.videoSeconds || defaultConfig.videoSeconds;
 
     useEffect(() => {
         if (!open) return;
@@ -1452,14 +1461,16 @@ function StoryboardVideoPromptPreviewModal({
                         <span className={`text-xs ${saveHint ? "text-blue-500 dark:text-blue-300" : "text-stone-500"}`}>{saveHint || "修改会自动保存"}</span>
                     </div>
                     <div className="mb-2 rounded-xl border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-200">
-                        当前镜头时长：<span className="font-semibold">{node.metadata?.seconds || draftConfig.videoSeconds || globalConfig.videoSeconds || defaultConfig.videoSeconds}s</span>；生成时会优先使用这一镜的时长。
+                        当前镜头时长：<span className="font-semibold">{currentVideoSeconds ? `${currentVideoSeconds}s` : "未读取到分镜时长"}</span>；{followsStoryboardDuration ? "来自分镜表当前镜头。" : "使用当前固定时长。"}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={draftConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={updateDraftModel} onMissingConfig={() => openConfigDialog(true)} />
+                        <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={currentVideoSeconds || defaultConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={updateDraftModel} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover
                             config={draftConfig}
                             placement="bottomLeft"
                             buttonClassName="!h-9 !min-w-[190px] !max-w-[260px] !justify-start !rounded-full !px-3"
+                            smartDurationLabel={currentVideoSeconds ? `按分镜 ${currentVideoSeconds}s` : "按分镜"}
+                            smartDurationHint={currentVideoSeconds ? `当前镜头按分镜表使用 ${currentVideoSeconds}s` : "当前镜头未读取到分镜时长"}
                             onConfigChange={(key, value) => updateDraftConfig({ [key]: value } as Partial<AiConfig>)}
                             onModelChange={updateDraftModel}
                             portalContainer={modalContentElement}
