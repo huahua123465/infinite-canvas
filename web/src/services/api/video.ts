@@ -4,7 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -62,7 +62,16 @@ type SeedancePayload = {
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string; cangyuanEndpoint?: "videos" | "video-generations" };
+export type VideoGenerationTask = {
+    id: string;
+    provider: "openai" | "seedance" | "cangyuan";
+    model: string;
+    cangyuanEndpoint?: "videos" | "video-generations";
+    requestMethod?: "POST";
+    requestUrl?: string;
+    requestModel?: string;
+    requestFields?: string[];
+};
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
 export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
@@ -178,18 +187,21 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
     const body = new FormData();
-    body.append("model", modelOptionName(model));
+    const requestModel = modelOptionName(model);
+    const normalizedSize = normalizeVideoSize(config.size);
+    body.append("model", requestModel);
     body.append("prompt", prompt);
     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
+    if (normalizedSize) body.append("size", normalizedSize);
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("preset", "normal");
     const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("input_reference[]", file));
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");
-        return { id: created.id, provider: "openai", model };
+        return { id: created.id, provider: "openai", model, requestMethod: "POST", requestUrl, requestModel, requestFields: ["model", "prompt", "seconds", ...(normalizedSize ? ["size"] : []), "resolution_name", "preset", ...(files.length ? ["input_reference[]"] : [])] };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
@@ -217,14 +229,19 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isCangyuanGrokVideoModel(model)) {
         return createCangyuanGrokVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     }
+    const fixedResolutionModel = Boolean(seedanceModelFixedResolution(model));
+    const limits = fixedResolutionModel ? { images: 9, videos: 3, audios: 3 } : { images: 4, videos: 3, audios: 1 };
+    if (references.length > limits.images) throw new Error(`当前 Seedance 模型参考图不能超过 ${limits.images} 张`);
+    if (videoReferences.length > limits.videos) throw new Error(`当前 Seedance 模型参考视频不能超过 ${limits.videos} 条`);
+    if (audioReferences.length > limits.audios) throw new Error(`当前 Seedance 模型参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
         throw new Error("沧元算力视频参考视频/音频必须同时提供至少 1 张主参考图");
     }
     assertSeedanceVideoReferences(videoReferences);
     assertSeedanceAudioReferences(audioReferences);
-    const imageUrls = await Promise.all(references.slice(0, 4).map((image) => resolveSeedanceImageUrl(config, image)));
-    const referenceVideos = await Promise.all(videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos).map(resolveSeedanceVideoUrl));
-    const referenceAudios = await Promise.all(audioReferences.slice(0, 1).map(resolveSeedanceAudioUrl));
+    const imageUrls = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
+    const referenceVideos = await Promise.all(videoReferences.slice(0, limits.videos).map(resolveSeedanceVideoUrl));
+    const referenceAudios = await Promise.all(audioReferences.slice(0, limits.audios).map(resolveSeedanceAudioUrl));
     const primaryImageUrl = imageUrls[0] || "";
     const extraImageUrls = imageUrls.slice(1);
     const payload = {
@@ -232,18 +249,18 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
-        resolution: normalizeCangyuanSeedanceResolution(config.vquality),
-        audio: boolConfig(config.videoGenerateAudio, true),
+        ...(!fixedResolutionModel ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
         ...(primaryImageUrl ? { image_url: primaryImageUrl } : {}),
         ...(extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
         ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
         ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
     };
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         const taskId = cangyuanVideoTaskId(created);
         if (!taskId) throw new Error("视频接口没有返回任务 ID");
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos" };
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
@@ -269,10 +286,11 @@ async function createCangyuanGrokVideoTask(config: AiConfig, model: string, prom
         ...(videoUrl ? { video_url: videoUrl } : {}),
     };
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/video/generations"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const requestUrl = aiApiUrl(config, "/video/generations");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         const taskId = cangyuanVideoTaskId(created);
         if (!taskId) throw new Error("Grok 视频接口没有返回任务 ID");
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "video-generations" };
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "video-generations", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
     } catch (error) {
         throw new Error(readAxiosError(error, "Grok 视频任务创建失败"));
     }
@@ -309,9 +327,10 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
     const payload = buildSeedancePayload(config, model, content);
 
     try {
-        const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const requestUrl = seedanceApiUrl(config);
+        const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error("Seedance 接口没有返回任务 ID");
-        return { id: created.id, provider: "seedance", model };
+        return { id: created.id, provider: "seedance", model, requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
     } catch (error) {
         throw new Error(readAxiosError(error, "Seedance 任务创建失败"));
     }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Empty, Input, Modal } from "antd";
-import { AlertTriangle, ArrowUp, Boxes, ChevronRight, FileText, Image as ImageIcon, Music2, Pencil, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, FileText, Image as ImageIcon, Music2, Pencil, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
@@ -10,9 +10,10 @@ import { formatBytes } from "@/lib/image-utils";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { resolveImageUrl } from "@/services/image-storage";
 import { classifyVideoFailure } from "@/services/api/video";
-import { defaultConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useCopyText } from "@/hooks/use-copy-text";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardAudioReference, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
@@ -815,6 +816,7 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 
 function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVideoResults, storyboardDurationSeconds, onMetadataChange, onRetry }: NodeContentRendererProps) {
     const globalConfig = useEffectiveConfig();
+    const copyText = useCopyText();
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
     const [videoHistoryOpen, setVideoHistoryOpen] = useState(false);
@@ -825,7 +827,20 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
     const videoTaskId = node.metadata?.videoTaskId;
     const submittedModel = node.metadata?.videoTaskModel || node.metadata?.model || "";
     const submittedModelLabel = submittedModel ? modelOptionLabel(globalConfig, submittedModel) : "";
-    const submittedModelCaption = videoTaskId ? "实际提交模型" : "当前生成模型";
+    const submittedModelCaption = videoTaskId ? "请求模型" : "当前生成模型";
+    const requestAudit = buildVideoRequestAudit(node.metadata);
+    const requestAuditPanel = requestAudit ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-[10px]" style={{ borderColor: theme.node.stroke, background: `${selectionBlue}08` }}>
+            <div className="min-w-0 space-y-0.5 opacity-70">
+                <div className="truncate font-mono" title={`${requestAudit.method} ${requestAudit.url}`}>请求：{requestAudit.method} {requestAudit.shortUrl}</div>
+                <div className="truncate" title={`${requestAudit.model} · ${requestAudit.route} · ${requestAudit.submittedAt}`}>模型：{requestAudit.model} · 路由：{requestAudit.route}{requestAudit.submittedAt ? ` · ${requestAudit.submittedAt}` : ""}</div>
+            </div>
+            <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-1 hover:bg-white/10" title="复制视频请求信息" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); copyText(requestAudit.copyText, "视频请求信息已复制"); }}>
+                <Copy className="size-3" />
+                复制
+            </button>
+        </div>
+    ) : null;
     const failureInfo = classifyVideoFailure(node.metadata?.errorDetails || "视频生成失败");
     const [taskRecoveryOpen, setTaskRecoveryOpen] = useState(false);
     const [manualVideoTaskId, setManualVideoTaskId] = useState(videoTaskId || "");
@@ -895,6 +910,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         {sceneLockCount ? <div className="inline-flex w-fit rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">场景锁定 {sceneLockCount} 张</div> : null}
                         {continuityText ? <div className={`inline-flex w-fit rounded px-2 py-0.5 text-[10px] font-semibold ${firstFrameSource ? "bg-blue-500/15 text-blue-300" : "bg-amber-500/15 text-amber-300"}`}>{continuityText}</div> : null}
                         {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
+                        {requestAuditPanel}
                         <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
                             <span className="min-w-0 truncate">{isError ? failureInfo.advice : helperText}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
@@ -962,6 +978,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                     <VideoGenerationProgressBar progress={videoProgress} theme={theme} />
                     {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
                     {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
+                    {requestAuditPanel}
                     {!videoTaskId ? (
                         <button
                             type="button"
@@ -991,6 +1008,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                     <div className="text-[11px] opacity-55">{failureInfo.label}：{failureInfo.advice}</div>
                     {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
                     {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
+                    {requestAuditPanel}
                     <div className="flex flex-wrap gap-2">
                         {videoTaskId ? (
                             <button type="button" className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetry?.(node, videoTaskQueryPatch(node)); }} onMouseDown={(event) => event.stopPropagation()}>
@@ -1112,6 +1130,44 @@ function videoTaskQueryPatch(node: CanvasNodeData, taskId = node.metadata?.video
         errorDetails: undefined,
         videoGenerationProgress: undefined,
     };
+}
+
+function buildVideoRequestAudit(metadata?: CanvasNodeMetadata) {
+    if (!metadata?.videoTaskId) return null;
+    const method = metadata.videoTaskRequestMethod || "POST";
+    const url = metadata.videoTaskRequestUrl || fallbackVideoTaskRequestUrl(metadata);
+    const model = metadata.videoTaskRequestModel || modelOptionName(metadata.videoTaskModel || metadata.model || "") || "未记录";
+    const route = metadata.videoTaskProvider === "cangyuan" ? "沧元视频" : metadata.videoTaskProvider === "seedance" ? "方舟 Seedance" : "OpenAI 兼容视频";
+    const submittedAt = formatVideoTaskSubmittedAt(metadata.videoTaskSubmittedAt);
+    const fields = metadata.videoTaskRequestFields?.join(", ") || "未记录（旧任务）";
+    return {
+        method,
+        url,
+        shortUrl: shortVideoTaskRequestUrl(url),
+        model,
+        route,
+        submittedAt,
+        copyText: [`任务 ID：${metadata.videoTaskId}`, `提交时间：${submittedAt || "未记录"}`, `前端路由：${route}`, `请求：${method} ${url}`, `请求模型：${model}`, `请求字段：${fields}`].join("\n"),
+    };
+}
+
+function fallbackVideoTaskRequestUrl(metadata: CanvasNodeMetadata) {
+    if (metadata.videoTaskProvider === "seedance") return "/api/v3/contents/generations/tasks";
+    return metadata.videoTaskEndpoint === "video-generations" ? "/v1/video/generations" : "/v1/videos";
+}
+
+function shortVideoTaskRequestUrl(value: string) {
+    try {
+        return new URL(value).pathname;
+    } catch {
+        return value;
+    }
+}
+
+function formatVideoTaskSubmittedAt(value?: string) {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function VideoGenerationProgressBar({ progress, theme }: { progress?: CanvasNodeMetadata["videoGenerationProgress"]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {

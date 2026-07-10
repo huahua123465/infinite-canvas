@@ -4941,6 +4941,10 @@ function clearVideoTaskMetadataPatch(): Partial<CanvasNodeMetadata> {
         videoTaskModel: undefined,
         videoTaskEndpoint: undefined,
         videoTaskSubmittedAt: undefined,
+        videoTaskRequestMethod: undefined,
+        videoTaskRequestUrl: undefined,
+        videoTaskRequestModel: undefined,
+        videoTaskRequestFields: undefined,
         videoGenerationProgress: undefined,
     };
 }
@@ -4952,6 +4956,10 @@ function videoTaskMetadata(task: VideoGenerationTask): Partial<CanvasNodeMetadat
         videoTaskModel: task.model,
         videoTaskEndpoint: task.cangyuanEndpoint,
         videoTaskSubmittedAt: new Date().toISOString(),
+        videoTaskRequestMethod: task.requestMethod,
+        videoTaskRequestUrl: task.requestUrl,
+        videoTaskRequestModel: task.requestModel,
+        videoTaskRequestFields: task.requestFields,
     };
 }
 
@@ -4966,6 +4974,10 @@ function videoTaskFromMetadata(metadata?: CanvasNodeMetadata, config?: AiConfig)
         provider,
         model,
         cangyuanEndpoint: provider === "cangyuan" ? metadata.videoTaskEndpoint || cangyuanTaskEndpointFromModel(model) : undefined,
+        requestMethod: metadata.videoTaskRequestMethod,
+        requestUrl: metadata.videoTaskRequestUrl,
+        requestModel: metadata.videoTaskRequestModel,
+        requestFields: metadata.videoTaskRequestFields,
     };
 }
 

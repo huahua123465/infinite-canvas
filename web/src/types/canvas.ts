@@ -143,6 +143,10 @@ export type CanvasNodeMetadata = {
     videoTaskModel?: string;
     videoTaskEndpoint?: "videos" | "video-generations";
     videoTaskSubmittedAt?: string;
+    videoTaskRequestMethod?: "POST";
+    videoTaskRequestUrl?: string;
+    videoTaskRequestModel?: string;
+    videoTaskRequestFields?: string[];
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceChildNodeIds?: string[];

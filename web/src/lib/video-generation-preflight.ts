@@ -53,20 +53,23 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
     if (model.startsWith("seedance-2.0")) {
+        const fixedResolution = seedanceModelFixedResolution(model);
+        const maxImages = fixedResolution ? 9 : 4;
+        const maxAudios = fixedResolution ? 3 : 1;
+        const minReferenceVideoMs = fixedResolution ? 2_000 : 4_000;
         if (duration < 4 || duration > 15) issues.push(blocked("seedance_duration", "Seedance 视频时长必须为 4–15 秒", "请修改当前镜头时长。"));
         if (!seedanceRatios.has(ratio)) issues.push(blocked("seedance_ratio", `Seedance 不支持当前画幅 ${ratio}`, "请选择 16:9、9:16、1:1、21:9、3:4 或 4:3。"));
-        if (input.references.length > 4) issues.push(blocked("seedance_images", "Seedance 参考图不能超过 4 张", "请移除多余参考图。"));
+        if (input.references.length > maxImages) issues.push(blocked("seedance_images", `当前 Seedance 模型参考图不能超过 ${maxImages} 张`, "请移除多余参考图。"));
         if (input.videoReferences.length > 3) issues.push(blocked("seedance_videos", "Seedance 参考视频不能超过 3 条", "请移除多余参考视频。"));
-        if (input.audioReferences.length > 1) issues.push(blocked("seedance_audios", "Seedance 参考音频不能超过 1 条", "请只保留一条参考音频。"));
+        if (input.audioReferences.length > maxAudios) issues.push(blocked("seedance_audios", `当前 Seedance 模型参考音频不能超过 ${maxAudios} 条`, "请移除多余参考音频。"));
         if ((input.videoReferences.length || input.audioReferences.length) && !input.references.length) issues.push(blocked("seedance_primary_image", "参考视频或音频必须同时提供主参考图", "请添加至少一张参考图。"));
         const totalVideoDuration = input.videoReferences.reduce((total, item) => total + (item.durationMs || 0), 0);
         if (totalVideoDuration > 15_000) issues.push(blocked("seedance_video_duration", "Seedance 参考视频总时长不能超过 15 秒", "请裁短或移除参考视频。"));
         input.videoReferences.forEach((item, index) => {
-            if (item.durationMs && (item.durationMs < 4_000 || item.durationMs > 15_000)) issues.push(blocked(`seedance_video_${index}`, `参考视频 ${index + 1} 必须为 4–15 秒`, "请更换或裁剪参考视频。"));
-            if (item.width && item.height && (Math.min(item.width, item.height) < 720 || Math.max(item.width, item.height) > 2160)) issues.push(blocked(`seedance_video_size_${index}`, `参考视频 ${index + 1} 分辨率不在 720–2160 px 范围内`, "请调整参考视频分辨率。"));
+            if (item.durationMs && (item.durationMs < minReferenceVideoMs || item.durationMs > 15_000)) issues.push(blocked(`seedance_video_${index}`, `参考视频 ${index + 1} 必须为 ${fixedResolution ? "2" : "4"}–15 秒`, "请更换或裁剪参考视频。"));
+            if (!fixedResolution && item.width && item.height && (Math.min(item.width, item.height) < 720 || Math.max(item.width, item.height) > 2160)) issues.push(blocked(`seedance_video_size_${index}`, `参考视频 ${index + 1} 分辨率不在 720–2160 px 范围内`, "请调整参考视频分辨率。"));
         });
         if (input.audioReferences[0]?.durationMs && input.audioReferences[0].durationMs! > 15_000) issues.push(blocked("seedance_audio_duration", "Seedance 参考音频不能超过 15 秒", "请裁短参考音频。"));
-        const fixedResolution = seedanceModelFixedResolution(model);
         const standardModel = ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"].includes(model);
         if (standardModel && !["480p", "720p"].includes(resolution)) issues.push(blocked("seedance_resolution", "当前 Seedance 标准模型仅支持 480p/720p", "请修改分辨率或切换固定分辨率模型。"));
         if (fixedResolution && resolution !== fixedResolution) issues.push(warning("seedance_fixed_resolution", `当前模型固定输出 ${fixedResolution}，设置中的 ${resolution} 不会生效`, "生成时会以模型档位为准。"));
