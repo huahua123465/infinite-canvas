@@ -6197,6 +6197,10 @@ function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?
     return [extra, ...next];
 }
 
+function parseStoryboardRowSeconds(row?: string[]) {
+    return parseStoryboardVideoSeconds(row?.[1] || "");
+}
+
 function mergeStoryboardSceneLockReferences(base: StoryboardVideoReference[], autoReferences: StoryboardVideoReference[]) {
     const existing = new Set(base.map((item) => item.mention));
     return [...base, ...autoReferences.filter((item) => item.role === "sceneLock" && !existing.has(item.mention))];
@@ -6228,7 +6232,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const customConfig = existing?.metadata?.storyboardVideoConfigCustomized ? existing.metadata : undefined;
     const videoModel = existing?.metadata?.model || generationConfig.model;
     const videoSize = customConfig?.size || generationConfig.size;
-    const videoSeconds = customConfig?.seconds || generationConfig.videoSeconds;
+    const videoSeconds = customConfig?.seconds || parseStoryboardRowSeconds(row) || generationConfig.videoSeconds;
     const videoQuality = customConfig?.vquality || generationConfig.vquality;
     const videoGenerateAudio = customConfig?.generateAudio || generationConfig.videoGenerateAudio;
     const videoWatermark = customConfig?.watermark || generationConfig.videoWatermark;

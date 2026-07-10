@@ -3,7 +3,8 @@ setlocal
 
 set "WEB_DIR=%~dp0web"
 set "AGENT_DIR=%~dp0canvas-agent"
-set "CANVAS_URL=http://127.0.0.1:3000/"
+set "WEB_PORT=3000"
+set "CANVAS_URL=http://127.0.0.1:%WEB_PORT%/"
 
 if not exist "%WEB_DIR%\package.json" (
   echo Cannot find web\package.json.
@@ -37,6 +38,6 @@ if errorlevel 1 (
 )
 
 echo Starting web dev server...
-call npm run dev
+call npm run dev -- --port %WEB_PORT%
 
 pause

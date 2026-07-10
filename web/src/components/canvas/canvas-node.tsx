@@ -504,7 +504,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
     );
 }
 
-const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
+const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
 const STORYBOARD_ROW_LIMIT = 120;
 
@@ -1451,6 +1451,9 @@ function StoryboardVideoPromptPreviewModal({
                         <div className="text-sm font-semibold">视频生成设置</div>
                         <span className={`text-xs ${saveHint ? "text-blue-500 dark:text-blue-300" : "text-stone-500"}`}>{saveHint || "修改会自动保存"}</span>
                     </div>
+                    <div className="mb-2 rounded-xl border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-200">
+                        当前镜头时长：<span className="font-semibold">{node.metadata?.seconds || draftConfig.videoSeconds || globalConfig.videoSeconds || defaultConfig.videoSeconds}s</span>；生成时会优先使用这一镜的时长。
+                    </div>
                     <div className="flex flex-wrap items-center gap-2">
                         <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={draftConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={updateDraftModel} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover
@@ -1810,8 +1813,8 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
                 <Alert
                     showIcon
                     type="warning"
-                    message="建议使用非写实虚拟角色参考图"
-                    description="AI 生成图如果高度写实、像真人演员定妆照，也可能被识别为真人脸并拒绝生成。建议换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。"
+                    message="参考图风格需与整体要求一致"
+                    description="如果脚本节点要求写实真人短剧，角色和场景参考图应保持真实人物与现实光影；如果平台因高写实人脸拒绝生成，再改用更明显的虚拟角色或降低真人脸细节。"
                 />
                 <section className="rounded-xl border border-stone-200 p-3 dark:border-stone-700">
                     <div className="mb-2 flex items-center justify-between gap-3">

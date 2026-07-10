@@ -38,11 +38,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const { message } = App.useApp();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const updateGlobalConfig = useConfigStore((state) => state.updateConfig);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = defaultMode(node.type);
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
+    const scriptVideoConfig = isScriptNode ? buildScriptVideoConfig(globalConfig, node) : null;
     const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -216,7 +218,17 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !min-w-[130px] !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                     </>
                 ) : (
-                    <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                    <>
+                        <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
+                        {scriptVideoConfig ? (
+                            <CanvasVideoSettingsPopover
+                                config={scriptVideoConfig}
+                                buttonClassName="!h-10 !min-w-[96px] !max-w-[118px] !justify-start !rounded-full !px-3"
+                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                                onModelChange={(model) => updateGlobalConfig("videoModel", model)}
+                            />
+                        ) : null}
+                    </>
                 )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -319,6 +331,12 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         count: String(node.metadata?.count || (mode === "image" ? globalConfig.canvasImageCount || globalConfig.count : globalConfig.count) || defaultConfig.count),
     };
+}
+
+function buildScriptVideoConfig(globalConfig: AiConfig, node: CanvasNodeData): AiConfig {
+    const config = buildNodeConfig(globalConfig, node, "video");
+    const model = globalConfig.videoModel || globalConfig.model || defaultConfig.videoModel;
+    return { ...config, model, videoModel: model };
 }
 
 function promptPlaceholder(mode: CanvasNodeGenerationMode, hasImageContent: boolean, hasTextContent: boolean) {

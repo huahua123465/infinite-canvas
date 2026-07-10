@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Modal, Segmented, Slider } from "antd";
-import { RotateCcw, WandSparkles } from "lucide-react";
+import { RotateCcw, WandSparkles, X } from "lucide-react";
 
 export type CanvasImageAngleParams = {
     horizontalAngle: number;
@@ -26,46 +26,64 @@ export function CanvasNodeAngleDialog({ dataUrl, open, onClose, onConfirm }: { d
     const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) => setParams((current) => ({ ...current, [key]: value }));
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={860} centered destroyOnHidden>
-            <div className="space-y-5">
-                <div>
-                    <h2 className="text-xl font-semibold">AI 多角度</h2>
-                    <p className="mt-1 text-sm opacity-60">左侧只预览方向，结果会基于原图重新生成</p>
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={860} centered destroyOnHidden styles={{ body: { padding: 0, overflow: "hidden" } }}>
+            <div className="max-h-[80vh] overflow-y-auto">
+                <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-black/10 bg-white/95 px-6 py-4 backdrop-blur dark:border-white/10 dark:bg-zinc-950/95">
+                    <div>
+                        <h2 className="text-xl font-semibold">AI 多角度</h2>
+                        <p className="mt-1 text-sm opacity-60">左侧只做方向预览，结果会基于原图重新生成</p>
+                    </div>
+                    <button
+                        type="button"
+                        className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-400 transition hover:bg-black/5 hover:text-stone-700 dark:hover:bg-white/10 dark:hover:text-stone-200"
+                        aria-label="关闭"
+                        data-canvas-no-zoom
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onClose();
+                        }}
+                    >
+                        <X className="size-4" />
+                    </button>
                 </div>
-                <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_360px]">
-                    <div className="flex min-h-[300px] flex-col justify-between rounded-xl border p-4">
-                        <div className="grid flex-1 place-items-center">
-                            <div className="relative">
-                                <img src={dataUrl} alt="" className="size-48 rounded-2xl object-cover shadow-2xl" draggable={false} style={{ transform: previewTransform(params) }} />
-                                <div className="absolute -bottom-6 left-1/2 h-10 w-24 -translate-x-1/2 rounded-full border bg-black/20 backdrop-blur" />
+                <div className="space-y-5 px-6 py-5">
+                    <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_360px]">
+                        <div className="flex min-h-[300px] flex-col justify-between rounded-xl border p-4">
+                            <div className="grid flex-1 place-items-center">
+                                <div className="relative">
+                                    <img src={dataUrl} alt="" className="size-48 rounded-2xl object-cover shadow-2xl" draggable={false} style={{ transform: previewTransform(params) }} />
+                                    <div className="absolute -bottom-6 left-1/2 h-10 w-24 -translate-x-1/2 rounded-full border bg-black/20 backdrop-blur" />
+                                </div>
+                            </div>
+                            <Button className="w-fit" icon={<RotateCcw className="size-4" />} onClick={() => setParams(defaultParams)}>
+                                重置
+                            </Button>
+                        </div>
+                        <div className="space-y-6 py-2">
+                            <AngleSlider label="左右角度" value={params.horizontalAngle} min={-60} max={60} step={1} suffix="deg" onChange={(value) => update("horizontalAngle", value)} />
+                            <AngleSlider label="俯仰角度" value={params.pitchAngle} min={-45} max={45} step={1} suffix="deg" onChange={(value) => update("pitchAngle", value)} />
+                            <AngleSlider label="镜头距离" value={params.cameraDistance} min={1} max={10} step={0.1} onChange={(value) => update("cameraDistance", value)} />
+                            <div className="grid grid-cols-[88px_1fr_72px] items-center gap-4">
+                                <span className="font-medium opacity-75">广角镜头</span>
+                                <Segmented
+                                    className="w-fit"
+                                    value={params.wideAngle ? "wide" : "standard"}
+                                    options={[
+                                        { label: "标准", value: "standard" },
+                                        { label: "广角", value: "wide" },
+                                    ]}
+                                    onChange={(value) => update("wideAngle", value === "wide")}
+                                />
                             </div>
                         </div>
-                        <Button className="w-fit" icon={<RotateCcw className="size-4" />} onClick={() => setParams(defaultParams)}>
-                            重置
+                    </div>
+                    <div className="flex justify-end">
+                        <Button type="primary" size="large" icon={<WandSparkles className="size-4" />} onClick={() => onConfirm(params)}>
+                            AI 生成
                         </Button>
                     </div>
-                    <div className="space-y-6 py-2">
-                        <AngleSlider label="左右角度" value={params.horizontalAngle} min={-60} max={60} step={1} suffix="deg" onChange={(value) => update("horizontalAngle", value)} />
-                        <AngleSlider label="俯仰角度" value={params.pitchAngle} min={-45} max={45} step={1} suffix="deg" onChange={(value) => update("pitchAngle", value)} />
-                        <AngleSlider label="镜头距离" value={params.cameraDistance} min={1} max={10} step={0.1} onChange={(value) => update("cameraDistance", value)} />
-                        <div className="grid grid-cols-[88px_1fr_72px] items-center gap-4">
-                            <span className="font-medium opacity-75">广角镜头</span>
-                            <Segmented
-                                className="w-fit"
-                                value={params.wideAngle ? "wide" : "standard"}
-                                options={[
-                                    { label: "标准", value: "standard" },
-                                    { label: "广角", value: "wide" },
-                                ]}
-                                onChange={(value) => update("wideAngle", value === "wide")}
-                            />
-                        </div>
-                    </div>
-                </div>
-                <div className="flex justify-end">
-                    <Button type="primary" size="large" icon={<WandSparkles className="size-4" />} onClick={() => onConfirm(params)}>
-                        AI 生成
-                    </Button>
                 </div>
             </div>
         </Modal>

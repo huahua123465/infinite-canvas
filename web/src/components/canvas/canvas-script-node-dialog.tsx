@@ -9,7 +9,7 @@ import { normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audi
 import { modelOptionLabel, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "@/types/canvas";
 
-const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
+const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
 const STORYBOARD_ROW_LIMIT = 120;
 type ScriptDialogView = "shots" | "assets" | "prompts";
@@ -778,7 +778,7 @@ function ShotImportModal({ open, rowCount, onClose, onImport }: { open: boolean;
                 </div>
                 <textarea
                     className="thin-scrollbar h-64 w-full resize-none rounded-lg border border-[#343434] bg-[#101010] px-3 py-3 text-xs leading-5 text-[#f1f1f1] outline-none focus:border-[#777]"
-                    placeholder={`| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |\n| 35 | 5s | ... | 中景 | ... | ... | ... | 推进 | ... |`}
+                    placeholder={`| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 最终提示词 |\n| 35 | 5s | ... | 中景 | ... | ... | ... | 推进 | ... |`}
                     value={text}
                     onChange={(event) => setText(event.target.value)}
                 />
