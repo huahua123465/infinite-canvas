@@ -9,7 +9,8 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { resolveImageUrl } from "@/services/image-storage";
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { classifyVideoFailure } from "@/services/api/video";
+import { defaultConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -813,6 +814,7 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 }
 
 function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVideoResults, storyboardDurationSeconds, onMetadataChange, onRetry }: NodeContentRendererProps) {
+    const globalConfig = useEffectiveConfig();
     const [referenceEditorOpen, setReferenceEditorOpen] = useState(false);
     const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
     const [videoHistoryOpen, setVideoHistoryOpen] = useState(false);
@@ -821,6 +823,10 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
     const isError = node.metadata?.status === "error";
     const videoProgress = node.metadata?.videoGenerationProgress;
     const videoTaskId = node.metadata?.videoTaskId;
+    const submittedModel = node.metadata?.videoTaskModel || node.metadata?.model || "";
+    const submittedModelLabel = submittedModel ? modelOptionLabel(globalConfig, submittedModel) : "";
+    const submittedModelCaption = videoTaskId ? "实际提交模型" : "当前生成模型";
+    const failureInfo = classifyVideoFailure(node.metadata?.errorDetails || "视频生成失败");
     const [taskRecoveryOpen, setTaskRecoveryOpen] = useState(false);
     const [manualVideoTaskId, setManualVideoTaskId] = useState(videoTaskId || "");
 
@@ -832,15 +838,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
         const taskId = manualVideoTaskId.trim();
         if (!taskId) return;
         setTaskRecoveryOpen(false);
-        onRetry?.(node, {
-            videoTaskId: taskId,
-            videoTaskProvider: node.metadata?.videoTaskProvider,
-            videoTaskModel: node.metadata?.videoTaskModel || node.metadata?.model,
-            videoTaskEndpoint: node.metadata?.videoTaskEndpoint,
-            status: "loading",
-            errorDetails: undefined,
-            videoGenerationProgress: undefined,
-        });
+        onRetry?.(node, videoTaskQueryPatch(node, taskId));
     }, [manualVideoTaskId, node, onRetry]);
     const taskRecoveryModal = (
         <VideoTaskRecoveryModal
@@ -896,8 +894,9 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         <StoryboardAssetPreviewStrip items={assetPreviews} />
                         {sceneLockCount ? <div className="inline-flex w-fit rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">场景锁定 {sceneLockCount} 张</div> : null}
                         {continuityText ? <div className={`inline-flex w-fit rounded px-2 py-0.5 text-[10px] font-semibold ${firstFrameSource ? "bg-blue-500/15 text-blue-300" : "bg-amber-500/15 text-amber-300"}`}>{continuityText}</div> : null}
+                        {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
                         <div className="flex items-center justify-between gap-3 text-[11px] opacity-65">
-                            <span className="min-w-0 truncate">{isError ? "请查看上方失败原因，调整参考或提示词后重试" : helperText}</span>
+                            <span className="min-w-0 truncate">{isError ? failureInfo.advice : helperText}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
                                 {storyboardVideoResults.length ? (
                                     <button type="button" className="rounded px-1.5 py-0.5 font-semibold text-[#2f80ff] hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => setVideoHistoryOpen(true)}>
@@ -911,15 +910,20 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                                     编辑参考
                                 </button>
                                 {videoTaskId ? <span className="max-w-[180px] truncate rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px]" title={videoTaskId}>{videoTaskId}</span> : null}
-                                {isError ? (
+                                {isError && videoTaskId ? (
                                     <button
                                         type="button"
                                         className="rounded px-1.5 py-0.5 hover:bg-white/10"
                                         data-canvas-no-zoom
                                         onMouseDown={(event) => event.stopPropagation()}
-                                        onClick={() => onRetry?.(node)}
+                                        onClick={() => onRetry?.(node, videoTaskQueryPatch(node))}
                                     >
-                                        {videoTaskId ? "查询任务结果" : "重试"}
+                                        查询原任务
+                                    </button>
+                                ) : null}
+                                {isError ? (
+                                    <button type="button" className="rounded px-1.5 py-0.5 font-semibold text-[#2f80ff] hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => onRetry?.(node)}>
+                                        重新生成
                                     </button>
                                 ) : null}
                                 {isError && !videoTaskId ? (
@@ -956,6 +960,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         <span className="text-sm font-semibold">{videoGenerationStatusText(videoProgress)}</span>
                     </div>
                     <VideoGenerationProgressBar progress={videoProgress} theme={theme} />
+                    {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
                     {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
                     {!videoTaskId ? (
                         <button
@@ -983,20 +988,21 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         <span className="text-sm font-semibold">生成未接回</span>
                     </div>
                     <div className="line-clamp-4 text-xs leading-5 opacity-75">{node.metadata?.errorDetails || "视频生成中断，可用任务 ID 查询平台结果。"}</div>
+                    <div className="text-[11px] opacity-55">{failureInfo.label}：{failureInfo.advice}</div>
+                    {submittedModelLabel ? <div className="truncate text-[10px] opacity-55" title={submittedModelLabel}>{submittedModelCaption}：{submittedModelLabel}</div> : null}
                     {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
-                    <button
-                        type="button"
-                        className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
-                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onRetry?.(node);
-                        }}
-                        onMouseDown={(event) => event.stopPropagation()}
-                    >
-                        <RefreshCw className="size-3.5" />
-                        {videoTaskId ? "查询任务结果" : "重试"}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                        {videoTaskId ? (
+                            <button type="button" className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetry?.(node, videoTaskQueryPatch(node)); }} onMouseDown={(event) => event.stopPropagation()}>
+                                <RefreshCw className="size-3.5" />
+                                查询原任务
+                            </button>
+                        ) : null}
+                        <button type="button" className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.node.fill, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetry?.(node); }} onMouseDown={(event) => event.stopPropagation()}>
+                            <Video className="size-3.5" />
+                            重新生成
+                        </button>
+                    </div>
                     {!videoTaskId ? (
                         <button
                             type="button"
@@ -1081,17 +1087,31 @@ function StoryboardVideoHistoryModal({ node, open, results, theme, onClose }: { 
 }
 
 function StoryboardVideoErrorSummary({ text, theme }: { text: string; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const failure = classifyVideoFailure(text);
     return (
         <div className="mt-3 flex min-h-0 gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-5 text-red-200" style={{ borderColor: "rgba(248, 113, 113, .35)", background: "rgba(248, 113, 113, .12)", boxShadow: `inset 0 0 0 1px ${theme.node.fill}` }}>
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <div className="min-w-0">
-                <div className="font-semibold">失败原因</div>
+                <div className="font-semibold">{failure.label}</div>
                 <div className="line-clamp-5 whitespace-pre-wrap" title={text}>
                     {text}
                 </div>
+                <div className="mt-1 opacity-75">{failure.advice}</div>
             </div>
         </div>
     );
+}
+
+function videoTaskQueryPatch(node: CanvasNodeData, taskId = node.metadata?.videoTaskId || ""): Partial<CanvasNodeMetadata> {
+    return {
+        videoTaskId: taskId,
+        videoTaskProvider: node.metadata?.videoTaskProvider,
+        videoTaskModel: node.metadata?.videoTaskModel || node.metadata?.model,
+        videoTaskEndpoint: node.metadata?.videoTaskEndpoint,
+        status: "loading",
+        errorDetails: undefined,
+        videoGenerationProgress: undefined,
+    };
 }
 
 function VideoGenerationProgressBar({ progress, theme }: { progress?: CanvasNodeMetadata["videoGenerationProgress"]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
@@ -1119,6 +1139,7 @@ function videoGenerationStatusText(progress?: CanvasNodeMetadata["videoGeneratio
 }
 
 function videoProviderStatusLabel(status: string) {
+    if (status === "retry_wait") return "等待自动重试";
     if (status === "queued") return "排队中";
     if (status === "running" || status === "in_progress" || status === "processing") return "生成中";
     if (status === "succeeded" || status === "completed") return "已完成";
@@ -1357,6 +1378,7 @@ function StoryboardVideoPromptPreviewModal({
     const audioContinuityPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references, audioReferences);
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
+    const draftConfigRef = useRef(draftConfig);
     const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
     const referenceCandidates = storyboardReferenceAssetCandidates(references, scriptReferences, imageAssets);
     const draftReferences = storyboardVideoReferencesFromPrompt(draftFinalPrompt, references, referenceCandidates);
@@ -1374,7 +1396,9 @@ function StoryboardVideoPromptPreviewModal({
 
     useEffect(() => {
         if (!open) return;
-        setDraftConfig(buildStoryboardVideoNodeConfig(globalConfig, node));
+        const nextConfig = buildStoryboardVideoNodeConfig(globalConfig, node);
+        draftConfigRef.current = nextConfig;
+        setDraftConfig(nextConfig);
         setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences));
         setSaveHint("");
     }, [open, node.id]);
@@ -1400,6 +1424,7 @@ function StoryboardVideoPromptPreviewModal({
     const updateDraftConfig = (patch: Partial<AiConfig>) => {
         setDraftConfig((current) => {
             const next = { ...current, ...patch };
+            draftConfigRef.current = next;
             saveDraft(next, draftFinalPrompt, true);
             return next;
         });
@@ -1428,7 +1453,7 @@ function StoryboardVideoPromptPreviewModal({
     };
 
     const generate = () => {
-        const patch = { ...storyboardVideoReferencePatch(draftReferences), ...storyboardVideoConfigPatch(draftConfig, prompt, draftFinalPrompt.trim()) };
+        const patch = { ...storyboardVideoReferencePatch(draftReferences), ...storyboardVideoConfigPatch(draftConfigRef.current, prompt, draftFinalPrompt.trim()) };
         onConfigChange(patch);
         onGenerate(patch);
         onClose();
@@ -1463,6 +1488,7 @@ function StoryboardVideoPromptPreviewModal({
                     <div className="mb-2 rounded-xl border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-200">
                         当前镜头时长：<span className="font-semibold">{currentVideoSeconds ? `${currentVideoSeconds}s` : "未读取到分镜时长"}</span>；{followsStoryboardDuration ? "来自分镜表当前镜头。" : "使用当前固定时长。"}
                     </div>
+                    <div className="mb-2 text-[11px] text-stone-500 dark:text-stone-400">点击生成后会先在本地检查模型参数和参考素材，不调用额外 AI 接口。</div>
                     <div className="flex flex-wrap items-center gap-2">
                         <ModelPicker config={draftConfig} value={draftConfig.model} capability="video" estimateSeconds={currentVideoSeconds || defaultConfig.videoSeconds} className="!h-9 !min-w-[190px] !max-w-[260px]" onChange={updateDraftModel} onMissingConfig={() => openConfigDialog(true)} />
                         <CanvasVideoSettingsPopover

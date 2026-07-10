@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
+import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -63,11 +64,18 @@ type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: strin
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "cangyuan"; model: string; cangyuanEndpoint?: "videos" | "video-generations" };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
+export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
+export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
 type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void };
 export type VideoGenerationTaskState =
     | { status: "pending"; providerStatus?: string; progress?: number }
     | { status: "completed"; result: VideoGenerationResult; providerStatus?: string; progress?: number }
     | { status: "failed"; error: string; providerStatus?: string; progress?: number };
+
+const VIDEO_ACTIVE_WAIT_MS = 5 * 60 * 1000;
+const VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
+const VIDEO_BACKGROUND_POLL_MS = 30 * 1000;
+const VIDEO_BUSY_RETRY_MS = 30 * 1000;
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -81,16 +89,29 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 }
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
-    options?.onProgress?.({ percent: 8, text: "正在提交视频任务", stage: "submitting" });
-    const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    options?.onTaskCreated?.(task);
-    return resumeVideoGenerationTask(config, task, options);
+    let busyRetryCount = 0;
+    while (true) {
+        const model = modelOptionName((config.model || config.videoModel).trim());
+        options?.onProgress?.({ percent: 8, text: `正在提交视频任务：${model}`, stage: "submitting" });
+        try {
+            const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
+            options?.onTaskCreated?.(task);
+            return await resumeVideoGenerationTask(config, task, options);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "视频生成失败";
+            if (classifyVideoFailure(message).kind !== "service_busy" || busyRetryCount >= 1) throw error;
+            busyRetryCount += 1;
+            options?.onProgress?.({ percent: 16, text: "生成服务繁忙，30 秒后自动重试一次，可随时停止", stage: "queued", providerStatus: "retry_wait" });
+            await delay(VIDEO_BUSY_RETRY_MS, options?.signal);
+        }
+    }
 }
 
 export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
-    options?.onProgress?.({ percent: 16, text: task.provider === "seedance" ? `视频任务已创建，等待方舟返回任务状态：${task.id}` : `视频任务已创建，等待接口处理：${task.id}`, stage: "submitted" });
+    options?.onProgress?.({ percent: 16, text: `视频任务已创建：${modelOptionName(task.model)} · ${task.id}`, stage: "submitted" });
     const delayMs = task.provider === "seedance" ? 30000 : task.provider === "cangyuan" ? 5000 : 2500;
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    const startedAt = Date.now();
+    for (let attempt = 0; Date.now() - startedAt < VIDEO_MAX_WAIT_MS; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
         if (state.status === "completed") {
@@ -98,17 +119,29 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
             return state.result;
         }
         if (state.status === "failed") {
-            options?.onProgress?.({ percent: 100, text: state.error, stage: "failed", providerStatus: state.providerStatus });
+            options?.onProgress?.({ percent: 98, text: state.error, stage: "failed", providerStatus: state.providerStatus });
             throw new Error(state.error);
         }
-        options?.onProgress?.(videoPollingProgress(task.provider, state.providerStatus, attempt, state.progress));
-        if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : ""}视频生成超时，请稍后重试`);
-        await delay(delayMs, options?.signal);
+        const background = Date.now() - startedAt >= VIDEO_ACTIVE_WAIT_MS;
+        options?.onProgress?.(background ? { percent: 95, text: `任务仍在处理中，已转为后台查询：${task.id}`, stage: "running", providerStatus: state.providerStatus } : videoPollingProgress(task.provider, state.providerStatus, attempt, state.progress));
+        await delay(background ? VIDEO_BACKGROUND_POLL_MS : delayMs, options?.signal);
     }
-    throw new Error("视频生成超时，请稍后重试");
+    throw new Error(`视频任务长时间未完成，已保留任务 ID：${task.id}，可稍后查询原任务`);
+}
+
+export function classifyVideoFailure(message: string): VideoFailureInfo {
+    const value = String(message || "").toLowerCase();
+    if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
+    if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
+    if (/内容策略|策略拦截|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "请调整参考图或使用更中性的提示词，不要原样重试。" };
+    if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
+    if (/timeout|超时|expired|长时间未完成/.test(value)) return { kind: "timeout", label: "任务等待超时", advice: "任务 ID 已保留，请优先查询原任务，不要直接重复提交。" };
+    if (/network error|网络|failed to fetch|查询失败|connection|cors/.test(value)) return { kind: "network", label: "网络或查询中断", advice: "请使用原任务 ID 继续查询，避免重新提交任务。" };
+    return { kind: "unknown", label: "生成失败", advice: "请查看原始错误，调整模型、参考素材或提示词后再试。" };
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
+    assertVideoGenerationParameters({ config, prompt, references, videoReferences, audioReferences });
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);

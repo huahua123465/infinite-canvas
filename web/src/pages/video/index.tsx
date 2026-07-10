@@ -10,11 +10,12 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { classifyVideoFailure, createVideoGenerationTask, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -56,6 +57,7 @@ type GenerationLog = {
     seconds: string;
     status: "生成中" | "成功" | "失败";
     task?: VideoGenerationTask;
+    busyRetryCount?: number;
     video?: GeneratedVideo;
     error?: string;
 };
@@ -69,6 +71,7 @@ const logStore = localforage.createInstance({ name: "infinite-canvas", storeName
 
 export default function VideoPage() {
     const { message } = App.useApp();
+    const confirmVideoGeneration = useVideoGenerationPreflight();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
@@ -167,14 +170,27 @@ export default function VideoPage() {
     const generate = async () => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
-        setElapsedMs(0);
         setRunning(true);
+        if (!(await confirmVideoGeneration({ config: snapshot.config, prompt: snapshot.text, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences }))) {
+            setRunning(false);
+            return;
+        }
+        setElapsedMs(0);
         setPreviewLog(null);
         setResults([{ id: nanoid(), status: "pending" }]);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
         try {
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
+            let task: VideoGenerationTask;
+            try {
+                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : "生成失败";
+                if (classifyVideoFailure(errorMessage).kind !== "service_busy") throw error;
+                message.info("生成服务繁忙，30 秒后自动重试一次");
+                await wait(30_000);
+                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
+            }
             const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
             await saveLog(log);
             void pollGenerationLog(log, snapshot.config);
@@ -290,34 +306,41 @@ export default function VideoPage() {
         setStartedAt((value) => value || performance.now());
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
+        let currentLog = log;
         try {
-            for (let attempt = 0; attempt < 120; attempt += 1) {
-                const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
-                if (state.status === "completed") {
-                    const stored = await storeGeneratedVideo(state.result);
-                    const nextVideo: GeneratedVideo = {
-                        id: nanoid(),
-                        url: stored.url,
-                        storageKey: stored.storageKey,
-                        durationMs: Date.now() - log.createdAt,
-                        width: stored.width || 1280,
-                        height: stored.height || 720,
-                        bytes: stored.bytes,
-                        mimeType: stored.mimeType,
-                    };
-                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
-                    await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
-                    message.success("视频已生成");
-                    return;
+            let result: Awaited<ReturnType<typeof resumeVideoGenerationTask>>;
+            while (true) {
+                try {
+                    result = await resumeVideoGenerationTask(configOverride || taskConfig, currentLog.task!);
+                    break;
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : "生成失败";
+                    if (classifyVideoFailure(errorMessage).kind !== "service_busy" || currentLog.busyRetryCount) throw error;
+                    message.info("生成服务繁忙，30 秒后自动重试一次");
+                    await wait(30_000);
+                    const task = await createVideoGenerationTask(configOverride || taskConfig, currentLog.prompt, currentLog.references, currentLog.videoReferences, currentLog.audioReferences);
+                    currentLog = { ...currentLog, task, busyRetryCount: 1, status: "生成中", error: undefined };
+                    await saveLog(currentLog);
                 }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
-                await delay(log.task.provider === "seedance" ? 5000 : 2500);
             }
+            const stored = await storeGeneratedVideo(result);
+            const nextVideo: GeneratedVideo = {
+                id: nanoid(),
+                url: stored.url,
+                storageKey: stored.storageKey,
+                durationMs: Date.now() - currentLog.createdAt,
+                width: stored.width || 1280,
+                height: stored.height || 720,
+                bytes: stored.bytes,
+                mimeType: stored.mimeType,
+            };
+            setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+            await saveLog({ ...currentLog, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
+            message.success("视频已生成");
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
-            setResults([{ id: log.id, status: "failed", error: errorMessage }]);
-            await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
+            setResults([{ id: currentLog.id, status: "failed", error: errorMessage }]);
+            await saveLog({ ...currentLog, status: "失败", durationMs: Date.now() - currentLog.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
             activeLogIdsRef.current.delete(log.id);
@@ -342,6 +365,16 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         setResults(log.status === "生成中" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || "生成失败" }]);
+    };
+
+    const queryPreviewTask = () => {
+        if (!previewLog?.task) return;
+        const nextLog = { ...previewLog, status: "生成中" as const, error: undefined };
+        setPreviewLog(nextLog);
+        setLogs((value) => value.map((item) => (item.id === nextLog.id ? nextLog : item)));
+        setResults([{ id: nextLog.id, status: "pending" }]);
+        void saveLog(nextLog);
+        void pollGenerationLog(nextLog);
     };
 
     return (
@@ -475,6 +508,7 @@ export default function VideoPage() {
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
                                 开始生成
                             </Button>
+                            <div className="mt-2 text-center text-[11px] text-stone-500 dark:text-stone-400">提交前会在本地检查参数和参考素材，不产生额外费用</div>
                         </div>
                     </div>
 
@@ -485,7 +519,7 @@ export default function VideoPage() {
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || "生成失败"} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
+                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || "生成失败"} onRetry={retryResult} onQuery={previewLog?.task && ["timeout", "network"].includes(classifyVideoFailure(result.error || "").kind) ? queryPreviewTask : undefined} /> : <PendingVideoCard key={result.id} />))}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -581,18 +615,21 @@ function PendingVideoCard() {
     );
 }
 
-function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => void }) {
+function FailedVideoCard({ error, onRetry, onQuery }: { error: string; onRetry: () => void; onQuery?: () => void }) {
+    const failure = classifyVideoFailure(error);
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
+                <div className="text-sm font-medium text-red-600 dark:text-red-300">{failure.label}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
                     {error}
                 </Typography.Paragraph>
+                <div className="text-xs text-red-500/80 dark:text-red-300/75">{failure.advice}</div>
             </div>
-            <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
+            <div className="flex justify-end gap-2 border-t border-red-200 p-3 dark:border-red-950">
+                {onQuery ? <Button size="small" onClick={onQuery}>查询原任务</Button> : null}
                 <Button size="small" danger onClick={onRetry}>
-                    重试
+                    重新生成
                 </Button>
             </div>
         </div>
@@ -723,6 +760,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         seconds: log.seconds || config.videoSeconds || "",
         status: log.status || "成功",
         task: log.task,
+        busyRetryCount: log.busyRetryCount,
         video,
         error: log.error,
     };
@@ -852,6 +890,6 @@ function normalizeResolution(value: string) {
     return normalizeVideoResolutionValue(value);
 }
 
-function delay(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+function wait(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
