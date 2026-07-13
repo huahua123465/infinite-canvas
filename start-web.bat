@@ -3,6 +3,7 @@ setlocal
 
 set "WEB_DIR=%~dp0web"
 set "AGENT_DIR=%~dp0canvas-agent"
+set "AUDIO_SEPARATOR_DIR=%~dp0audio-separator-service"
 set "WEB_PORT=3000"
 set "CANVAS_URL=http://127.0.0.1:%WEB_PORT%/"
 
@@ -35,6 +36,17 @@ if errorlevel 1 (
   )
 ) else (
   echo Canvas Agent is already running.
+)
+
+echo Checking local audio separator...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:17372/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
+if errorlevel 1 (
+  if exist "%AUDIO_SEPARATOR_DIR%\start-hidden.ps1" (
+    echo Starting local audio separator in the background...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%AUDIO_SEPARATOR_DIR%\start-hidden.ps1"
+  )
+) else (
+  echo Local audio separator is already running.
 )
 
 echo Starting web dev server...

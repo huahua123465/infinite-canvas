@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
+import { AudioLines, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LoaderCircle, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
@@ -24,6 +24,8 @@ type CanvasNodeHoverToolbarProps = {
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
+    onSeparateAudio: (node: CanvasNodeData) => void;
+    separatingAudio: boolean;
     onSaveAsset: (node: CanvasNodeData) => void;
     onOpenPreset: (node: CanvasNodeData, preset: CanvasImagePresetId) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
@@ -50,6 +52,7 @@ type ToolbarTool = {
     onClick: () => void;
     active?: boolean;
     danger?: boolean;
+    disabled?: boolean;
 };
 
 export function CanvasNodeHoverToolbar({
@@ -65,6 +68,8 @@ export function CanvasNodeHoverToolbar({
     onGenerateImage,
     onUpload,
     onDownload,
+    onSeparateAudio,
+    separatingAudio,
     onSaveAsset,
     onOpenPreset,
     onMaskEdit,
@@ -199,6 +204,7 @@ export function CanvasNodeHoverToolbar({
         ...(canRetry ? [{ id: "retry", title: "重新生成", label: "重试", icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: "加入我的素材", label: "存素材", icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasVideo ? [{ id: "separateAudio", title: separatingAudio ? "正在分离人声和背景音乐" : "将视频分离为人声和背景音乐", label: separatingAudio ? "分离中" : "分离音频", icon: separatingAudio ? <LoaderCircle className="size-4 animate-spin" /> : <AudioLines className="size-4" />, onClick: () => onSeparateAudio(node), disabled: separatingAudio }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isScript ? [{ id: "exportScriptAssets", title: "批量生成并导出资产", label: "批量生成资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
         ...(isScript ? [{ id: "batchScriptVideos", title: "按合成提示词批量生成视频", label: "批量生成视频", icon: <Video className="size-4" />, onClick: () => onBatchGenerateScriptVideos(node) }] : []),
@@ -367,12 +373,12 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     );
 }
 
-function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
+function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false, disabled = false }: ToolbarTool & { showLabel: boolean }) {
     const hasText = showLabel && Boolean(label);
     return (
         <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
-            <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap px-1.5 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
-                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] ${active ? "bg-[#eeeeef]" : ""}`}>
+            <button type="button" disabled={disabled} className={`group relative flex h-12 items-center whitespace-nowrap px-1.5 disabled:cursor-wait disabled:opacity-55 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
+                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] group-disabled:hover:bg-transparent ${active ? "bg-[#eeeeef]" : ""}`}>
                     {icon}
                     {hasText ? <span>{label}</span> : null}
                 </span>

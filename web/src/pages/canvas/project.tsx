@@ -6,11 +6,12 @@ import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { requestStoredAudioGeneration } from "@/services/api/audio";
+import { separateVideoAudio } from "@/services/audio-separation";
 import { requestVideoGeneration, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, resolveModelRequestConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -532,6 +533,7 @@ function InfiniteCanvasPage() {
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+    const [audioSeparatingNodeIds, setAudioSeparatingNodeIds] = useState<Set<string>>(new Set());
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
     const [showImageInfo, setShowImageInfo] = useState(false);
@@ -3301,6 +3303,48 @@ function InfiniteCanvasPage() {
         [message],
     );
 
+    const separateNodeAudio = useCallback(
+        async (node: CanvasNodeData) => {
+            if (node.type !== CanvasNodeType.Video || !node.metadata?.content || audioSeparatingNodeIds.has(node.id)) return;
+            const messageKey = `separate-audio-${node.id}`;
+            setAudioSeparatingNodeIds((current) => new Set(current).add(node.id));
+            try {
+                const video = node.metadata.storageKey ? await getMediaBlob(node.metadata.storageKey) : await fetch(node.metadata.content).then((response) => response.blob());
+                if (!video) throw new Error("当前视频文件已丢失，无法分离音频");
+                const result = await separateVideoAudio(video, `${node.title || "video"}.mp4`, ({ percent, text }) => message.open({ key: messageKey, type: "loading", content: `${text} ${percent}%`, duration: 0 }));
+                const [vocals, instrumental] = await Promise.all([uploadMediaFile(result.vocals, "audio"), uploadMediaFile(result.instrumental, "audio")]);
+                const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+                const gap = 20;
+                const startX = node.position.x + node.width + 96;
+                const startY = node.position.y + (node.height - spec.height * 2 - gap) / 2;
+                const vocalsId = nanoid();
+                const instrumentalId = nanoid();
+                setNodes((current) => [
+                    ...current,
+                    { id: vocalsId, type: CanvasNodeType.Audio, title: `${node.title || "视频"} - 人声`, position: { x: startX, y: startY }, width: spec.width, height: spec.height, metadata: audioMetadata(vocals) },
+                    { id: instrumentalId, type: CanvasNodeType.Audio, title: `${node.title || "视频"} - 背景音乐`, position: { x: startX, y: startY + spec.height + gap }, width: spec.width, height: spec.height, metadata: audioMetadata(instrumental) },
+                ]);
+                setConnections((current) => [
+                    ...current,
+                    { id: nanoid(), fromNodeId: node.id, toNodeId: vocalsId },
+                    { id: nanoid(), fromNodeId: node.id, toNodeId: instrumentalId },
+                ]);
+                setSelectedNodeIds(new Set([vocalsId, instrumentalId]));
+                setSelectedConnectionId(null);
+                message.success({ key: messageKey, content: "已分离人声和背景音乐", duration: 2 });
+            } catch (error) {
+                message.error({ key: messageKey, content: error instanceof Error ? error.message : "音频分离失败", duration: 6 });
+            } finally {
+                setAudioSeparatingNodeIds((current) => {
+                    const next = new Set(current);
+                    next.delete(node.id);
+                    return next;
+                });
+            }
+        },
+        [audioSeparatingNodeIds, message],
+    );
+
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
             if (node.type === CanvasNodeType.Text) {
@@ -4750,6 +4794,8 @@ function InfiniteCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
+                    onSeparateAudio={(node) => void separateNodeAudio(node)}
+                    separatingAudio={Boolean(toolbarNode && audioSeparatingNodeIds.has(toolbarNode.id))}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
                     onOpenPreset={(node, preset) => createImagePresetConfigNode(node, preset)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
