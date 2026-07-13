@@ -729,9 +729,9 @@ async function requestCangyuanImageEdit(config: AiConfig, prompt: string, refere
     formData.set("model", config.model);
     formData.set("prompt", withSystemPrompt(config, prompt));
     Object.entries(cangyuanImageOptions(config, quality)).forEach(([key, value]) => formData.set(key, value));
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const files = await Promise.all(references.map(cangyuanImageFile));
     files.forEach((file) => formData.append("image", file));
-    formData.set("mask", dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask) }));
+    formData.set("mask", await cangyuanImageFile(mask));
     const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config), signal: options?.signal });
     return parseCangyuanImageResult(config, response.data, "edits", options);
 }
@@ -765,7 +765,28 @@ async function pollCangyuanImageTask(config: AiConfig, taskId: string, taskPath:
 }
 
 async function imageReferenceUrl(image: ReferenceImage) {
-    return image.url || image.dataUrl || imageToDataUrl(image);
+    const inlineData = image.dataUrl.trim();
+    const remoteUrl = image.url?.trim() || "";
+    if (!inlineData.startsWith("data:") && /^https?:\/\//i.test(remoteUrl)) return remoteUrl;
+    return (await resolveCangyuanImage(image)).dataUrl;
+}
+
+async function cangyuanImageFile(image: ReferenceImage) {
+    return (await resolveCangyuanImage(image)).file;
+}
+
+async function resolveCangyuanImage(image: ReferenceImage) {
+    const dataUrl = await imageToDataUrl(image);
+    if (!/^data:image\/(?:png|jpeg|webp);base64,/i.test(dataUrl)) throw new Error("沧元算力参考图仅支持 JPEG、PNG 或 WebP 的 Base64 数据");
+    let file: File;
+    try {
+        file = dataUrlToFile({ ...image, dataUrl });
+    } catch {
+        throw new Error("沧元算力参考图 Base64 数据无效");
+    }
+    if (!file.size) throw new Error("沧元算力参考图数据为空");
+    if (file.size > 10 * 1024 * 1024) throw new Error("沧元算力单张参考图不能超过 10MB");
+    return { dataUrl, file };
 }
 
 function parseGeminiImagePayload(payload: GeminiPayload) {
