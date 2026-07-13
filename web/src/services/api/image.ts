@@ -647,11 +647,35 @@ function isCangyuanConfig(config: Pick<AiConfig, "apiFormat">) {
     return config.apiFormat === "cangyuan";
 }
 
-function cangyuanImageSize(config: AiConfig, quality: string | undefined) {
-    const size = config.size.trim();
-    if (!size || size.toLowerCase() === "auto") return undefined;
-    if (size.includes(":") && config.model.toLowerCase().includes("gpt-image")) return resolveRequestSize(quality, size);
-    return size;
+function cangyuanImageOptions(config: AiConfig, quality: string | undefined) {
+    const aspectRatio = cangyuanAspectRatio(config.size);
+    const fixedResolution = config.model.match(/-(1k|2k|4k)$/i)?.[1]?.toUpperCase();
+    const outputResolution = fixedResolution || (quality ? GEMINI_IMAGE_SIZE_BY_QUALITY[quality] : undefined);
+    const isFixedGptImage = Boolean(fixedResolution && config.model.toLowerCase().includes("gpt-image"));
+    return {
+        ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+        ...(outputResolution ? { image_size: outputResolution } : {}),
+        ...(!isFixedGptImage && outputResolution ? { output_resolution: outputResolution } : {}),
+    };
+}
+
+function cangyuanAspectRatio(size: string) {
+    const value = size.trim();
+    if (!value || value.toLowerCase() === "auto") return undefined;
+    const dimensions = parseImageDimensions(value);
+    if (!dimensions) {
+        const ratio = parseImageRatio(value);
+        return `${ratio.width}:${ratio.height}`;
+    }
+    const divisor = greatestCommonDivisor(dimensions.width, dimensions.height);
+    return `${dimensions.width / divisor}:${dimensions.height / divisor}`;
+}
+
+function greatestCommonDivisor(left: number, right: number) {
+    let a = Math.abs(left);
+    let b = Math.abs(right);
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
 }
 
 function shouldUseCangyuanImageAsync(config: AiConfig, references: ReferenceImage[]) {
@@ -678,6 +702,8 @@ async function requestCangyuanImages(config: AiConfig, prompt: string, reference
 
 async function requestCangyuanImageOnce(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
+    if (mask) return requestCangyuanImageEdit(config, prompt, references, mask, quality, options);
+    if (references.length > 9) throw new Error("沧元算力 JSON 图生图最多支持 9 张参考图");
     const referenceUrls = await Promise.all(references.map(imageReferenceUrl));
     const requestAsync = shouldUseCangyuanImageAsync(config, references);
     const response = await axios.post<ImageApiResponse>(
@@ -686,33 +712,45 @@ async function requestCangyuanImageOnce(config: AiConfig, prompt: string, refere
             model: config.model,
             prompt: withSystemPrompt(config, prompt),
             stream: false,
-            ...(quality ? { quality } : {}),
-            ...(cangyuanImageSize(config, quality) ? { size: cangyuanImageSize(config, quality) } : {}),
+            ...cangyuanImageOptions(config, quality),
             ...(referenceUrls.length === 1 ? { image: referenceUrls[0] } : {}),
             ...(referenceUrls.length > 1 ? { images: referenceUrls } : {}),
-            ...(mask ? { mask: await imageReferenceUrl(mask) } : {}),
             ...(requestAsync ? { async: true } : {}),
         },
         { headers: aiHeaders(config, "application/json"), signal: options?.signal },
     );
-    return parseCangyuanImageResult(config, response.data, options);
+    return parseCangyuanImageResult(config, response.data, "generations", options);
 }
 
-async function parseCangyuanImageResult(config: AiConfig, payload: ImageApiResponse, options?: RequestOptions) {
+async function requestCangyuanImageEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage, quality: string | undefined, options?: RequestOptions) {
+    if (!references.length) throw new Error("沧元算力蒙版编辑至少需要 1 张原图");
+    if (references.length > 6) throw new Error("沧元算力 multipart 图生图最多支持 6 张参考图");
+    const formData = new FormData();
+    formData.set("model", config.model);
+    formData.set("prompt", withSystemPrompt(config, prompt));
+    Object.entries(cangyuanImageOptions(config, quality)).forEach(([key, value]) => formData.set(key, value));
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    files.forEach((file) => formData.append("image", file));
+    formData.set("mask", dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask) }));
+    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config), signal: options?.signal });
+    return parseCangyuanImageResult(config, response.data, "edits", options);
+}
+
+async function parseCangyuanImageResult(config: AiConfig, payload: ImageApiResponse, taskPath: "generations" | "edits", options?: RequestOptions) {
     try {
         return parseImagePayload(payload);
     } catch (error) {
         const taskId = readCangyuanTaskId(payload);
         if (!taskId) throw error;
-        return pollCangyuanImageTask(config, taskId, options);
+        return pollCangyuanImageTask(config, taskId, taskPath, options);
     }
 }
 
-async function pollCangyuanImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+async function pollCangyuanImageTask(config: AiConfig, taskId: string, taskPath: "generations" | "edits", options?: RequestOptions) {
     for (let attempt = 0; attempt < 90; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         await delay(3000, options?.signal);
-        const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/generations/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal });
+        const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/${taskPath}/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal });
         const status = readCangyuanStatus(response.data);
         if (status === "failed") throw new Error(response.data.error?.message || response.data.msg || "图片生成失败");
         if (!status || status === "completed") {

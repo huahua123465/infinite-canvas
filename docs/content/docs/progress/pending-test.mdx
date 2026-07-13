@@ -72,6 +72,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 - 沧元算力模型渠道接入：配置里应支持新增“沧元算力”调用格式，默认 Base URL 为 `https://ai.cangyuansuanli.cn`；填写 API Key 后可通过“拉取模型”读取 `/v1/models`，并能把 `omni` 归类到视频模型、`gemini-banana-*` 归类到图像模型。图像生成/图生图应走 `/v1/images/generations`，同步取 `data[].url`、异步轮询 `/v1/images/generations/{task_id}`；视频生成应走 `/v1/videos` 和 `/v1/videos/{task_id}`，完成后优先取 `video_url`，并避免误走方舟 Ark 的 `/contents/generations/tasks`。
 
+- 沧元算力图片模型新接口：画布生成配置节点展开模型下拉后，应能直接选择 `gpt-image-2-*`、`nano-banana-*` 等沧元图片模型，点击浮层不得触发画布平移或取消选择；图片请求应使用 `aspect_ratio` 与模型匹配的 `image_size` / `output_resolution`，固定 1K/2K/4K 模型不得再发送像素 `size` 或冲突 `quality`；JSON 图生图最多允许 9 张参考图，蒙版编辑应通过 multipart `/v1/images/edits` 提交并在异步时轮询对应 edits 任务。
+
 - 沧元算力视频进度显示：视频生成轮询 `/v1/videos/{task_id}` 时应读取平台返回的 `progress`，节点进度文案显示真实百分比；任务完成仍优先取 `video_url`，失败时应尽量展示 `error.message` 和 `error_code`，便于判断是排队、生成中、素材不合规还是内容策略拦截。
 
 - 沧元算力视频结果 URL 兼容：`/v1/videos/{task_id}` 完成后应能从 `video_url`、`video.url`、`raw_data.video_url`、`data.video_url` 或 `data.url` 取到成片，重点验证 `seedance-2.0-*`、`omni-*` 和 `sora2` / `openai-sora2`。
