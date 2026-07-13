@@ -61,12 +61,14 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const style = node?.metadata?.storyboardAssetStyle || "";
     const assetError = node?.metadata?.storyboardAssetError || "";
     const promptDetails = node?.metadata?.storyboardPromptDetails || {};
+    const promptErrors = node?.metadata?.storyboardPromptErrors || {};
     const planningProgress = node?.metadata?.storyboardPlanningProgress;
     const coverage = node?.metadata?.storyboardCoverage;
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const shotPlans = node?.metadata?.storyboardShotPlans || {};
     const dynamicIndexes = rows.map((_, index) => index).filter((index) => shotPlans[String(index)]?.renderMode !== "still");
     const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)])).length;
+    const failedPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) && Boolean(promptErrors[String(index)])).length;
     const staticShotCount = rows.length - dynamicIndexes.length;
     const readyAssets = assets.filter(storyboardAssetReady).length;
     const missingAssets = assets.length - readyAssets;
@@ -179,7 +181,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
                             <Step index="1" title="确认镜头" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : coverage ? `原文覆盖 ${coverage.covered}/${coverage.total}，共 ${rows.length} 镜` : `${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0)} onClick={() => setView("shots")} />
                             <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
-                            <Step index="3" title="合成提示词" detail={`${dynamicPromptCount}/${dynamicIndexes.length} 个动态镜头已合成`} active={view === "prompts"} done={dynamicIndexes.length > 0 && dynamicPromptCount === dynamicIndexes.length} onClick={openPrompts} />
+                            <Step index="3" title="合成提示词" detail={`${dynamicPromptCount}/${dynamicIndexes.length} 个动态镜头已合成${failedPromptCount ? `，失败 ${failedPromptCount}` : ""}`} active={view === "prompts"} done={dynamicIndexes.length > 0 && dynamicPromptCount === dynamicIndexes.length} onClick={openPrompts} />
                         </div>
                         {view === "assets" ? (
                             <AssetPrepToolbar
@@ -199,7 +201,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             />
                         ) : null}
                         {view === "prompts" ? (
-                            <PromptStepToolbar node={node} actionKey={actionKey} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onStopPromptGeneration={onStopPromptGeneration} />
+                            <PromptStepToolbar node={node} actionKey={actionKey} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onStopPromptGeneration={onStopPromptGeneration} />
                         ) : null}
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
@@ -563,6 +565,7 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                     <tbody>
                         {rows.map((row, rowIndex) => {
                             const detail = promptDetails[String(rowIndex)];
+                            const promptError = node.metadata?.storyboardPromptErrors?.[String(rowIndex)];
                             const isDynamic = node.metadata?.storyboardShotPlans?.[String(rowIndex)]?.renderMode !== "still";
                             const hasPrompt = Boolean(detail?.storyboardPrompt?.trim());
                             const boundCount = detail?.assetMentionLinks?.filter((link) => link.status === "bound").length || 0;
@@ -586,7 +589,7 @@ function PromptComposeView({ node, rows, actionKey, promptDetails, config, model
                                                     </span>
                                                 </>
                                             ) : (
-                                                <span className={isDynamic ? "text-[#858585]" : "text-cyan-100/70"}>{isDynamic ? "待生成动态提示词" : "静态事实镜头，不参与本轮批量合成"}</span>
+                                                <span className={promptError ? "line-clamp-3 text-red-300" : isDynamic ? "text-[#858585]" : "text-cyan-100/70"}>{promptError || (isDynamic ? "待生成动态提示词" : "静态事实镜头，不参与本轮批量合成")}</span>
                                             )}
                                             <span className={`mt-2 inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${isDynamic ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{isDynamic ? "动态视频" : "静态事实"}</span>
                                         </button>
@@ -956,7 +959,7 @@ function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount
     );
 }
 
-function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCount, staticShotCount, onComposeFinalPrompt, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; dynamicPromptCount: number; dynamicShotCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
+function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; dynamicPromptCount: number; dynamicShotCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
     const remaining = Math.max(0, dynamicShotCount - dynamicPromptCount);
     const generating = actionKey === "prompt:all";
     return (
@@ -965,10 +968,11 @@ function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCou
                 <Button danger className="!h-10 !rounded-lg !px-7" icon={<Square className="size-4" />} onClick={() => onStopPromptGeneration(node)}>暂停合成</Button>
             ) : (
                 <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!remaining || actionKey !== null} icon={<Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
-                    {dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个动态镜头`}
+                    {failedPromptCount ? `重试失败及剩余 ${remaining} 个` : dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个动态镜头`}
                 </Button>
             )}
             <div className="text-sm font-semibold">{dynamicPromptCount}/{dynamicShotCount} 个动态镜头完成</div>
+            {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount}</div> : null}
             <div className="text-xs text-[#8f8f8f]">{staticShotCount} 个静态事实镜头暂不调用模型</div>
         </div>
     );

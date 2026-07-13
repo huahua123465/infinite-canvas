@@ -185,6 +185,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetNodeIds?: Record<string, string>;
     storyboardAssetMentionNodeIds?: Record<string, string>;
     storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
+    storyboardPromptErrors?: Record<string, string>;
     storyboardSourceNodeId?: string;
     storyboardAssetId?: string;
     storyboardAssetKind?: StoryboardAssetKind;

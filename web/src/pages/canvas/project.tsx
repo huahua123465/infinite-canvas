@@ -2082,10 +2082,15 @@ function InfiniteCanvasPage() {
                             ...(node.metadata?.storyboardPromptDetails || {}),
                             [String(rowIndex)]: linkedDetail,
                         },
+                        storyboardPromptErrors: Object.fromEntries(Object.entries(node.metadata?.storyboardPromptErrors || {}).filter(([key]) => key !== String(rowIndex))),
                     },
                 };
             }),
         );
+    }, []);
+
+    const updateStoryboardPromptError = useCallback((nodeId: string, rowIndex: number, error: string) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardPromptErrors: { ...(node.metadata?.storyboardPromptErrors || {}), [String(rowIndex)]: error } } } : node)));
     }, []);
 
     const updateStoryboardModel = useCallback((nodeId: string, model: string) => {
@@ -2840,15 +2845,42 @@ function InfiniteCanvasPage() {
             const targetId = `storyboard-prompts:${scriptNode.id}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             let completed = 0;
+            let failed = 0;
             try {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
                 for (const index of indexes) {
                     const source = buildStoryboardPromptComposeSource(scriptNode, rows, index);
-                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {}, { signal: controller.signal });
-                    updateStoryboardPromptDetail(scriptNode.id, index, parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []));
-                    completed += 1;
+                    let detail: StoryboardPromptDetail | null = null;
+                    let lastError = "合成提示词失败";
+                    for (let attempt = 0; attempt < 3 && !detail; attempt += 1) {
+                        let answer = "";
+                        try {
+                            answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {}, { signal: controller.signal });
+                            detail = parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []);
+                        } catch (error) {
+                            if (isGenerationCanceled(error)) throw error;
+                            lastError = friendlyGenerationError(error, "模型返回的提示词 JSON 无法解析");
+                            if (answer) {
+                                try {
+                                    const repaired = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardPromptJsonRepairPrompt(answer) }], () => {}, { signal: controller.signal });
+                                    detail = parseStoryboardPromptDetailAnswer(repaired, scriptNode.metadata?.storyboardAssets || []);
+                                } catch (repairError) {
+                                    if (isGenerationCanceled(repairError)) throw repairError;
+                                    lastError = friendlyGenerationError(repairError, "提示词 JSON 自动修复失败");
+                                }
+                            }
+                        }
+                    }
+                    if (detail) {
+                        updateStoryboardPromptDetail(scriptNode.id, index, detail);
+                        completed += 1;
+                    } else {
+                        failed += 1;
+                        updateStoryboardPromptError(scriptNode.id, index, lastError);
+                    }
                 }
-                message.success(rowIndex === undefined ? `已合成 ${completed} 个动态镜头提示词` : "合成提示词已生成");
+                if (failed) message.warning(`本轮完成 ${completed} 个动态镜头，${failed} 个重试后仍失败，可再次点击重试失败镜头`);
+                else message.success(rowIndex === undefined ? `已合成 ${completed} 个动态镜头提示词` : "合成提示词已生成");
             } catch (error) {
                 if (isGenerationCanceled(error)) message.info(`已暂停合成，本轮完成 ${completed} 个，已生成结果均已保留`);
                 else message.error(friendlyGenerationError(error, completed ? `合成中断，本轮已保留 ${completed} 个结果` : "合成提示词失败"));
@@ -2858,7 +2890,7 @@ function InfiniteCanvasPage() {
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardPromptDetail],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardPromptDetail, updateStoryboardPromptError],
     );
 
     const stopStoryboardPromptGeneration = useCallback(
@@ -6920,6 +6952,15 @@ function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: nu
 
 function storyboardRowSummary(row: string[]) {
     return `镜号 ${row[0] || ""}，画面：${row[2] || ""}，对白：${row[5] || ""}，运镜：${row[7] || ""}`;
+}
+
+function storyboardPromptJsonRepairPrompt(content: string) {
+    return `你是 JSON 修复器。下面内容必须修复为合法 JSON，并严格保留 storyboardPrompt、videoMotionPrompt、assetMentions 三个字段及其原始含义。
+
+只修复控制字符、换行、制表符、逗号、引号、代码围栏或 JSON 前后的多余文字，不得重新创作、扩写或删减提示词。字符串内的换行必须转义。只输出修复后的合法 JSON，不要 Markdown，不要解释。
+
+【待修复内容】
+${content}`;
 }
 
 function parseStoryboardPromptDetailAnswer(content: string, assets: StoryboardAsset[] = []): StoryboardPromptDetail {
