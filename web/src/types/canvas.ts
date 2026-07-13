@@ -25,6 +25,8 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
 export type StoryboardShotTransition = "continue" | "cut" | "montage" | "time-jump";
+export type StoryboardProductionMode = "economy" | "documentary" | "detailed" | "custom";
+export type StoryboardShotRenderMode = "video" | "still";
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 
 export type StoryboardAsset = {
@@ -116,6 +118,16 @@ export type StoryboardShotPlan = {
     endState: string;
     transition: StoryboardShotTransition;
     usePreviousTailFrame: boolean;
+    chapterId?: string;
+    chapterTitle?: string;
+    renderMode?: StoryboardShotRenderMode;
+    motionPriority?: number;
+};
+
+export type StoryboardChapter = {
+    id: string;
+    title: string;
+    shotIndexes: number[];
 };
 
 export type StoryboardPlanningProgress = {
@@ -123,9 +135,24 @@ export type StoryboardPlanningProgress = {
     text: string;
 };
 
+export type StoryboardPlanningCheckpoint = {
+    sourceText: string;
+    completedSourceChunks: number;
+    completedShotBatches: number;
+    beats: StoryboardSourceBeat[];
+    shots: Array<{ row: string[]; plan: StoryboardShotPlan }>;
+};
+
 export type StoryboardAssetProgress = {
     percent: number;
     text: string;
+};
+
+export type StoryboardAssetBatchProgress = {
+    status: "running" | "interrupted" | "stopped" | "completed";
+    total: number;
+    completed: number;
+    failed: number;
 };
 
 export type VideoGenerationProgress = {
@@ -142,13 +169,18 @@ export type CanvasNodeMetadata = {
     storyboardSourceBeats?: StoryboardSourceBeat[];
     storyboardShotPlans?: Record<string, StoryboardShotPlan>;
     storyboardPlanningProgress?: StoryboardPlanningProgress;
+    storyboardPlanningCheckpoint?: StoryboardPlanningCheckpoint;
     storyboardCoverage?: { covered: number; total: number; missingBeatIds: string[] };
+    storyboardProductionMode?: StoryboardProductionMode;
+    storyboardCustomVideoBudget?: number;
+    storyboardChapters?: StoryboardChapter[];
     storyboardPlanningErrorStage?: string;
     storyboardPlanningRawResponse?: string;
     storyboardStep?: StoryboardStep;
     storyboardAssetStyle?: string;
     storyboardAssetError?: string;
     storyboardAssetProgress?: StoryboardAssetProgress;
+    storyboardAssetBatchProgress?: StoryboardAssetBatchProgress;
     storyboardAssets?: StoryboardAsset[];
     storyboardAssetNodeIds?: Record<string, string>;
     storyboardAssetMentionNodeIds?: Record<string, string>;

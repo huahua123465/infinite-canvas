@@ -386,7 +386,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Video && !props.node.metadata?.content) {
         return <VideoNodeContent {...props} />;
     }
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onEditPrompt={props.onEditPrompt} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
@@ -403,7 +403,20 @@ const nodeContentRenderers = {
     [CanvasNodeType.Workspace]: WorkspaceNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" | "theme">) {
+    const progress = node.metadata?.storyboardPlanningProgress;
+    if (node.type === CanvasNodeType.Script && progress) {
+        return (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center" style={{ color: theme.node.text }}>
+                <div className="size-8 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
+                <div className="text-sm font-medium">{progress.text}</div>
+                <div className="h-1.5 w-full max-w-64 overflow-hidden rounded-full" style={{ background: theme.node.stroke }}>
+                    <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%`, background: theme.node.activeStroke }} />
+                </div>
+                <div className="text-xs tabular-nums" style={{ color: theme.node.muted }}>{progress.percent}% · 长篇故事会分批处理，请保持页面打开</div>
+            </div>
+        );
+    }
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
@@ -512,7 +525,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const STORYBOARD_COL_WIDTHS = [64, 70, 300, 76, 210, 260, 180, 190, 250];
-const STORYBOARD_ROW_LIMIT = 120;
+const STORYBOARD_ROW_LIMIT = 300;
 
 function StoryboardTableContent({ node, onContentChange, onStoryboardScreenshotImport }: Pick<NodeContentRendererProps, "node" | "onContentChange" | "onStoryboardScreenshotImport">) {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -768,7 +781,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent node={props.node} theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onEditPrompt={props.onEditPrompt} />
             ) : (
@@ -2132,12 +2145,13 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
     const isReady = filledRows > 0;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
     const assetsDone = assets.length > 0 && readyAssets === assets.length;
-    const promptCount = rows.filter((_, index) => {
+    const dynamicIndexes = rows.map((_, index) => index).filter((index) => node.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
+    const promptCount = dynamicIndexes.filter((index) => {
         const detail = promptDetails[String(index)];
-        return detail?.storyboardPrompt?.trim() || detail?.videoMotionPrompt?.trim();
+        return detail?.videoMotionPrompt?.trim();
     }).length;
-    const promptsDone = promptCount === rows.length && rows.length > 0;
-    const statusText = promptsDone ? `${promptCount} 个提示词已合成` : assets.length ? `${readyAssets}/${assets.length} 个资产已准备` : filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头";
+    const promptsDone = dynamicIndexes.length > 0 && promptCount === dynamicIndexes.length;
+    const statusText = promptsDone ? `${promptCount} 个动态提示词已合成` : promptCount ? `${promptCount}/${dynamicIndexes.length} 个动态提示词已合成` : assets.length ? `${readyAssets}/${assets.length} 个资产已准备` : filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头";
 
     return (
         <div className="flex h-full w-full flex-col justify-between p-5 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>

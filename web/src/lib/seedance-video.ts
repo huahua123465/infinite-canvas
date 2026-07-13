@@ -216,4 +216,4 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
     return "";
 }
 
-export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；建议使用非写实虚拟角色参考图，避免写实真人脸素材。";
+export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；人物参考图应严格保持当前项目指定的真人写实、动画、漫画、3D 或其他视觉风格。";

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
-import { App, Button } from "antd";
+import { App, Button, InputNumber, Select } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -15,7 +15,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type StoryboardProductionMode } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -45,6 +45,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
     const scriptVideoConfig = isScriptNode ? buildScriptVideoConfig(globalConfig, node) : null;
+    const productionMode = node.metadata?.storyboardProductionMode || "documentary";
     const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -219,6 +220,19 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     </>
                 ) : (
                     <>
+                        {isScriptNode ? (
+                            <>
+                                <Select
+                                    value={productionMode}
+                                    className="min-w-[176px]"
+                                    options={STORYBOARD_PRODUCTION_MODE_OPTIONS}
+                                    onChange={(value: StoryboardProductionMode) => onConfigChange(node.id, { storyboardProductionMode: value })}
+                                />
+                                {productionMode === "custom" ? (
+                                    <InputNumber min={1} max={300} value={node.metadata?.storyboardCustomVideoBudget || 50} className="!w-24" addonAfter="动态镜" onChange={(value) => onConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 50 })} />
+                                ) : null}
+                            </>
+                        ) : null}
                         <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
                         {scriptVideoConfig ? (
                             <CanvasVideoSettingsPopover
@@ -311,6 +325,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         </>
     );
 }
+
+const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
+    { value: "economy", label: "节省成本（约30动态镜）" },
+    { value: "documentary", label: "标准纪实（约50动态镜）" },
+    { value: "detailed", label: "完整细拍（80%动态镜）" },
+    { value: "custom", label: "自定义" },
+];
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Script ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";

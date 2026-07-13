@@ -24,7 +24,8 @@ import { buildMangaCharacterPromptNodes } from "@/lib/canvas/manga-character-car
 import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
-import { parsePlannedStoryboardShots, parseStoryboardSourceBeats, plannedShotsForBeats, storyboardBeatBatches, storyboardCoverage, storyboardJsonRepairPrompt, storyboardSourceChunks, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
+import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
+import { parsePlannedStoryboardShots, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBeatBatches, storyboardCoverage, storyboardJsonRepairPrompt, storyboardSourceChunks, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -71,6 +72,7 @@ import {
     type StoryboardAssetKind,
     type StoryboardAudioReference,
     type StoryboardPromptDetail,
+    type StoryboardProductionMode,
     type StoryboardShotPlan,
     type StoryboardSourceBeat,
     type StoryboardVideoReference,
@@ -141,7 +143,7 @@ const CHARACTER_REFERENCE_VARIANTS: CharacterReferenceVariant[] = [
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
 const STORYBOARD_ASSET_LIMIT = 60;
 const STORYBOARD_ASSET_GRID_COLUMNS = 3;
-const STORYBOARD_ROW_LIMIT = 120;
+const STORYBOARD_ROW_LIMIT = 300;
 const STORYBOARD_VIDEO_GRID_COLUMNS = 5;
 const STORYBOARD_WORKSPACE_GAP = 160;
 const STORYBOARD_WORKSPACE_TOP_OFFSET = -40;
@@ -215,7 +217,7 @@ const STORYBOARD_FACT_EXTRACTION_PROMPT = `你是长篇人物传记与叙事故�
 const STORYBOARD_PLANNED_SHOTS_PROMPT = `你是长篇叙事视频分镜导演。请把给定故事事实完整转换为可独立生成的视频片段。
 
 只输出 JSON，不要 Markdown，不要解释：
-{"shots":[{"sourceBeatIds":["B001"],"continuityGroupId":"G001","timeStage":"童年时期","duration":"8s","visual":"画面描述","shotSize":"中景","lighting":"光影氛围","dialogue":"对白旁白","sound":"音效","camera":"单一主运镜","imagePrompt":"首帧画面提示词","startState":"片段开始时人物和空间状态","endState":"片段结束时人物和空间状态","transition":"continue|cut|montage|time-jump","usePreviousTailFrame":false}]}
+{"shots":[{"sourceBeatIds":["B001"],"continuityGroupId":"G001","timeStage":"童年时期","duration":"8s","visual":"画面描述","shotSize":"中景","lighting":"光影氛围","dialogue":"对白旁白","sound":"音效","camera":"单一主运镜","imagePrompt":"首帧画面提示词","startState":"片段开始时人物和空间状态","endState":"片段结束时人物和空间状态","transition":"continue|cut|montage|time-jump","usePreviousTailFrame":false,"motionPriority":3}]}
 
 固定规则：
 1. 每个事实 id 必须至少被一条 shot 的 sourceBeatIds 引用；不得概括删除。一个复杂事实可以拆成多条 shot。
@@ -226,7 +228,8 @@ const STORYBOARD_PLANNED_SHOTS_PROMPT = `你是长篇叙事视频分镜导演。
 6. 对白旁白优先保留原文第一人称叙述和关键原话；没有对白时可留空。
 7. 敏感事实采用克制、明确、不误导的象征画面，例如空摇篮、熄灭的灯、叠好的衣物；不得用一个仍然健康存在的主体替代已经失去的主体。
 8. imagePrompt 写静态首帧，包含准确时期的人物、场景、构图、光线和关键道具；不得把多个时空塞进同一首帧。
-9. 保持事实顺序，输出前检查本批所有 id 均已覆盖。`;
+9. motionPriority 使用 1-5：强动作、关键冲突和情绪高潮为 5；普通生活动作约为 3；空镜、说明和主要由旁白承载的内容为 1。
+10. 保持事实顺序，输出前检查本批所有 id 均已覆盖。`;
 const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本表格，并只输出 Markdown 表格。
 
 表格列必须严格为：
@@ -272,7 +275,7 @@ JSON 格式必须为：
 13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
 14. 如果同一人物存在多个年龄/时期资产，必须根据当前镜头内容选择精确状态的资产，例如年轻时期镜头只用 @白秋妹·年轻时期，成年时期镜头只用 @白秋妹·成年时期；不要用一个状态资产代表另一个年龄，也不要同时引用同一人物多个年龄状态，除非镜头明确是回忆对照或同框设定。
 15. 有参考资产时，不要反复重描述资产已经可见的脸、服装、场景和道具细节；重点写参考资产没有表达清楚的运动、时间、镜头、光线变化、声音和保持不变的内容。
-16. 角色统一按非写实虚拟角色、2.5D、动画或漫画质感处理；保持同一角色的脸型、发型、体态、服装和画风一致，不要生成写实真人脸，也不要在提示词中写任何素材 URI 或内部 ID。
+16. 角色画风必须继承【可编辑项目设定】和资产参考：项目要求写实、真人或纪实时，使用真人演员与真实摄影质感；项目要求动画、漫画、2.5D、3D、水墨等风格时，严格保持对应媒介。不得擅自把写实改成动漫，也不得把动漫改成真人；保持同一角色的脸型、发型、体态、服装和画风一致，不要在提示词中写任何素材 URI 或内部 ID。
 17. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
 18. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
 19. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
@@ -307,7 +310,7 @@ JSON 格式必须为：
 9. 同一人物如果在剧本或分镜中出现不同年龄、时期、身份状态或造型阶段，必须拆成多个 character 资产；不要把童年、青年、成年、老年等多个状态塞进一张角色资产图。命名必须能区分状态，例如“白秋妹·年轻时期”“白秋妹·成年时期”“哥哥·童年”“哥哥·成年”。baseName 保留同一人物本名，lifeStage 写该资产唯一对应的年龄/时期。
 10. 每个 character prompt 只能描述一个角色的一个年龄状态，必须明确“单一角色设定图、只展示该年龄状态、不要出现其他年龄版本、不要出现同一人物成长时间线、不要出现多人合照”。如果需要表现同一角色的多个角度，只能是同一年龄状态的正面、侧面、背面、半身和表情参考。
 11. 角色资产图格式统一为横向角色设定图：干净背景，单一角色，同一脸型、发型、体型、服装、配色和画风；包含正面全身主视图，并可包含侧面、背面、半身头像和表情小参考；不要剧情场景、不要分镜画面、不要文字标注、Logo、水印或边框。
-12. 角色资产安全改写：如果剧本里写“少女、十几岁、未成年、小孩”等，prompt 统一改成“年轻角色/年轻女性角色/年少时期的虚拟角色”；如果写“残疾、残废、瘸、断腿”等，统一改成“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，统一改成“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或痛苦细节。
+12. 角色资产安全改写只调整敏感细节，不得改变项目画风：如果剧本里写“少女、十几岁、未成年、小孩”等，使用“年少时期角色/年少时期女性角色”；如果写“残疾、残废、瘸、断腿”等，使用“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，使用“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或刺激性痛苦细节，也不要因此强制改成虚拟、动画或漫画角色。
 13. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
@@ -1176,7 +1179,7 @@ function InfiniteCanvasPage() {
                           count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
                     : type === CanvasNodeType.Script
-                      ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], model: effectiveConfig.textModel || effectiveConfig.model }
+                      ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], storyboardProductionMode: "documentary", model: effectiveConfig.textModel || effectiveConfig.model }
                       : undefined;
             const newNode = createCanvasNode(type, targetPosition, configMetadata);
 
@@ -2115,11 +2118,17 @@ function InfiniteCanvasPage() {
                 return;
             }
             setRunningNodeId(scriptNode.id);
+            const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
             setStoryboardActionKey("shots:generate");
             const updatePlanningProgress = (percent: number, text: string) => {
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardPlanningErrorStage: undefined, storyboardPlanningRawResponse: undefined, storyboardStep: "shots", storyboardSourceText: sourceText, storyboardPlanningProgress: { percent, text } } } : item)));
             };
             updatePlanningProgress(5, "逐句提取故事事实");
+            const storedCheckpoint = scriptNode.metadata?.storyboardPlanningCheckpoint;
+            const checkpoint = storedCheckpoint?.sourceText === storyText ? storedCheckpoint : undefined;
+            const saveCheckpoint = (completedSourceChunks: number, completedShotBatches: number, beats: StoryboardSourceBeat[], shots: PlannedStoryboardShot[]) => {
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningCheckpoint: { sourceText: storyText, completedSourceChunks, completedShotBatches, beats: beats.map((beat) => ({ ...beat, characters: [...beat.characters] })), shots: shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds] } })) } } } : item)));
+            };
             let failedStage = "";
             let failedRawResponse = "";
             const parsePlanningAnswer = async <T,>(answer: string, stage: string, parser: (content: string) => T) => {
@@ -2129,9 +2138,10 @@ function InfiniteCanvasPage() {
                     updatePlanningProgress(5, `${stage}返回格式异常，正在自动修复 JSON`);
                     let repaired = "";
                     try {
-                        repaired = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(answer) }], () => {});
+                        repaired = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(answer) }], () => {}, { signal: controller.signal });
                         return parser(repaired);
                     } catch (error) {
+                        if (isGenerationCanceled(error)) throw error;
                         failedStage = stage;
                         failedRawResponse = repaired || answer;
                         const reason = error instanceof Error ? error.message : "未知 JSON 错误";
@@ -2141,30 +2151,36 @@ function InfiniteCanvasPage() {
             };
             try {
                 const sourceChunks = storyboardSourceChunks(storyText);
-                const beats: StoryboardSourceBeat[] = [];
-                for (let chunkIndex = 0; chunkIndex < sourceChunks.length; chunkIndex += 1) {
-                    const beatAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FACT_EXTRACTION_PROMPT}\n\n这是原文第 ${chunkIndex + 1}/${sourceChunks.length} 段，只提取本段事实。\n\n【原始故事片段】\n${sourceChunks[chunkIndex]}` }], () => {});
+                const beats: StoryboardSourceBeat[] = checkpoint?.beats.map((beat) => ({ ...beat, characters: [...beat.characters] })) || [];
+                const completedSourceChunks = Math.min(checkpoint?.completedSourceChunks || 0, sourceChunks.length);
+                if (completedSourceChunks) updatePlanningProgress(5 + Math.round((completedSourceChunks / sourceChunks.length) * 15), `从断点继续：已完成 ${completedSourceChunks}/${sourceChunks.length} 段原文`);
+                for (let chunkIndex = completedSourceChunks; chunkIndex < sourceChunks.length; chunkIndex += 1) {
+                    const beatAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FACT_EXTRACTION_PROMPT}\n\n这是原文第 ${chunkIndex + 1}/${sourceChunks.length} 段，只提取本段事实。\n\n【原始故事片段】\n${sourceChunks[chunkIndex]}` }], () => {}, { signal: controller.signal });
                     const parsedBeats = await parsePlanningAnswer(beatAnswer, `事实提取 ${chunkIndex + 1}/${sourceChunks.length}`, parseStoryboardSourceBeats);
                     const chunkBeats = parsedBeats.map((beat, index) => ({ ...beat, id: `B${String(beats.length + index + 1).padStart(3, "0")}` }));
                     beats.push(...chunkBeats);
+                    saveCheckpoint(chunkIndex + 1, 0, beats, []);
                     updatePlanningProgress(5 + Math.round(((chunkIndex + 1) / sourceChunks.length) * 15), `已分析 ${chunkIndex + 1}/${sourceChunks.length} 段原文，提取 ${beats.length} 个事实`);
                 }
                 if (!beats.length) throw new Error("没有从原文提取到故事事实");
                 updatePlanningProgress(20, `已提取 ${beats.length} 个事实，开始分批拆镜`);
-                const plannedShots: PlannedStoryboardShot[] = [];
+                const plannedShots: PlannedStoryboardShot[] = checkpoint?.shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds] } })) || [];
                 const batches = storyboardBeatBatches(beats);
-                for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+                const completedShotBatches = Math.min(checkpoint?.completedShotBatches || 0, batches.length);
+                if (completedShotBatches) updatePlanningProgress(20 + Math.round((completedShotBatches / batches.length) * 60), `从断点继续：已完成 ${completedShotBatches}/${batches.length} 批镜头`);
+                for (let batchIndex = completedShotBatches; batchIndex < batches.length; batchIndex += 1) {
                     const previous = plannedShots.at(-1)?.plan;
                     const answer = await requestImageQuestion(
                         generationConfig,
                         [{ role: "user", content: buildStoryboardShotBatchSource(storyText, batches[batchIndex], batchIndex, previous, false, directorInstruction) }],
                         () => {},
+                        { signal: controller.signal },
                     );
                     const parsedShots = await parsePlanningAnswer(answer, `镜头批次 ${batchIndex + 1}/${batches.length}`, parsePlannedStoryboardShots);
                     const batchShots = plannedShotsForBeats(parsedShots, batches[batchIndex]);
                     if (!batchShots.length) throw new Error(`第 ${batchIndex + 1} 批没有生成可用镜头`);
                     plannedShots.push(...batchShots);
-                    if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要超过 ${STORYBOARD_ROW_LIMIT} 个片段，请缩短输入或拆成多个章节`);
+                    saveCheckpoint(sourceChunks.length, batchIndex + 1, beats, plannedShots);
                     updatePlanningProgress(20 + Math.round(((batchIndex + 1) / batches.length) * 60), `已完成 ${batchIndex + 1}/${batches.length} 批，共 ${plannedShots.length} 个镜头`);
                 }
                 let coverage = storyboardCoverage(beats, plannedShots);
@@ -2175,17 +2191,20 @@ function InfiniteCanvasPage() {
                         generationConfig,
                         [{ role: "user", content: buildStoryboardShotBatchSource(storyText, missingBeats, batches.length, plannedShots.at(-1)?.plan, true, directorInstruction) }],
                         () => {},
+                        { signal: controller.signal },
                     );
                     const repairedShots = await parsePlanningAnswer(repairAnswer, "遗漏事实补镜", parsePlannedStoryboardShots);
                     plannedShots.push(...plannedShotsForBeats(repairedShots, missingBeats));
                     coverage = storyboardCoverage(beats, plannedShots);
                 }
                 if (coverage.missingBeatIds.length) throw new Error(`仍有 ${coverage.missingBeatIds.length} 个原文事实未生成镜头：${coverage.missingBeatIds.join("、")}`);
-                if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要 ${plannedShots.length} 个片段，超过 ${STORYBOARD_ROW_LIMIT} 行上限，请拆成多个章节`);
+                if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要 ${plannedShots.length} 个片段，超过当前 ${STORYBOARD_ROW_LIMIT} 镜安全上限，请拆成上下集`);
                 const beatOrder = new Map(beats.map((beat, index) => [beat.id, index]));
                 plannedShots.sort((first, second) => Math.min(...first.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)) - Math.min(...second.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)));
-                const normalized = renumberStoryboardRowsForCanvas(plannedShots.map((item) => item.row));
-                const shotPlans = Object.fromEntries(plannedShots.map((item, index) => [String(index), item.plan]));
+                const productionMode = scriptNode.metadata?.storyboardProductionMode || "documentary";
+                const production = planStoryboardProduction(plannedShots, beats, productionMode, scriptNode.metadata?.storyboardCustomVideoBudget);
+                const normalized = renumberStoryboardRowsForCanvas(production.shots.map((item) => item.row));
+                const shotPlans = Object.fromEntries(production.shots.map((item, index) => [String(index), item.plan]));
                 updatePlanningProgress(96, "覆盖检查通过，写入完整分镜");
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -2201,7 +2220,10 @@ function InfiniteCanvasPage() {
                                       storyboardSourceBeats: beats,
                                       storyboardShotPlans: shotPlans,
                                       storyboardCoverage: coverage,
+                                      storyboardProductionMode: productionMode,
+                                      storyboardChapters: production.chapters,
                                       storyboardPlanningProgress: undefined,
+                                      storyboardPlanningCheckpoint: undefined,
                                       storyboardPlanningErrorStage: undefined,
                                       storyboardPlanningRawResponse: undefined,
                                       storyboardAssets: [],
@@ -2214,17 +2236,23 @@ function InfiniteCanvasPage() {
                             : item,
                     ),
                 );
-                message.success(`已完整覆盖 ${coverage.total} 个故事事实，生成 ${normalized.length} 个镜头`);
+                message.success(`已覆盖 ${coverage.total} 个故事事实，共 ${normalized.length} 镜：${production.videoCount} 个动态视频，${production.stillCount} 个静态分镜`);
             } catch (error) {
+                if (isGenerationCanceled(error)) {
+                    message.info("已停止完整分镜生成，当前断点已保留");
+                    setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined, storyboardPlanningProgress: undefined } } : item)));
+                    return;
+                }
                 const errorDetails = error instanceof Error ? error.message : "生成镜头失败";
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, storyboardPlanningProgress: undefined, storyboardPlanningErrorStage: failedStage || undefined, storyboardPlanningRawResponse: failedRawResponse || undefined } } : item)));
             } finally {
+                finishGenerationRequest(scriptNode.id, controller);
                 setStoryboardActionKey(null);
                 setRunningNodeId((current) => (current === scriptNode.id ? null : current));
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
     );
 
     const prepareStoryboardAssets = useCallback(
@@ -2318,7 +2346,8 @@ function InfiniteCanvasPage() {
             const scriptNode = withStoryboardVideoSettings(node);
             if (scriptNode !== node) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
             const asset = scriptNode.metadata?.storyboardAssets?.find((item) => item.id === assetId);
-            const prompt = storyboardAssetImagePrompt(asset);
+            const hasReferenceImage = Boolean(asset?.kind === "character" && (asset.imageUrl || asset.storageKey));
+            const prompt = storyboardAssetImagePrompt(asset, { hasReferenceImage });
             if (!asset || !prompt) {
                 message.warning("请先填写资产提示词");
                 return;
@@ -2329,11 +2358,16 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(`asset:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { imageUrl: undefined, storageKey: undefined, status: NODE_STATUS_LOADING, errorDetails: undefined });
+            updateStoryboardAsset(scriptNode.id, assetId, { status: NODE_STATUS_LOADING, errorDetails: undefined });
             const targetId = `storyboard-asset:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const image = await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
+                const reference = hasReferenceImage ? await storyboardAssetReferenceImage(asset) : null;
+                if (hasReferenceImage && !reference) throw new Error("无法读取当前角色参考图，请重新上传后再生成");
+                const image = await (reference
+                    ? requestEdit(generationConfig, prompt, [reference], undefined, { signal: controller.signal })
+                    : requestGeneration(generationConfig, prompt, { signal: controller.signal })
+                ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
                 updateStoryboardAsset(scriptNode.id, assetId, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
                 message.success("资产图已生成");
@@ -2594,7 +2628,9 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey("asset:all");
+            setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardAssetBatchProgress: { status: "running", total: scriptNode.metadata?.storyboardAssets?.length || assets.length, completed: (scriptNode.metadata?.storyboardAssets || []).filter(storyboardAssetReady).length, failed: 0 } } } : item)));
             let stopped = false;
+            let failedCount = 0;
             const batchController = new AbortController();
             try {
                 await runLimited(assets, STORYBOARD_ASSET_BATCH_CONCURRENCY, async (asset) => {
@@ -2612,19 +2648,33 @@ function InfiniteCanvasPage() {
                         const image = await requestGeneration(assetConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                         const uploaded = await uploadImage(image.dataUrl);
                         updateStoryboardAsset(scriptNode.id, asset.id, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
+                        setNodes((prev) => prev.map((item) => (item.id === scriptNode.id && item.metadata?.storyboardAssetBatchProgress ? { ...item, metadata: { ...item.metadata, storyboardAssetBatchProgress: { ...item.metadata.storyboardAssetBatchProgress, completed: item.metadata.storyboardAssetBatchProgress.completed + 1 } } } : item)));
                     } catch (error) {
                         if (isGenerationCanceled(error)) {
                             stopped = true;
                             updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_IDLE, errorDetails: undefined });
                             return;
                         }
+                        failedCount += 1;
                         updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_ERROR, errorDetails: friendlyGenerationError(error, "生成资产图失败") });
+                        setNodes((prev) => prev.map((item) => (item.id === scriptNode.id && item.metadata?.storyboardAssetBatchProgress ? { ...item, metadata: { ...item.metadata, storyboardAssetBatchProgress: { ...item.metadata.storyboardAssetBatchProgress, failed: item.metadata.storyboardAssetBatchProgress.failed + 1 } } } : item)));
                     } finally {
                         finishGenerationRequest(targetId, controller);
                     }
                 });
-                if (!stopped && !batchController.signal.aborted) message.success("资产图批量生成完成");
+                if (!stopped && !batchController.signal.aborted) {
+                    if (failedCount) message.warning(`本轮生成完成，${failedCount} 个资产失败，可点击继续生成剩余资产`);
+                    else message.success("资产图批量生成完成");
+                }
             } finally {
+                setNodes((prev) => prev.map((item) => {
+                    if (item.id !== scriptNode.id || !item.metadata?.storyboardAssetBatchProgress) return item;
+                    const currentAssets = item.metadata.storyboardAssets || [];
+                    const completed = currentAssets.filter(storyboardAssetReady).length;
+                    const failed = currentAssets.filter((asset) => asset.status === NODE_STATUS_ERROR).length;
+                    const status = completed === currentAssets.length ? "completed" : stopped || batchController.signal.aborted ? "stopped" : "interrupted";
+                    return { ...item, metadata: { ...item.metadata, storyboardAssetBatchProgress: { status, total: currentAssets.length, completed, failed } } };
+                }));
                 setStoryboardActionKey(null);
             }
         },
@@ -2648,6 +2698,12 @@ function InfiniteCanvasPage() {
                                       ...(asset.sceneSheetStatus === NODE_STATUS_LOADING ? { sceneSheetStatus: NODE_STATUS_IDLE, sceneSheetError: undefined } : {}),
                                       ...(asset.voiceAudioStatus === NODE_STATUS_LOADING ? { voiceAudioStatus: NODE_STATUS_IDLE, voiceAudioError: undefined } : {}),
                                   })),
+                                  storyboardAssetBatchProgress: {
+                                      status: "stopped",
+                                      total: item.metadata?.storyboardAssets?.length || 0,
+                                      completed: (item.metadata?.storyboardAssets || []).filter(storyboardAssetReady).length,
+                                      failed: (item.metadata?.storyboardAssets || []).filter((asset) => asset.status === NODE_STATUS_ERROR).length,
+                                  },
                               },
                           }
                         : item,
@@ -2765,30 +2821,50 @@ function InfiniteCanvasPage() {
 
     const composeStoryboardFinalPrompt = useCallback(
         async (node: CanvasNodeData, rowIndex?: number) => {
-            const rows = parseStoryboardRows(node.metadata?.storyboardRows);
-            const indexes = rowIndex === undefined ? rows.map((_, index) => index) : [rowIndex];
-            if (!indexes.length) return message.info("没有需要合成提示词的镜头");
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "text"), model: node.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+            const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+            const dynamicIndexes = rows.map((_, index) => index).filter((index) => scriptNode.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
+            const indexes = rowIndex === undefined
+                ? dynamicIndexes.filter((index) => !scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim())
+                : [rowIndex];
+            if (!indexes.length) return message.info(dynamicIndexes.length ? "动态镜头提示词已全部合成" : "当前制作模式没有动态镜头");
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
             setStoryboardActionKey(rowIndex === undefined ? "prompt:all" : `prompt:${rowIndex}`);
+            setRunningNodeId(scriptNode.id);
+            const targetId = `storyboard-prompts:${scriptNode.id}`;
+            const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
+            let completed = 0;
             try {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
                 for (const index of indexes) {
-                    const source = buildStoryboardPromptComposeSource(node, rows, index);
-                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {});
-                    updateStoryboardPromptDetail(node.id, index, parseStoryboardPromptDetailAnswer(answer, node.metadata?.storyboardAssets || []));
+                    const source = buildStoryboardPromptComposeSource(scriptNode, rows, index);
+                    const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {}, { signal: controller.signal });
+                    updateStoryboardPromptDetail(scriptNode.id, index, parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []));
+                    completed += 1;
                 }
-                message.success(rowIndex === undefined ? "合成提示词已批量生成" : "合成提示词已生成");
+                message.success(rowIndex === undefined ? `已合成 ${completed} 个动态镜头提示词` : "合成提示词已生成");
             } catch (error) {
-                message.error(friendlyGenerationError(error, "合成提示词失败"));
+                if (isGenerationCanceled(error)) message.info(`已暂停合成，本轮完成 ${completed} 个，已生成结果均已保留`);
+                else message.error(friendlyGenerationError(error, completed ? `合成中断，本轮已保留 ${completed} 个结果` : "合成提示词失败"));
             } finally {
+                finishGenerationRequest(targetId, controller);
+                setRunningNodeId(null);
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardPromptDetail],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardPromptDetail],
+    );
+
+    const stopStoryboardPromptGeneration = useCallback(
+        (node: CanvasNodeData) => {
+            stopGenerationByRunningId(node.id);
+            setStoryboardActionKey(null);
+        },
+        [stopGenerationByRunningId],
     );
 
     const generateStoryboardImage = useCallback(
@@ -2908,9 +2984,10 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
             }
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
-            const indexes = rows.map((_, index) => (scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() ? index : -1)).filter((index) => index >= 0);
+            const plans = scriptNode.metadata?.storyboardShotPlans || {};
+            const indexes = rows.map((_, index) => (plans[String(index)]?.renderMode !== "still" && scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() ? index : -1)).filter((index) => index >= 0);
             if (!indexes.length) {
-                message.warning("请先合成视频运动提示词");
+                message.warning("当前制作模式没有可用的动态镜头，请先合成动态镜头的视频运动提示词");
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
@@ -3044,7 +3121,20 @@ function InfiniteCanvasPage() {
         setNodes((prev) => {
             const sourceNode = prev.find((node) => node.id === nodeId);
             if (!sourceNode) return prev;
-            const nextSourceNode = applyNodeConfigPatch(sourceNode, patch);
+            let effectivePatch = patch;
+            const productionChanged = sourceNode.type === CanvasNodeType.Script && (patch.storyboardProductionMode !== undefined || patch.storyboardCustomVideoBudget !== undefined);
+            if (productionChanged && sourceNode.metadata?.storyboardSourceBeats?.length && sourceNode.metadata?.storyboardShotPlans) {
+                const rows = parseStoryboardRows(sourceNode.metadata.storyboardRows);
+                const planned = rows.flatMap((row, index) => {
+                    const plan = sourceNode.metadata?.storyboardShotPlans?.[String(index)];
+                    return plan ? [{ row, plan: { ...plan } }] : [];
+                });
+                const mode = (patch.storyboardProductionMode || sourceNode.metadata.storyboardProductionMode || "documentary") as StoryboardProductionMode;
+                const customBudget = patch.storyboardCustomVideoBudget ?? sourceNode.metadata.storyboardCustomVideoBudget;
+                const production = planStoryboardProduction(planned, sourceNode.metadata.storyboardSourceBeats, mode, customBudget);
+                effectivePatch = { ...patch, storyboardShotPlans: Object.fromEntries(production.shots.map((item, index) => [String(index), item.plan])), storyboardChapters: production.chapters };
+            }
+            const nextSourceNode = applyNodeConfigPatch(sourceNode, effectivePatch);
             const videoSettingsPatch = storyboardVideoSettingsOnlyPatch(patch);
             const syncStoryboardDrafts = sourceNode.type === CanvasNodeType.Script && Object.keys(videoSettingsPatch).length > 0;
             const storyboardRows = syncStoryboardDrafts ? parseStoryboardRows(nextSourceNode.metadata?.storyboardRows) : [];
@@ -4570,7 +4660,14 @@ function InfiniteCanvasPage() {
                                         mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || []}
                                         onPromptChange={handleNodePromptChange}
                                         onConfigChange={handleConfigNodeChange}
-                                        onGenerate={handleGenerateNode}
+                                        onGenerate={(nodeId, mode, prompt, options) => {
+                                            const target = nodesRef.current.find((item) => item.id === nodeId);
+                                            if (target?.type === CanvasNodeType.Script) {
+                                                void generateStoryboardShotsFromInputs(target);
+                                                return;
+                                            }
+                                            void handleGenerateNode(nodeId, mode, prompt, options);
+                                        }}
                                         onStop={confirmStopGeneration}
                                         onPromptAssistant={openPromptAssistant}
                                         onApplyPromptAssistantPending={applyPendingPromptAssistantResult}
@@ -4611,7 +4708,7 @@ function InfiniteCanvasPage() {
                             onStoryboardScreenshotImport={importStoryboardScreenshot}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
-                            onRetry={(node, patch) => void handleRetryNode(node, patch)}
+                            onRetry={(node, patch) => void (node.type === CanvasNodeType.Script ? generateStoryboardShotsFromInputs(node) : handleRetryNode(node, patch))}
                             onEditPrompt={openNodePromptPanel}
                             onGenerateImage={generateImageFromTextNode}
                             onOpenScript={(node) => setScriptNodeId(node.id)}
@@ -4666,7 +4763,7 @@ function InfiniteCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onExportScriptAssets={(node) => void exportStoryboardAssetsToCanvas(node)}
                     onBatchGenerateScriptVideos={(node) => void batchGenerateStoryboardVideos(node)}
-                    onRetry={(node) => void (node.type === CanvasNodeType.Script && node.metadata?.storyboardStep === "shots" ? generateStoryboardShotsFromInputs(node) : handleRetryNode(node))}
+                    onRetry={(node) => void (node.type === CanvasNodeType.Script ? generateStoryboardShotsFromInputs(node) : handleRetryNode(node))}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
@@ -4767,6 +4864,7 @@ function InfiniteCanvasPage() {
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onComposeFinalPrompt={(node, rowIndex) => void composeStoryboardFinalPrompt(node, rowIndex)}
+                    onStopPromptGeneration={stopStoryboardPromptGeneration}
                     onPromptDetailChange={updateStoryboardPromptDetail}
                     onModelChange={updateStoryboardModel}
                     onGenerateImage={(node, rowIndex) => void generateStoryboardImage(node, rowIndex)}
@@ -5536,6 +5634,13 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
 
 function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) => {
+        const hasInterruptedAssets = node.type === CanvasNodeType.Script && (node.metadata?.storyboardAssets || []).some((asset) => asset.status === NODE_STATUS_LOADING);
+        if (node.type === CanvasNodeType.Script && (node.metadata?.storyboardAssetBatchProgress?.status === "running" || hasInterruptedAssets)) {
+            const assets = (node.metadata.storyboardAssets || []).map((asset) => asset.status === NODE_STATUS_LOADING ? { ...asset, status: NODE_STATUS_IDLE, errorDetails: undefined } : asset);
+            const completed = assets.filter(storyboardAssetReady).length;
+            const failed = assets.filter((asset) => asset.status === NODE_STATUS_ERROR).length;
+            return { ...node, metadata: { ...node.metadata, storyboardAssets: assets, storyboardAssetBatchProgress: { status: "interrupted", total: assets.length, completed, failed } } };
+        }
         if (node.metadata?.status !== NODE_STATUS_LOADING) return node;
         if (node.type === CanvasNodeType.Video && node.metadata.videoTaskId && !node.metadata.content) {
             return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_LOADING, errorDetails: "页面刷新中断了结果接收，正在查询原任务。", videoGenerationProgress: { percent: 16, text: `正在恢复平台任务：${node.metadata.videoTaskId}`, stage: "submitted" as const } } };
@@ -5808,55 +5913,16 @@ function createLinkedAbortController(parent: AbortController) {
     return controller;
 }
 
-function storyboardAssetImagePrompt(asset?: StoryboardAsset) {
-    if (!asset) return "";
-    const prompt = safetyNeutralStoryboardPrompt(asset.prompt.trim() || asset.description.trim());
-    if (!prompt) return "";
-    if (asset.kind === "scene") {
-        return `${prompt}\n\n资产类型：纯场景空镜。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影、路人或任何活人；只呈现场景空间、环境陈设、道具位置、光线、材质和地域时代质感。`;
-    }
-    if (asset.kind === "prop") {
-        return `${prompt}\n\n资产类型：纯道具静物。画面中禁止出现人物、角色、人脸、身体、手部、背影、剪影或任何人持握；只呈现道具本身及其材质、磨损、摆放环境和光影。若道具是遗照、照片、证件或奖状，可以呈现道具内部的照片/证件内容，但现场画面不能出现真实人物。`;
-    }
-    if (asset.kind === "character") {
-        return storyboardCharacterSheetPrompt(asset, prompt);
-    }
-    return prompt;
-}
-
-function storyboardCharacterSheetPrompt(asset: StoryboardAsset, prompt: string) {
-    const stage = asset.lifeStage?.trim() || inferStoryboardCharacterLifeStage(asset);
-    const baseName = asset.baseName?.trim() || asset.name.split(/[·・]/)[0] || asset.name || "角色";
-    return [
-        "生成一张统一格式的非写实虚拟角色设定图，横向 16:9 宽画布。",
-        `角色：${asset.name || baseName}${stage ? `；年龄/时期状态：${stage}` : ""}。`,
-        `角色原始设定：${prompt}`,
-        "版式要求：只展示这一个角色的这一个年龄/时期状态；允许同一张图里出现同一角色的正面全身主视图、侧面、背面、半身头像和少量表情参考，但必须全部是同一年龄状态、同一张脸、同一发型、同一体型、同一套服装、同一配色和同一画风。",
-        "主视图要求：正面全身站姿要完整清晰，脸、发型、体型、鞋子和整套服装都可见；辅助视图用于补充侧面轮廓、背面服装结构和表情，不要抢占主视图。",
-        "严格禁止：不要出现童年/成年/老年多个版本，不要生成成长时间线，不要出现其他年龄状态，不要多人合照，不要亲属或路人，不要剧情场景，不要分镜画面，不要把角色放进复杂环境。",
-        "风格要求：保持 2.5D、动画或漫画质感，避免写实真人脸、真人皮肤质感、真人演员照片感和真人脸部特写；行动不便、朴素衣着和生活处境只作为温和视觉特征，不要伤害细节、暴力痕迹、血迹、裸露或痛苦表情。",
-        "画面要求：背景简洁干净，光线柔和，角色轮廓清楚；不要添加任何文字、视角标签、说明字、Logo、水印、边框、UI 或海报标题。",
-    ].join("\n");
-}
-
-function inferStoryboardCharacterLifeStage(asset: StoryboardAsset) {
-    const source = [asset.name, asset.description, asset.prompt].filter(Boolean).join(" ");
-    if (/童年|儿童|小孩|小时候|年少|少年|少女|年轻|青年|年轻女性角色|年轻角色/.test(source)) return "年少/年轻时期";
-    if (/老年|老人|年迈|白发|晚年/.test(source)) return "老年时期";
-    if (/中年|父亲|母亲|爸爸|妈妈/.test(source)) return "中年时期";
-    if (/成年|成人/.test(source)) return "成年时期";
-    return "";
-}
-
 async function storyboardAssetReferenceImage(asset: StoryboardAsset): Promise<ReferenceImage | null> {
-    const source = asset.imageUrl || (asset.storageKey ? await resolveImageUrl(asset.storageKey, "") : "");
-    if (!source) return null;
+    if (!asset.imageUrl && !asset.storageKey) return null;
+    const dataUrl = await imageToDataUrl({ url: asset.imageUrl, storageKey: asset.storageKey });
+    if (!dataUrl) return null;
     return {
         id: asset.id,
-        name: `${asset.name || "scene"}.png`,
+        name: `${asset.name || "asset"}.png`,
         type: "image/png",
-        dataUrl: source,
-        url: source,
+        dataUrl,
+        url: asset.imageUrl,
         storageKey: asset.storageKey,
     };
 }
@@ -6938,12 +7004,8 @@ function alignStoryboardNodeAssetsWithCurrentStyle(node: CanvasNodeData): Canvas
 }
 
 function storyboardExplicitStyleForSource(source: string) {
-    const styleLine = source.match(/整体风格[^\n]*/)?.[0] || "";
-    if (styleLine) {
-        const styles = Array.from(styleLine.matchAll(/【([^】]+)】/g)).map((match) => match[1].trim()).filter(Boolean);
-        if (styles.length) return styles.join("，");
-    }
-    return "";
+    const styleLine = source.match(/(?:视觉风格|整体风格)\s*[：:]\s*([^\n]+)/)?.[1] || "";
+    return styleLine.trim();
 }
 
 function collectStoryboardAssetRecords(data: Record<string, unknown> | unknown[]): Array<{ item: unknown; kind?: StoryboardAssetKind }> {

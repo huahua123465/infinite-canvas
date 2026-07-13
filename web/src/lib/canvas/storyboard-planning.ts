@@ -1,4 +1,4 @@
-import type { StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
+import type { StoryboardChapter, StoryboardProductionMode, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
 
 export const STORYBOARD_BEAT_BATCH_SIZE = 10;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
@@ -62,9 +62,62 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
                 endState: text(item.endState),
                 transition: ["continue", "cut", "montage", "time-jump"].includes(transition) ? transition : "cut",
                 usePreviousTailFrame: item.usePreviousTailFrame === true,
+                motionPriority: Math.max(1, Math.min(5, Number(item.motionPriority) || 3)),
             },
         }];
     });
+}
+
+export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number) {
+    const beatById = new Map(beats.map((beat) => [beat.id, beat]));
+    const chapters: StoryboardChapter[] = [];
+    let currentChapter: StoryboardChapter | undefined;
+    let currentKey = "";
+    shots.forEach((shot, index) => {
+        const beat = beatById.get(shot.plan.sourceBeatIds[0]);
+        const title = beat?.phase || beat?.timeStage || `故事阶段 ${chapters.length + 1}`;
+        const baseKey = title.trim() || "未命名阶段";
+        if (!currentChapter || currentKey !== baseKey || currentChapter.shotIndexes.length >= 36) {
+            const sameTitleCount = chapters.filter((item) => item.title === baseKey || item.title.startsWith(`${baseKey}（`)).length;
+            currentChapter = { id: `C${String(chapters.length + 1).padStart(2, "0")}`, title: sameTitleCount ? `${baseKey}（${sameTitleCount + 1}）` : baseKey, shotIndexes: [] };
+            currentKey = baseKey;
+            chapters.push(currentChapter);
+        }
+        currentChapter.shotIndexes.push(index);
+        shot.plan.chapterId = currentChapter.id;
+        shot.plan.chapterTitle = currentChapter.title;
+    });
+    const target = storyboardVideoBudget(mode, shots.length, customBudget);
+    const selected = new Set<number>();
+    chapters.forEach((chapter) => {
+        const best = [...chapter.shotIndexes].sort((a, b) => shotMotionScore(shots[b], beatById) - shotMotionScore(shots[a], beatById))[0];
+        if (best !== undefined) selected.add(best);
+    });
+    [...shots.keys()]
+        .sort((a, b) => shotMotionScore(shots[b], beatById) - shotMotionScore(shots[a], beatById))
+        .forEach((index) => {
+            if (selected.size < target) selected.add(index);
+        });
+    shots.forEach((shot, index) => {
+        shot.plan.renderMode = selected.has(index) ? "video" : "still";
+    });
+    shots.forEach((shot, index) => {
+        const previous = shots[index - 1]?.plan;
+        shot.plan.usePreviousTailFrame = Boolean(shot.plan.renderMode === "video" && previous?.renderMode === "video" && previous.chapterId === shot.plan.chapterId && previous.continuityGroupId === shot.plan.continuityGroupId && shot.plan.transition === "continue" && shot.plan.usePreviousTailFrame);
+    });
+    return { shots, chapters, videoCount: selected.size, stillCount: Math.max(0, shots.length - selected.size) };
+}
+
+export function storyboardVideoBudget(mode: StoryboardProductionMode, total: number, customBudget?: number) {
+    const requested = mode === "economy" ? 30 : mode === "detailed" ? Math.max(80, Math.ceil(total * 0.8)) : mode === "custom" ? Number(customBudget) || 50 : 50;
+    return Math.max(1, Math.min(total, requested));
+}
+
+function shotMotionScore(shot: PlannedStoryboardShot, beatById: Map<string, StoryboardSourceBeat>) {
+    const beats = shot.plan.sourceBeatIds.map((id) => beatById.get(id)).filter(Boolean) as StoryboardSourceBeat[];
+    const direct = beats.some((beat) => beat.treatment === "direct") ? 2 : 0;
+    const emotional = beats.some((beat) => /决定|冲突|离开|追|跪|打|伤|死|哭|抱|逃|走|病|寻找|保护|失去/.test(`${beat.event}${beat.emotion}`)) ? 2 : 0;
+    return (shot.plan.motionPriority || 3) * 10 + direct + emotional;
 }
 
 export function storyboardBeatBatches(beats: StoryboardSourceBeat[]) {
