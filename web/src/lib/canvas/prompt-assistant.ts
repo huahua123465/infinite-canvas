@@ -73,6 +73,42 @@ export function buildPromptAssistantInstruction(prompt: string, requirement: str
     ].join("\n");
 }
 
+export function buildStoryboardProjectSettingsInstruction(prompt: string, requirement: string, storySource: string) {
+    return [
+        "你是影视项目导演设定助手。请根据连接剧本的真实内容和用户追加要求，生成一份跨全片统一、可直接粘贴到 Script 节点的项目设定。",
+        "只输出【可编辑项目设定】正文，不要解释、分析、Markdown 表格、分镜、资产清单或复制使用说明。",
+        "必须忠实原故事事实、人物关系、时间顺序和结果；根据剧本证据判断题材、时代、地域、人物年龄阶段、情绪底色和声音策略。",
+        "用户明确指定的画风、视角、色调、镜头节奏、对白旁白、配乐音效、字幕和视频规格优先；未指定项目填写“根据剧本自动判断”，不要擅自添加强风格。",
+        "敏感事实只能改变视觉呈现方式，不能改变事实结果。角色跨年龄或身体状态变化时必须使用独立时期资产。",
+        "固定输出格式如下，所有字段必须保留；字段名使用纯文本行首，不要添加加粗、列表符号、序号或标题井号：",
+        "",
+        "【可编辑项目设定】",
+        "",
+        "叙事原则：",
+        "视觉风格：",
+        "叙事视角：",
+        "色调与光影：",
+        "人物一致性：",
+        "场景一致性：",
+        "镜头与节奏：",
+        "对白与旁白：",
+        "配乐与音效：",
+        "字幕与屏幕文字：",
+        "安全表达：",
+        "画面约束：",
+        "视频规格：",
+        "",
+        "【当前项目设定】",
+        prompt.trim() || "（使用通用默认设定）",
+        "",
+        "【用户追加要求】",
+        requirement.trim() || "保持自动判断。",
+        "",
+        "【连接剧本】",
+        storySource.trim() || "（未读取到连接剧本，不得编造具体故事设定）",
+    ].join("\n");
+}
+
 export function sanitizePromptPollution(prompt: string) {
     return normalizePrompt(
         prompt

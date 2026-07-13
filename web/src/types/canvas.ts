@@ -24,6 +24,7 @@ export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
+export type StoryboardShotTransition = "continue" | "cut" | "montage" | "time-jump";
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 
 export type StoryboardAsset = {
@@ -95,6 +96,33 @@ export type StoryboardPromptDetail = {
     assetMentionLinks?: StoryboardAssetMentionLink[];
 };
 
+export type StoryboardSourceBeat = {
+    id: string;
+    sourceText: string;
+    phase: string;
+    timeStage: string;
+    location: string;
+    characters: string[];
+    event: string;
+    emotion: string;
+    treatment: "direct" | "symbolic" | "voiceover";
+};
+
+export type StoryboardShotPlan = {
+    sourceBeatIds: string[];
+    continuityGroupId: string;
+    timeStage: string;
+    startState: string;
+    endState: string;
+    transition: StoryboardShotTransition;
+    usePreviousTailFrame: boolean;
+};
+
+export type StoryboardPlanningProgress = {
+    percent: number;
+    text: string;
+};
+
 export type StoryboardAssetProgress = {
     percent: number;
     text: string;
@@ -111,6 +139,12 @@ export type CanvasNodeMetadata = {
     content?: string;
     storyboardSourceText?: string;
     storyboardRows?: string[][];
+    storyboardSourceBeats?: StoryboardSourceBeat[];
+    storyboardShotPlans?: Record<string, StoryboardShotPlan>;
+    storyboardPlanningProgress?: StoryboardPlanningProgress;
+    storyboardCoverage?: { covered: number; total: number; missingBeatIds: string[] };
+    storyboardPlanningErrorStage?: string;
+    storyboardPlanningRawResponse?: string;
     storyboardStep?: StoryboardStep;
     storyboardAssetStyle?: string;
     storyboardAssetError?: string;

@@ -192,7 +192,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 {isScriptNode ? null : <CanvasPromptLibrary onSelect={updatePrompt} />}
                 {onPromptAssistant ? (
                     <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
-                        AI改提示词
+                        {isScriptNode ? "AI生成项目设定" : "AI改提示词"}
                     </Button>
                 ) : null}
                 {mode === "image" ? (

@@ -23,7 +23,8 @@ import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType }
 import { buildMangaCharacterPromptNodes } from "@/lib/canvas/manga-character-card-import";
 import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
-import { buildPromptAssistantInstruction } from "@/lib/canvas/prompt-assistant";
+import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
+import { parsePlannedStoryboardShots, parseStoryboardSourceBeats, plannedShotsForBeats, storyboardBeatBatches, storyboardCoverage, storyboardJsonRepairPrompt, storyboardSourceChunks, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -70,6 +71,8 @@ import {
     type StoryboardAssetKind,
     type StoryboardAudioReference,
     type StoryboardPromptDetail,
+    type StoryboardShotPlan,
+    type StoryboardSourceBeat,
     type StoryboardVideoReference,
     type ConnectionHandle,
     type ContextMenuState,
@@ -136,28 +139,94 @@ const CHARACTER_REFERENCE_VARIANTS: CharacterReferenceVariant[] = [
     { id: "clothing-detail", title: "服装细节", target: "服装细节参考图，聚焦上衣、领口、袖口、腰部配饰、鞋子或纹理材质，保持与主视图完全同一套服装。" },
 ];
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
+const STORYBOARD_ASSET_LIMIT = 60;
 const STORYBOARD_ASSET_GRID_COLUMNS = 3;
 const STORYBOARD_ROW_LIMIT = 120;
 const STORYBOARD_VIDEO_GRID_COLUMNS = 5;
 const STORYBOARD_WORKSPACE_GAP = 160;
 const STORYBOARD_WORKSPACE_TOP_OFFSET = -40;
-const STORYBOARD_SCRIPT_PRESET = `你是短视频分镜导演。请把下面连接的剧本拆成可拍摄、可生成视频的分镜脚本。
+const STORYBOARD_SCRIPT_PRESET = `【可编辑项目设定】
 
-只输出 Markdown 表格，不要解释，不要标题。
+叙事原则：忠实连接剧本的原始事实、人物关系、事件顺序和情绪变化，不编造冲突剧情。
+视觉风格：根据剧本的题材、时代、地域和情绪自动判断；若剧本另有明确画风要求，以剧本要求为准。
+叙事视角：默认第三人称客观叙事；若剧本明确要求第一人称、POV、访谈或其他视角，以剧本要求为准。
+色调与光影：根据故事阶段和情绪自动判断，保持光源方向、色温与时代环境合理。
+人物一致性：同一人物在相同年龄与状态下保持脸型、发型、体态、服装和身份特征一致；年龄或身体状态变化时使用独立时期资产。
+场景一致性：同一连续场景保持空间结构、陈设、光源方向、天气和时间推进一致；跨时间或地点时明确新起场景。
+镜头与节奏：根据剧情自动选择景别、单一主运镜和节奏；每镜只表现一个主要可见事件。
+对白与旁白：使用剧本语言，优先保留关键原话；没有必要时不强加对白。
+配乐与音效：环境音、动作音和配乐服务当前情绪，不盖过对白。
+字幕与屏幕文字：默认不生成；剧本明确要求时才允许字幕、章节标题、日期或地点文字。
+安全表达：敏感事实可以使用克制、象征化的视觉方式，但不得改变事实结果或制造相反含义。
+画面约束：除非剧本明确要求，否则保持无字幕、无文字、无 Logo、无水印。
+视频规格：画幅、分辨率、单镜时长和是否生成声音优先使用 Script 节点当前视频设置。
 
-表格列必须严格为：
-| 镜号 | 时长 | 画面描述 | 景别 | 光影氛围 | 对白旁白 | 音效 | 运镜 | 分镜画面提示词 |
+【AI定制说明】
 
-要求：
-1. 按剧情长度和节奏拆分镜头，短剧本默认 9 到 15 个镜头，长剧本可以超过 30 个镜头，不要为了固定数量删减关键剧情。
-2. 每个镜头时长用 5s、8s、10s、12s 这类格式。
-3. 画面描述要具体到人物动作、环境、表情和关键物件。
-4. 景别填写远景/全景/中景/近景/特写/空镜等。
-5. 对白旁白优先提炼原文里的第一人称旁白，可适当压缩。
-6. 音效写环境声、动作声、音乐情绪。
-7. 运镜写固定机位、推镜、跟拍、摇镜、手持轻晃等。
-8. 分镜画面提示词用于首帧图/分镜图画面初稿，要把人物、场景、动作、情绪、镜头、光影写完整；不要把它写成视频最终生成提示词。
-9. 不要编造与剧本冲突的新剧情。`;
+将本模板完整复制给 AI，并在“用户追加要求”中写入想要的效果。AI负责把零散要求整理成可直接粘回 Script 节点的完整项目设定，不生成分镜。
+
+可定制项目：
+- 视觉风格：写实电影、纪实、动画、漫画、水墨、黏土、定格、2.5D、3D、皮克斯式动画质感等。
+- 叙事视角：第三人称、第一人称 POV、主观回忆、访谈、伪纪录片、旁观视角等。
+- 色调与光影：冷暖色、饱和度、胶片质感、自然光、低调光、高调光、年代影像等。
+- 镜头与节奏：舒缓、克制、快节奏、手持纪实、固定机位、长镜头、蒙太奇等。
+- 对白与旁白：对白为主、第一人称旁白、第三人称旁白、少对白、无对白等。
+- 配乐与音效：配乐类型、环境声强度、是否弱化配乐、是否突出对白等。
+- 字幕与文字：无字幕，或允许对白字幕、章节标题、日期、地点等指定文字。
+- 视频规格：画幅、分辨率、单镜时长、是否生成声音；未填写时沿用节点设置。
+
+【用户追加要求】
+
+在这里写入你想要的效果；没有特别要求时填写“保持自动判断”。
+
+【交给 AI 的任务】
+
+根据上面的基础设定和用户追加要求，补全一份跨全片统一、可以直接执行的项目导演设定。不得修改原故事事实，不得生成分镜、资产清单、Markdown 表格、解释或分析。只输出下面的格式，所有字段都必须保留；用户未指定的字段填写“根据剧本自动判断”。
+
+【AI 最终输出格式】
+
+【可编辑项目设定】
+
+叙事原则：
+视觉风格：
+叙事视角：
+色调与光影：
+人物一致性：
+场景一致性：
+镜头与节奏：
+对白与旁白：
+配乐与音效：
+字幕与屏幕文字：
+安全表达：
+画面约束：
+视频规格：`;
+const STORYBOARD_FACT_EXTRACTION_PROMPT = `你是长篇人物传记与叙事故事的事实拆解编辑。请把输入原文逐句拆成不可再合并的故事事实，供后续自动生成完整视频分镜。
+
+只输出 JSON，不要 Markdown，不要解释：
+{"beats":[{"id":"B001","sourceText":"原文直接证据","phase":"故事阶段","timeStage":"人物年龄或时期","location":"地点","characters":["人物"],"event":"单一事实或情绪转折","emotion":"可见情绪","treatment":"direct|symbolic|voiceover"}]}
+
+固定规则：
+1. 按原文顺序逐句扫描。不同时间、地点、人物状态、动作、遭遇、决定、对白、因果结果或情绪转折必须拆成不同 beat。
+2. 不做摘要，不按固定总数压缩；长篇人物传记通常应拆出数十个 beat，宁可细分，不得删掉支撑人物经历的事实。
+3. sourceText 必须引用或紧贴原文，event 只能陈述一个事实，不得把“丧失亲人、灾年、离婚、迁徙”等多个事件合成一项。
+4. 无法直接拍摄的思想、时代说明和总结也要保留，treatment 使用 voiceover；敏感经历保留事实，画面需要克制象征时使用 symbolic。
+5. 安全表达只能改变视觉呈现，不能改变事实含义，尤其不得把死亡、离别、疾病或伤害改写成相反结果。
+6. id 从 B001 连续编号，输出前逐句回查原文，补齐遗漏事实。`;
+const STORYBOARD_PLANNED_SHOTS_PROMPT = `你是长篇叙事视频分镜导演。请把给定故事事实完整转换为可独立生成的视频片段。
+
+只输出 JSON，不要 Markdown，不要解释：
+{"shots":[{"sourceBeatIds":["B001"],"continuityGroupId":"G001","timeStage":"童年时期","duration":"8s","visual":"画面描述","shotSize":"中景","lighting":"光影氛围","dialogue":"对白旁白","sound":"音效","camera":"单一主运镜","imagePrompt":"首帧画面提示词","startState":"片段开始时人物和空间状态","endState":"片段结束时人物和空间状态","transition":"continue|cut|montage|time-jump","usePreviousTailFrame":false}]}
+
+固定规则：
+1. 每个事实 id 必须至少被一条 shot 的 sourceBeatIds 引用；不得概括删除。一个复杂事实可以拆成多条 shot。
+2. 每条片段只表现一个主要可见事件，只使用一个主运镜，时长 5-10 秒；情感停留可用 12 秒。
+3. 同一时间、地点、人物时期且动作直接相承时使用相同 continuityGroupId、transition=continue，并让后一条 startState 精确承接前一条 endState。
+4. 时间、地点、人物年龄或身体状态变化时新建 continuityGroupId，transition 使用 cut 或 time-jump，usePreviousTailFrame=false。
+5. 只有同一连续性组内的直接续动作才允许 usePreviousTailFrame=true；首条 shot 必须为 false。
+6. 对白旁白优先保留原文第一人称叙述和关键原话；没有对白时可留空。
+7. 敏感事实采用克制、明确、不误导的象征画面，例如空摇篮、熄灭的灯、叠好的衣物；不得用一个仍然健康存在的主体替代已经失去的主体。
+8. imagePrompt 写静态首帧，包含准确时期的人物、场景、构图、光线和关键道具；不得把多个时空塞进同一首帧。
+9. 保持事实顺序，输出前检查本批所有 id 均已覆盖。`;
 const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本表格，并只输出 Markdown 表格。
 
 表格列必须严格为：
@@ -207,8 +276,9 @@ JSON 格式必须为：
 17. 如果整体要求指定第一人称主观视角，storyboardPrompt 和 videoMotionPrompt 都必须明确写入“第一人称主观视角 POV”，只能通过手、脚、衣袖、手持物、影子、倒影等第一人称可见元素表现“我”，不要写成旁观者镜头。
 18. 如果上下文里有上一镜/下一镜，当前镜头需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
 19. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
-20. 安全改写：如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，不要直写敏感词；改写成“年轻角色/年轻女性角色”“行动不便”“身形单薄”“朴素旧衣”“生活艰难”等中性视觉表达，避免描写受伤、受害、裸露、血迹或痛苦细节。
-21. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
+20. “本镜头事实与连续性计划”是事实约束：必须保持 sourceBeats 的原意，并让动作从 startState 到 endState；transition=continue 时承接上一镜，cut/time-jump 时明确新起场景，不得为了连续而混合两个时期。
+21. 安全改写只调整视觉呈现，不得改变事实结果。如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，使用行动不便、朴素旧衣、空摇篮、熄灭的灯、散落物件、人物反应等中性或象征画面；不得把死亡、失去、疾病或离别误写成健康、团聚或仍然存在。
+22. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -229,9 +299,11 @@ JSON 格式必须为：
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
 5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词必须以这些风格词开头，不要改成写实纪实、真实摄影、真人电影感或其他风格。
-6. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
-7. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
-8. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
+6. 输入若包含“镜头时期索引”，必须按 timeStage 为反复出现的同一人物拆分独立时期资产，名称使用“人物名·时期”，不得让童年、年轻、成年、晚年共用一张角色图。
+7. 资产必须覆盖完整分镜，不得只读取前几个镜头；同一场景跨镜复用时只建一个场景资产，不同地点或时代布局必须拆开。
+8. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
+9. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
+10. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
 9. 同一人物如果在剧本或分镜中出现不同年龄、时期、身份状态或造型阶段，必须拆成多个 character 资产；不要把童年、青年、成年、老年等多个状态塞进一张角色资产图。命名必须能区分状态，例如“白秋妹·年轻时期”“白秋妹·成年时期”“哥哥·童年”“哥哥·成年”。baseName 保留同一人物本名，lifeStage 写该资产唯一对应的年龄/时期。
 10. 每个 character prompt 只能描述一个角色的一个年龄状态，必须明确“单一角色设定图、只展示该年龄状态、不要出现其他年龄版本、不要出现同一人物成长时间线、不要出现多人合照”。如果需要表现同一角色的多个角度，只能是同一年龄状态的正面、侧面、背面、半身和表情参考。
 11. 角色资产图格式统一为横向角色设定图：干净背景，单一角色，同一脸型、发型、体型、服装、配色和画风；包含正面全身主视图，并可包含侧面、背面、半身头像和表情小参考；不要剧情场景、不要分镜画面、不要文字标注、Logo、水印或边框。
@@ -2017,7 +2089,9 @@ function InfiniteCanvasPage() {
 
     const generateStoryboardShotsFromInputs = useCallback(
         async (node: CanvasNodeData) => {
-            const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const storedScriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+            const scriptNode = withCurrentStoryboardDirectorPreset(storedScriptNode);
+            if (scriptNode !== storedScriptNode) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
             const textInputs = buildNodeGenerationInputs(scriptNode.id, nodesRef.current, connectionsRef.current).filter((input) => input.type === "text" && input.text?.trim());
             const directorInstruction = storyboardDirectorInstructionForNode(scriptNode);
             const connectedSourceText = textInputs.map((input) => `【${input.title || "剧本文本"}】\n${input.text?.trim() || ""}`).join("\n\n").trim();
@@ -2029,6 +2103,7 @@ function InfiniteCanvasPage() {
                     .filter(Boolean)
                     .join("\n\n")
                     .trim() || storyboardSourceTextForNode(scriptNode);
+            const storyText = connectedSourceText || sourceText;
             const videoSettingsPatch = storyboardVideoSettingsFallbackPatch(scriptNode, sourceText);
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
@@ -2041,12 +2116,77 @@ function InfiniteCanvasPage() {
             }
             setRunningNodeId(scriptNode.id);
             setStoryboardActionKey("shots:generate");
-            setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText } } : item)));
+            const updatePlanningProgress = (percent: number, text: string) => {
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardPlanningErrorStage: undefined, storyboardPlanningRawResponse: undefined, storyboardStep: "shots", storyboardSourceText: sourceText, storyboardPlanningProgress: { percent, text } } } : item)));
+            };
+            updatePlanningProgress(5, "逐句提取故事事实");
+            let failedStage = "";
+            let failedRawResponse = "";
+            const parsePlanningAnswer = async <T,>(answer: string, stage: string, parser: (content: string) => T) => {
+                try {
+                    return parser(answer);
+                } catch {
+                    updatePlanningProgress(5, `${stage}返回格式异常，正在自动修复 JSON`);
+                    let repaired = "";
+                    try {
+                        repaired = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(answer) }], () => {});
+                        return parser(repaired);
+                    } catch (error) {
+                        failedStage = stage;
+                        failedRawResponse = repaired || answer;
+                        const reason = error instanceof Error ? error.message : "未知 JSON 错误";
+                        throw new Error(`${stage}解析失败，已自动修复一次但仍不是合法 JSON：${reason}`);
+                    }
+                }
+            };
             try {
-                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_TEXT_IMPORT_PROMPT}\n\n${sourceText}` }], () => {});
-                const rows = stripStoryboardHeader(parseStoryboardLoose(answer));
-                if (!rows.length) throw new Error("没有生成可用的分镜表");
-                const normalized = renumberStoryboardRowsForCanvas(rows);
+                const sourceChunks = storyboardSourceChunks(storyText);
+                const beats: StoryboardSourceBeat[] = [];
+                for (let chunkIndex = 0; chunkIndex < sourceChunks.length; chunkIndex += 1) {
+                    const beatAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_FACT_EXTRACTION_PROMPT}\n\n这是原文第 ${chunkIndex + 1}/${sourceChunks.length} 段，只提取本段事实。\n\n【原始故事片段】\n${sourceChunks[chunkIndex]}` }], () => {});
+                    const parsedBeats = await parsePlanningAnswer(beatAnswer, `事实提取 ${chunkIndex + 1}/${sourceChunks.length}`, parseStoryboardSourceBeats);
+                    const chunkBeats = parsedBeats.map((beat, index) => ({ ...beat, id: `B${String(beats.length + index + 1).padStart(3, "0")}` }));
+                    beats.push(...chunkBeats);
+                    updatePlanningProgress(5 + Math.round(((chunkIndex + 1) / sourceChunks.length) * 15), `已分析 ${chunkIndex + 1}/${sourceChunks.length} 段原文，提取 ${beats.length} 个事实`);
+                }
+                if (!beats.length) throw new Error("没有从原文提取到故事事实");
+                updatePlanningProgress(20, `已提取 ${beats.length} 个事实，开始分批拆镜`);
+                const plannedShots: PlannedStoryboardShot[] = [];
+                const batches = storyboardBeatBatches(beats);
+                for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+                    const previous = plannedShots.at(-1)?.plan;
+                    const answer = await requestImageQuestion(
+                        generationConfig,
+                        [{ role: "user", content: buildStoryboardShotBatchSource(storyText, batches[batchIndex], batchIndex, previous, false, directorInstruction) }],
+                        () => {},
+                    );
+                    const parsedShots = await parsePlanningAnswer(answer, `镜头批次 ${batchIndex + 1}/${batches.length}`, parsePlannedStoryboardShots);
+                    const batchShots = plannedShotsForBeats(parsedShots, batches[batchIndex]);
+                    if (!batchShots.length) throw new Error(`第 ${batchIndex + 1} 批没有生成可用镜头`);
+                    plannedShots.push(...batchShots);
+                    if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要超过 ${STORYBOARD_ROW_LIMIT} 个片段，请缩短输入或拆成多个章节`);
+                    updatePlanningProgress(20 + Math.round(((batchIndex + 1) / batches.length) * 60), `已完成 ${batchIndex + 1}/${batches.length} 批，共 ${plannedShots.length} 个镜头`);
+                }
+                let coverage = storyboardCoverage(beats, plannedShots);
+                if (coverage.missingBeatIds.length) {
+                    updatePlanningProgress(84, `自动补齐 ${coverage.missingBeatIds.length} 个遗漏事实`);
+                    const missingBeats = beats.filter((beat) => coverage.missingBeatIds.includes(beat.id));
+                    const repairAnswer = await requestImageQuestion(
+                        generationConfig,
+                        [{ role: "user", content: buildStoryboardShotBatchSource(storyText, missingBeats, batches.length, plannedShots.at(-1)?.plan, true, directorInstruction) }],
+                        () => {},
+                    );
+                    const repairedShots = await parsePlanningAnswer(repairAnswer, "遗漏事实补镜", parsePlannedStoryboardShots);
+                    plannedShots.push(...plannedShotsForBeats(repairedShots, missingBeats));
+                    coverage = storyboardCoverage(beats, plannedShots);
+                }
+                if (coverage.missingBeatIds.length) throw new Error(`仍有 ${coverage.missingBeatIds.length} 个原文事实未生成镜头：${coverage.missingBeatIds.join("、")}`);
+                if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要 ${plannedShots.length} 个片段，超过 ${STORYBOARD_ROW_LIMIT} 行上限，请拆成多个章节`);
+                const beatOrder = new Map(beats.map((beat, index) => [beat.id, index]));
+                plannedShots.sort((first, second) => Math.min(...first.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)) - Math.min(...second.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)));
+                const normalized = renumberStoryboardRowsForCanvas(plannedShots.map((item) => item.row));
+                const shotPlans = Object.fromEntries(plannedShots.map((item, index) => [String(index), item.plan]));
+                updatePlanningProgress(96, "覆盖检查通过，写入完整分镜");
                 setNodes((prev) =>
                     prev.map((item) =>
                         item.id === scriptNode.id
@@ -2058,6 +2198,14 @@ function InfiniteCanvasPage() {
                                       storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
                                       storyboardStep: "shots",
                                       storyboardSourceText: sourceText,
+                                      storyboardSourceBeats: beats,
+                                      storyboardShotPlans: shotPlans,
+                                      storyboardCoverage: coverage,
+                                      storyboardPlanningProgress: undefined,
+                                      storyboardPlanningErrorStage: undefined,
+                                      storyboardPlanningRawResponse: undefined,
+                                      storyboardAssets: [],
+                                      storyboardPromptDetails: {},
                                       ...videoSettingsPatch,
                                       status: NODE_STATUS_SUCCESS,
                                       errorDetails: undefined,
@@ -2066,11 +2214,11 @@ function InfiniteCanvasPage() {
                             : item,
                     ),
                 );
-                message.success(`已生成 ${normalized.length} 个镜头`);
+                message.success(`已完整覆盖 ${coverage.total} 个故事事实，生成 ${normalized.length} 个镜头`);
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成镜头失败";
                 message.error(errorDetails);
-                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, storyboardPlanningProgress: undefined, storyboardPlanningErrorStage: failedStage || undefined, storyboardPlanningRawResponse: failedRawResponse || undefined } } : item)));
             } finally {
                 setStoryboardActionKey(null);
                 setRunningNodeId((current) => (current === scriptNode.id ? null : current));
@@ -2103,6 +2251,7 @@ function InfiniteCanvasPage() {
                 const source = [
                     storyboardSourceTextForNode(scriptNode) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(scriptNode)}` : "",
                     `精简分镜表：\n${storyboardAssetRowsToMarkdownForCanvas(rows)}`,
+                    storyboardAssetPlanningIndex(scriptNode),
                 ]
                     .filter(Boolean)
                     .join("\n\n");
@@ -2963,7 +3112,16 @@ function InfiniteCanvasPage() {
                 throw new Error("请先在右上角配置里设置文本模型、API Base 和 API Key");
             }
             const requestId = String(++promptAssistantRequestSeqRef.current);
-            const instruction = buildPromptAssistantInstruction(prompt || readNodePrompt(node), requirement);
+            const storySource = node.type === CanvasNodeType.Script
+                ? buildNodeGenerationInputs(node.id, nodesRef.current, connectionsRef.current)
+                      .filter((input) => input.type === "text" && input.text?.trim())
+                      .map((input) => `【${input.title || "剧本文本"}】\n${input.text?.trim() || ""}`)
+                      .join("\n\n")
+                : "";
+            if (node.type === CanvasNodeType.Script && !storySource) throw new Error("没有读取到连接剧本，请先把文本节点连接到 Script 节点");
+            const instruction = node.type === CanvasNodeType.Script
+                ? buildStoryboardProjectSettingsInstruction(storyboardDirectorInstructionForNode(node), requirement, storySource)
+                : buildPromptAssistantInstruction(prompt || readNodePrompt(node), requirement);
             setNodes((prev) =>
                 prev.map((item) =>
                     item.id === node.id
@@ -3009,7 +3167,8 @@ function InfiniteCanvasPage() {
                     output = "";
                     result = await run(textMessages);
                 }
-                const nextPrompt = (result || output).trim();
+                const rawPrompt = (result || output).trim();
+                const nextPrompt = node.type === CanvasNodeType.Script ? parseStoryboardProjectSettingsAnswer(rawPrompt) : rawPrompt;
                 if (!nextPrompt) throw new Error("AI 未返回有效提示词");
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -4507,7 +4666,7 @@ function InfiniteCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onExportScriptAssets={(node) => void exportStoryboardAssetsToCanvas(node)}
                     onBatchGenerateScriptVideos={(node) => void batchGenerateStoryboardVideos(node)}
-                    onRetry={(node) => void handleRetryNode(node)}
+                    onRetry={(node) => void (node.type === CanvasNodeType.Script && node.metadata?.storyboardStep === "shots" ? generateStoryboardShotsFromInputs(node) : handleRetryNode(node))}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
@@ -6397,6 +6556,8 @@ function mergeStoryboardSceneLockReferences(base: StoryboardVideoReference[], au
 
 function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null, variantIndex?: number) {
     if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
+    const sourceNode = nodes.find((node) => node.id === sourceNodeId);
+    if (!sourceNode?.metadata?.storyboardShotPlans?.[String(rowIndex + 1)]?.usePreviousTailFrame) return nodes;
     const reference = storyboardTailFrameReference(rowIndex, tailFrame, variantIndex);
     return nodes.map((node) => {
         if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content || node.metadata.storyboardVideoDraftNodeId) return node;
@@ -6414,9 +6575,11 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const referenceUrls = assetReferences.map((item) => referenceUrl(item.reference)).filter((url): url is string => Boolean(url));
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
     const autoVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
-    const baseVideoReferences = existing?.metadata?.storyboardVideoReferences?.length ? mergeStoryboardSceneLockReferences(existing.metadata.storyboardVideoReferences, autoVideoReferences) : autoVideoReferences;
+    const plannedTailFrame = Boolean(scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]?.usePreviousTailFrame);
+    const existingVideoReferences = plannedTailFrame ? existing?.metadata?.storyboardVideoReferences || [] : (existing?.metadata?.storyboardVideoReferences || []).filter((item) => item.role !== "firstFrame");
+    const baseVideoReferences = existingVideoReferences.length ? mergeStoryboardSceneLockReferences(existingVideoReferences, autoVideoReferences) : autoVideoReferences;
     const baseAudioReferences = existing?.metadata?.storyboardVideoAudioReferences?.length ? mergeStoryboardAudioReferenceList(existing.metadata.storyboardVideoAudioReferences, audioReferences) : audioReferences;
-    const previousTailFrame = previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections);
+    const previousTailFrame = plannedTailFrame ? previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections) : null;
     const finalVideoReferences = mergeStoryboardVideoReferences(baseVideoReferences, previousTailFrame);
     const customConfig = existing?.metadata?.storyboardVideoConfigCustomized ? existing.metadata : undefined;
     const videoModel = customConfig?.model || generationConfig.model;
@@ -6592,6 +6755,9 @@ function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storage
 function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
     const row = rows[rowIndex] || [];
     const assets = node.metadata?.storyboardAssets || [];
+    const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+    const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
+    const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const assetLines = assets.length ? assets.map(storyboardPromptAssetLine).join("\n") : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
     const contextRows = rows
@@ -6601,6 +6767,7 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     return [
         storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
         node.metadata?.storyboardAssetStyle ? `全局风格：\n${node.metadata.storyboardAssetStyle}` : "",
+        shotPlan ? `本镜头事实与连续性计划：\n${JSON.stringify({ sourceBeats, ...shotPlan })}` : "",
         buildSeedanceStoryboardPromptContext(node, rowIndex, assets),
         `当前镜头：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n")}`,
         contextRows ? `前后镜头上下文：\n${contextRows}` : "",
@@ -6681,7 +6848,43 @@ function storyboardSourceTextForNode(node: CanvasNodeData) {
 
 function storyboardDirectorInstructionForNode(node: CanvasNodeData) {
     const prompt = node.metadata?.prompt?.trim();
-    return prompt && prompt !== STORYBOARD_SCRIPT_PRESET ? prompt : "";
+    const source = prompt || STORYBOARD_SCRIPT_PRESET;
+    const match = source.match(/^【可编辑项目设定】\s*([\s\S]*?)(?=\n【AI定制说明】|$)/);
+    return match ? `【可编辑项目设定】\n\n${match[1].trim()}` : source;
+}
+
+function parseStoryboardProjectSettingsAnswer(content: string) {
+    const clean = content.replace(/^```\w*\s*/i, "").replace(/```\s*$/i, "").trim();
+    const match = clean.match(/【可编辑项目设定】\s*([\s\S]*?)(?=\n【[^】]+】|$)/);
+    if (!match) throw new Error("AI 没有按要求返回【可编辑项目设定】");
+    const body = match[1]
+        .replace(/\*\*|__|`/g, "")
+        .replace(/^\s*(?:#{1,6}\s*|[-+*>]\s+|\d+[.、)]\s*)/gm, "")
+        .trim();
+    const requiredFields = ["叙事原则", "视觉风格", "叙事视角", "色调与光影", "人物一致性", "场景一致性", "镜头与节奏", "对白与旁白", "配乐与音效", "字幕与屏幕文字", "安全表达", "画面约束", "视频规格"];
+    const missing = requiredFields.filter((field) => !new RegExp(`(?:^|\\n)\\s*${field}\\s*[：:]`).test(body));
+    if (missing.length) throw new Error(`AI 返回的项目设定缺少：${missing.join("、")}`);
+    return `【可编辑项目设定】\n\n${body}`;
+}
+
+function withCurrentStoryboardDirectorPreset(node: CanvasNodeData) {
+    const prompt = node.metadata?.prompt?.trim() || "";
+    const legacyOutputPrompt = /只输出\s*Markdown\s*表格|表格列必须严格为/.test(prompt);
+    const previousGenericPreset = prompt.startsWith("【可编辑项目设定】") && prompt.includes("镜头拆分、原文覆盖检查、结构化输出、资产时期规划和连续性规则由工作流自动处理") && !prompt.includes("【AI定制说明】");
+    if (!legacyOutputPrompt && !previousGenericPreset) return node;
+    return { ...node, metadata: { ...node.metadata, prompt: STORYBOARD_SCRIPT_PRESET } };
+}
+
+function buildStoryboardShotBatchSource(sourceText: string, beats: StoryboardSourceBeat[], batchIndex: number, previous?: StoryboardShotPlan, repair = false, directorInstruction = "") {
+    const batchPrefix = `G${String(batchIndex + 1).padStart(2, "0")}`;
+    return [
+        STORYBOARD_PLANNED_SHOTS_PROMPT,
+        directorInstruction ? `【整体要求/导演提示词】\n${directorInstruction}` : "",
+        repair ? "这是覆盖检查发现的遗漏事实补镜。只补这些事实，不重写已有镜头；新镜头默认切镜，不要假装与不相邻镜头连续。" : `这是第 ${batchIndex + 1} 批。新连续性组使用 ${batchPrefix} 开头的编号；只有第一条与上一批确实同场景、同人物时期且动作直接相承时，才可复用上一批最后的 continuityGroupId。`,
+        previous ? `【上一批最后状态】\n${JSON.stringify(previous)}` : "【上一批最后状态】\n无，这是故事首批。",
+        `【本批必须全部覆盖的事实】\n${JSON.stringify(beats)}`,
+        `【原始故事，仅用于核对语境，不得跳过本批事实】\n${sourceText}`,
+    ].join("\n\n");
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
@@ -6691,7 +6894,7 @@ function parseStoryboardAssetAnswer(content: string): { style: string; assets: S
     const assets = records
         .map(({ item, kind }, index) => normalizeStoryboardAsset(item, index, kind))
         .filter((asset): asset is StoryboardAsset => Boolean(asset))
-        .slice(0, 30);
+        .slice(0, STORYBOARD_ASSET_LIMIT);
     if (!assets.length) throw new Error("没有识别到角色、场景或道具资产");
     return { style: !Array.isArray(data) && typeof data.style === "string" ? data.style.trim() : "", assets };
 }
@@ -6822,6 +7025,19 @@ function storyboardAssetRowsToMarkdownForCanvas(rows: string[][]) {
         ["运镜", 7],
     ] as const;
     return [`| ${columns.map(([title]) => title).join(" | ")} |`, `| ${columns.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${columns.map(([, index]) => compactStoryboardAssetCell(row[index] || "")).join(" | ")} |`)].join("\n");
+}
+
+function storyboardAssetPlanningIndex(node: CanvasNodeData) {
+    const plans = node.metadata?.storyboardShotPlans || {};
+    const beats = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
+    const index = Object.entries(plans).map(([rowIndex, plan]) => ({
+        shot: Number(rowIndex) + 1,
+        timeStage: plan.timeStage,
+        continuityGroupId: plan.continuityGroupId,
+        characters: Array.from(new Set(plan.sourceBeatIds.flatMap((id) => beats.get(id)?.characters || []))),
+        location: Array.from(new Set(plan.sourceBeatIds.map((id) => beats.get(id)?.location).filter(Boolean))),
+    }));
+    return index.length ? `镜头时期索引：\n${JSON.stringify(index)}` : "";
 }
 
 function compactStoryboardAssetCell(value: string) {

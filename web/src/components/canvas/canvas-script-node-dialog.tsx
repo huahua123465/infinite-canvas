@@ -59,6 +59,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const style = node?.metadata?.storyboardAssetStyle || "";
     const assetError = node?.metadata?.storyboardAssetError || "";
     const promptDetails = node?.metadata?.storyboardPromptDetails || {};
+    const planningProgress = node?.metadata?.storyboardPlanningProgress;
+    const coverage = node?.metadata?.storyboardCoverage;
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const promptCount = rows.filter((_, index) => hasComposedPrompt(promptDetails[String(index)])).length;
     const videoPromptCount = rows.filter((_, index) => hasVideoPrompt(promptDetails[String(index)])).length;
@@ -135,7 +137,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     };
 
     const openPrompts = () => {
-        if (!node || !rows.length) return;
+        if (!node || !rows.length || !assets.length || missingAssets > 0) return;
         setView("prompts");
     };
 
@@ -168,7 +170,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                 <div className="flex h-full flex-col bg-[#101010] text-[#f1f1f1]">
                     <div className="sticky top-0 z-30 flex min-h-20 shrink-0 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3 shadow-[0_10px_28px_rgba(0,0,0,.35)]">
                         <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
-                            <Step index="1" title="确认镜头" detail={`${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={filledCount > 0} onClick={() => setView("shots")} />
+                            <Step index="1" title="确认镜头" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : coverage ? `原文覆盖 ${coverage.covered}/${coverage.total}，共 ${rows.length} 镜` : `${filledCount}/${rows.length} 镜头待校对`} active={view === "shots"} done={Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0)} onClick={() => setView("shots")} />
                             <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
                             <Step index="3" title="合成提示词" detail={`${promptCount}/${rows.length} 已合成`} active={view === "prompts"} done={promptCount === rows.length && rows.length > 0} onClick={openPrompts} />
                         </div>
@@ -194,23 +196,30 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
                     {view === "assets" ? (
-                        <AssetPrepView
-                            node={node}
-                            actionKey={actionKey}
-                            assets={assets}
-                            groupedAssets={groupedAssets}
-                            style={style}
-                            error={assetError}
-                            onPrepareAssets={onPrepareAssets}
-                            onSelectAsset={setEditingAssetId}
-                            onGenerateAssetImage={onGenerateAssetImage}
-                            onGenerateSceneSheet={onGenerateSceneSheet}
-                            onStopSceneSheet={onStopSceneSheet}
-                            onBatchGenerateSceneSheets={onBatchGenerateSceneSheets}
-                            onStopSceneSheets={onStopSceneSheets}
-                            onGenerateAssetVoice={onGenerateAssetVoice}
-                            onPreviewSceneSheet={setPreviewSceneSheetAssetId}
-                        />
+                        <div className="flex min-h-0 flex-1 flex-col">
+                            <AssetPrepView
+                                node={node}
+                                actionKey={actionKey}
+                                assets={assets}
+                                groupedAssets={groupedAssets}
+                                style={style}
+                                error={assetError}
+                                onPrepareAssets={onPrepareAssets}
+                                onSelectAsset={setEditingAssetId}
+                                onGenerateAssetImage={onGenerateAssetImage}
+                                onGenerateSceneSheet={onGenerateSceneSheet}
+                                onStopSceneSheet={onStopSceneSheet}
+                                onBatchGenerateSceneSheets={onBatchGenerateSceneSheets}
+                                onStopSceneSheets={onStopSceneSheets}
+                                onGenerateAssetVoice={onGenerateAssetVoice}
+                                onPreviewSceneSheet={setPreviewSceneSheetAssetId}
+                            />
+                            <div className="flex h-16 shrink-0 items-center justify-end border-t border-[#303030] bg-[#121212] px-8">
+                                <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!assets.length || missingAssets > 0 || actionKey !== null} onClick={openPrompts}>
+                                    下一步：合成提示词
+                                </Button>
+                            </div>
+                        </div>
                     ) : view === "prompts" ? (
                         <PromptComposeView
                             node={node}
@@ -229,7 +238,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             promptCount={promptCount}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} promptCount={promptCount} />
+                        <ShotsTable node={node} rows={rows} actionKey={actionKey} promptDetails={promptDetails} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
                     <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
@@ -397,7 +406,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets, promptCount }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void; promptCount: number }) {
+function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     return (
         <>
@@ -467,11 +476,11 @@ function ShotsTable({ node, rows, actionKey, promptDetails, onUpdateCell, onDele
                         导入镜头
                     </Button>
                     <Button className="!h-10 !rounded-lg !px-6" disabled={actionKey !== null} icon={generatingShots ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} onClick={() => onGenerateShotsFromInputs(node)}>
-                        从连接剧本生成镜头
+                        自动生成完整分镜
                     </Button>
                     {!rows.some((row) => row.some((cell, index) => index > 1 && cell.trim())) ? <span className="text-xs text-[#8f8f8f]">把剧本文本节点连到脚本节点后，点击这里生成分镜表。</span> : null}
                 </div>
-                <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!promptCount || actionKey !== null} onClick={onOpenAssets}>
+                <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!rows.length || actionKey !== null} onClick={onOpenAssets}>
                     下一步：准备资产
                 </Button>
             </div>
