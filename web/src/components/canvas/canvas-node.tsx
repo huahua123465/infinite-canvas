@@ -1761,7 +1761,10 @@ function storyboardReferenceAssetCandidates(references: StoryboardVideoReference
 }
 
 function storyboardVideoReferencesFromPrompt(prompt: string, current: StoryboardVideoReference[], candidates: StoryboardVideoReference[]) {
-    const mentions = storyboardPromptMentions(prompt);
+    const knownMentions = dedupeStoryboardReferences([...current, ...candidates]).map((item) => item.mention).filter((mention) => prompt.includes(mention));
+    const mentions = Array.from(new Set([...knownMentions, ...storyboardPromptMentions(prompt)]))
+        .filter((mention) => !knownMentions.some((known) => known !== mention && known.startsWith(`${mention} `)))
+        .sort((a, b) => prompt.indexOf(a) - prompt.indexOf(b));
     if (!mentions.length) return current;
     const candidateByMention = new Map(candidates.map((item) => [item.mention, item]));
     const currentByMention = new Map(current.map((item) => [item.mention, item]));
