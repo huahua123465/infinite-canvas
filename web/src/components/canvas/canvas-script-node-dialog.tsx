@@ -3,12 +3,9 @@ import { App, Button, Dropdown, Input, InputNumber, Modal, Select } from "antd";
 import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Trash2, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
-import { audioVoiceOptions, suggestVolcengineSpeakerForText, volcengineVoiceOptions } from "@/lib/audio-generation";
-import { normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
-import { modelOptionLabel, useConfigStore, type AiConfig } from "@/stores/use-config-store";
+import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, StoryboardAsset, StoryboardAssetBatchProgress, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardProductionMode, StoryboardProductionScope, StoryboardPromptDetail } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
@@ -70,7 +67,6 @@ type CanvasScriptNodeDialogProps = {
 
 export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, config }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
-    const updateConfig = useConfigStore((state) => state.updateConfig);
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
     const assetError = node?.metadata?.storyboardAssetError || "";
@@ -115,8 +111,6 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const assetActionBusy = Boolean(actionKey?.startsWith("asset:") && actionKey !== `asset:${editingAsset?.id}`);
     const promptEditorRow = promptEditorRowIndex === null ? null : rows[promptEditorRowIndex] || null;
     const promptEditorDetail = promptEditorRowIndex === null ? null : promptDetails[String(promptEditorRowIndex)] || null;
-    const editingAssetVoiceSuggestion = useMemo(() => (editingAsset ? suggestVolcengineSpeakerForText([editingAsset.name, editingAsset.description, editingAsset.prompt, editingAsset.voicePrompt].filter(Boolean).join("\n")) : null), [editingAsset]);
-
     useEffect(() => {
         if (!node) return;
         setView(planningStale ? "shots" : node.metadata?.storyboardStep === "assets" ? "assets" : node.metadata?.storyboardStep === "prompts" ? "prompts" : "shots");
@@ -438,36 +432,6 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         </div>
                                         <div className="thin-scrollbar max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-black/20 px-3 py-2 text-xs leading-5 text-emerald-50/80">{editingAssetFinalPrompt || "请先填写资产原始提示词"}</div>
                                     </div>
-                                    {editingAsset.kind === "character" ? (
-                                        <div className="mt-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-                                            <div className="mb-2 flex items-center justify-between gap-3">
-                                                <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-100"><Volume2 className="size-4" />角色声音</div>
-                                                <Button size="small" icon={editingAsset.voiceAudioStatus === "loading" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />} disabled={Boolean(actionKey && actionKey !== `asset-voice:${editingAsset.id}`)} onClick={() => onGenerateAssetVoice(node, editingAsset.id)}>
-                                                    {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? "重做声音" : "生成试听"}
-                                                </Button>
-                                            </div>
-                                            <AssetVoiceModelField
-                                                config={config}
-                                                onChange={(model) => {
-                                                    updateConfig("audioModel", model);
-                                                    updateConfig("audioVoice", normalizeAudioVoiceForProvider(config, model));
-                                                }}
-                                            />
-                                            <AssetVoiceSpeakerField asset={editingAsset} config={config} suggestion={editingAssetVoiceSuggestion} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSpeaker: value })} />
-                                            <AssetEditorField label="试听台词" value={editingAsset.voiceSampleText || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceSampleText: value })} />
-                                            <AssetEditorField label="声音提示词" value={editingAsset.voicePrompt || ""} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voicePrompt: value })} />
-                                            {editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey ? <audio src={editingAsset.voiceAudioUrl || editingAsset.voiceAudioStorageKey} controls className="mt-3 h-9 w-full" /> : <div className="mt-2 text-xs leading-5 text-cyan-100/70">生成后可在这里试听；后续视频会把这段声音作为角色音色参考。</div>}
-                                            <div className="mt-2 flex items-start gap-2 text-xs leading-5 text-cyan-100/60">
-                                                <span className="min-w-0 flex-1">{editingAsset.voiceAudioCacheHit === "shared" ? "已命中仓库共享试听缓存，本次不会重新请求语音 API。" : editingAsset.voiceAudioCacheHit === "local" ? "已命中本地试听缓存，本次不会重新请求语音 API。" : "首次生成会请求语音 API；同一模型、音色、语速、提示词和试听台词会自动复用缓存。"}</span>
-                                                {editingAsset.voiceAudioCacheKey ? (
-                                                    <Button size="small" type="text" className="!h-6 !px-1.5 !text-cyan-100/75" icon={<Copy className="size-3.5" />} onClick={() => void navigator.clipboard?.writeText(editingAsset.voiceAudioCacheKey || "")}>
-                                                        缓存 Key
-                                                    </Button>
-                                                ) : null}
-                                            </div>
-                                            {editingAsset.voiceAudioError ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.voiceAudioError}</div> : null}
-                                        </div>
-                                    ) : null}
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
                                 <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-t border-[#353535] bg-[#242424] px-5 shadow-[0_-10px_28px_rgba(0,0,0,.3)]">
@@ -1154,7 +1118,7 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                         {hasVoice ? (
                             <audio src={asset.voiceAudioUrl || asset.voiceAudioStorageKey} controls className="h-8 w-full" onClick={(event) => event.stopPropagation()} />
                         ) : (
-                            <div className="text-[11px] leading-5 text-cyan-100/75">生成一段试听声音，后续视频会用它锁定角色音色</div>
+                            <div className="text-[11px] leading-5 text-cyan-100/75">本地 VoxCPM 自动理解人物年龄、性格和经历并生成试听</div>
                         )}
                     </div>
                     <button
@@ -1167,7 +1131,7 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                         }}
                     >
                         {voiceLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />}
-                        {hasVoice ? "重做角色声音" : "生成角色声音"}
+                        {hasVoice ? "一键重做角色声音" : "一键生成角色声音"}
                     </button>
                     {asset.voiceAudioError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.voiceAudioError}</div> : null}
                 </div>
@@ -1184,86 +1148,6 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
 function characterAssetStateText(asset: StoryboardAsset) {
     if (asset.kind !== "character") return "";
     return [asset.baseName, asset.lifeStage].filter(Boolean).join(" · ");
-}
-
-function AssetVoiceModelField({ config, onChange }: { config: AiConfig; onChange: (model: string) => void }) {
-    const provider = resolveAudioProvider(config, config.audioModel || config.model);
-    return (
-        <div className="mb-4 rounded-lg border border-cyan-500/15 bg-black/10 p-2.5">
-            <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-[#f0f0f0]">音频模型</span>
-                <span className="min-w-0 truncate text-[11px] text-cyan-100/70">
-                    {provider.label} · {config.audioModel ? modelOptionLabel(config, config.audioModel) : "未选择"}
-                </span>
-            </div>
-            <ModelPicker config={config} value={config.audioModel} capability="audio" className="!h-9 !w-full !max-w-full !rounded-lg !border-[#3f5358] !bg-[#26363a] !px-3 !text-cyan-50" fullWidth placeholder="选择生成角色声音的模型" onChange={onChange} />
-        </div>
-    );
-}
-
-function AssetVoiceSpeakerField({ asset, config, suggestion, onChange }: { asset: StoryboardAsset; config: AiConfig; suggestion: (typeof volcengineVoiceOptions)[number] | null; onChange: (value: string) => void }) {
-    const [libraryOpen, setLibraryOpen] = useState(false);
-    const provider = resolveAudioProvider(config, config.audioModel || config.model);
-    const options = volcengineVoiceOptions.map((item) => ({
-        value: item.value,
-        label: `${item.label} · ${item.tone}`,
-        searchText: [item.label, item.value, item.tone, ...item.tags].join(" "),
-    }));
-    const recommended = suggestion ? `${suggestion.label} · ${suggestion.value}` : "";
-    const handleSpeakerChange = (value: string | string[]) => {
-        const rawValue = Array.isArray(value) ? value[value.length - 1] || "" : value;
-        onChange(normalizeSpeakerInput(rawValue));
-    };
-    if (provider.kind === "openai") {
-        const currentVoice = audioVoiceOptions.find((item) => item.value === config.audioVoice)?.label || config.audioVoice || "alloy";
-        return (
-            <div className="mb-4 rounded-lg border border-cyan-500/15 bg-black/10 px-3 py-2 text-xs leading-5 text-cyan-100/65">
-                当前是 OpenAI TTS，将使用全局 OpenAI voice：{currentVoice}。火山 Voice_type 和音色库只在火山 OpenSpeech 模型下显示。
-            </div>
-        );
-    }
-    if (provider.kind === "unsupported") {
-        return <div className="mb-4 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100">当前音频模型暂不支持角色声音生成，请切换到 OpenAI TTS 或火山 OpenSpeech。</div>;
-    }
-    return (
-        <div className="mb-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-[#f0f0f0]">声音 / speaker ID</span>
-                <span className="flex items-center gap-1.5">
-                    <Button size="small" type="text" className="!h-7 !px-2 !text-cyan-100" icon={<Volume2 className="size-3.5" />} onClick={() => setLibraryOpen(true)}>
-                        打开音色库
-                    </Button>
-                    {suggestion ? (
-                        <Button size="small" type="text" className="!h-7 !px-2 !text-cyan-100" onClick={() => onChange(suggestion.value)}>
-                            自动填入推荐
-                        </Button>
-                    ) : null}
-                </span>
-            </div>
-            <Select
-                allowClear
-                mode="tags"
-                showSearch
-                className="w-full"
-                popupMatchSelectWidth={false}
-                value={asset.voiceSpeaker ? [asset.voiceSpeaker] : []}
-                placeholder={recommended || "粘贴官方 Voice_type，或选择内置火山音色"}
-                options={options}
-                optionFilterProp="searchText"
-                maxCount={1}
-                tokenSeparators={[",", "，", "\n", "\t"]}
-                onChange={handleSpeakerChange}
-                onBlur={() => handleSpeakerChange(asset.voiceSpeaker || "")}
-            />
-            <div className="mt-2 text-xs leading-5 text-cyan-100/60">请粘贴音色库里的 Voice_type，例如 zh_female_meilinvyou_uranus_bigtts；复制时出现空格会自动转成下划线。</div>
-            {suggestion ? <div className="mt-2 truncate text-xs text-cyan-100/70">推荐：{recommended}</div> : null}
-            <VolcengineVoiceLibraryModal open={libraryOpen} config={config} currentSpeaker={asset.voiceSpeaker || ""} roleName={asset.name} onClose={() => setLibraryOpen(false)} onSelect={(value) => onChange(value)} />
-        </div>
-    );
-}
-
-function normalizeSpeakerInput(value: string) {
-    return value.trim().replace(/\s+/g, "_");
 }
 
 function AssetEditorField({ label, value, textarea, tall, placeholder, onChange }: { label: string; value: string; textarea?: boolean; tall?: boolean; placeholder?: string; onChange: (value: string) => void }) {

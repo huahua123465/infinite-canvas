@@ -58,7 +58,6 @@ import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
-import { normalizeVolcengineSpeakerValue, suggestVolcengineSpeakerForText } from "@/lib/audio-generation";
 import type { CanvasAgentMode } from "@/components/canvas/canvas-agent-chat-ui";
 import {
     CanvasNodeType,
@@ -2654,7 +2653,7 @@ function InfiniteCanvasPage() {
                 message.warning("只有角色资产可以生成声音");
                 return;
             }
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: effectiveConfig.audioModel || effectiveConfig.model, count: "1" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: "local-voxcpm::VoxCPM2", audioModel: "local-voxcpm::VoxCPM2", audioVoice: "default", audioFormat: "wav", count: "1" };
             const baseVoiceProfile = storyboardAssetVoiceProfile(asset, scriptNode.metadata?.storyboardAssetStyle, generationConfig);
             const sampleText = storyboardAssetVoiceSampleText(asset, baseVoiceProfile, scriptNode);
             const voiceProfile = { ...baseVoiceProfile, sampleText };
@@ -2667,27 +2666,14 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 return;
             }
-            const isVolcengineVoice = isVolcengineAudioConfig(generationConfig);
-            const autoSpeakerPatch = isVolcengineVoice && !asset.voiceSpeaker?.trim() ? { voiceSpeaker: voiceProfile.voice } : {};
-            if (isVolcengineVoice) {
-                if (!normalizeVolcengineSpeakerValue(voiceProfile.voice)) {
-                    const errorDetails = "火山语音合成不会根据角色描述自动换男女声；请在右侧角色编辑里为该角色填写有效 speaker ID，例如 zh_female_cancan_mars_bigtts。";
-                    updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioStatus: NODE_STATUS_ERROR, voiceAudioError: errorDetails, voiceAudioVoice: voiceProfile.voice, voiceSampleText: sampleText });
-                    message.error(errorDetails);
-                    return;
-                }
-                if (!asset.voiceSpeaker?.trim()) message.info(`已按角色文本自动选择 speaker：${voiceProfile.voice}`);
-            }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceAudioCacheHit: undefined, voiceSampleText: sampleText });
+            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheHit: undefined, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const customVoicePrompt = asset.voicePrompt?.trim();
-                const audioInstructions = [generationConfig.audioInstructions, voiceProfile.instructions, customVoicePrompt].filter(Boolean).join("\n\n");
-                const audioConfig = { ...generationConfig, audioVoice: voiceProfile.voice, audioSpeed: voiceProfile.speed, audioInstructions };
+                const audioConfig = { ...generationConfig, audioSpeed: voiceProfile.speed, audioInstructions: voicePrompt };
                 const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal });
-                updateStoryboardAsset(scriptNode.id, assetId, { ...autoSpeakerPatch, voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: voiceProfile.voice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voiceProfile.instructions, voiceAudioCacheKey: audio.cacheKey, voiceAudioCacheHit: audio.cacheHit, voiceSampleText: sampleText });
+                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: audio.cacheKey, voiceAudioCacheHit: audio.cacheHit, voiceSampleText: sampleText });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
                     setNodes((prev) =>
@@ -6163,55 +6149,40 @@ function storyboardAssetVoiceAudioReference(asset: StoryboardAsset, audio?: Pick
 }
 
 type StoryboardAssetVoiceProfile = {
-    voice: string;
     speed: string;
     instructions: string;
     sampleText: string;
 };
 
 function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | undefined, config: AiConfig): StoryboardAssetVoiceProfile {
-    const source = [asset.name, asset.description, asset.prompt].filter(Boolean).join("，");
+    const source = [asset.baseName, asset.name, asset.lifeStage, asset.description, asset.prompt].filter(Boolean).join("，");
     const normalized = safetyNeutralStoryboardPrompt(source);
-    const gender = storyboardAssetVoiceGender(normalized);
-    const age = storyboardAssetVoiceAge(normalized);
-    const role = storyboardAssetVoiceRole(normalized);
-    const isVolcengine = isVolcengineAudioConfig(config);
-    const voice = isVolcengine ? asset.voiceSpeaker?.trim() || normalizeVolcengineSpeakerValue(config.audioVoice) || suggestVolcengineSpeakerForText(normalized).value : storyboardAssetVoiceName(gender, age, role, config.audioVoice);
+    const gender = storyboardAssetVoiceGender(source);
+    const age = storyboardAssetVoiceAge(source);
+    const role = storyboardAssetVoiceRole(source);
     const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
     const trait = storyboardAssetVoiceTrait(gender, age, role);
-    const sampleText = asset.voiceSampleText?.trim() || storyboardAssetVoiceSampleTextForProfile(gender, age, role);
+    const personality = storyboardAssetVoicePersonality(source);
+    const sampleText = storyboardAssetVoiceSampleTextForProfile(gender, age, role);
+    const characterSummary = safetyNeutralStoryboardPrompt([asset.baseName || asset.name, asset.lifeStage, asset.description || asset.prompt].filter(Boolean).join("；")).slice(0, 260);
     const instructions = [
-        `只朗读输入台词，不要读出角色设定、说明文字、引号或括号。`,
+        "只朗读输入台词，不要读出角色设定、声音指令、引号或括号。",
         `角色声音画像：${trait}`,
-        normalized ? `角色设定摘要：${normalized}` : "",
-        style?.trim() ? `作品整体风格：${style.trim()}` : "",
-        "保持中文自然口语，音色、年龄感、气息、语速和情绪强度稳定；不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
+        personality ? `人物性格与经历：${personality}` : "",
+        characterSummary ? `人物设定摘要：${characterSummary}` : normalized ? `人物设定摘要：${normalized.slice(0, 260)}` : "",
+        style?.trim() ? `作品整体风格：${style.trim().slice(0, 160)}` : "",
+        "根据人物年龄、身份、生活经历和当前情绪自然表演，保持中文口语真实、气息稳定、音色前后一致；不要新闻播音腔，不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
     ]
         .filter(Boolean)
         .join("\n");
-    return { voice, speed, instructions, sampleText };
+    return { speed, instructions, sampleText };
 }
 
 function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string, profile?: StoryboardAssetVoiceProfile) {
-    const custom = asset.voicePrompt?.trim();
-    if (custom) return custom;
-    const source = safetyNeutralStoryboardPrompt([asset.name, asset.description, asset.prompt].filter(Boolean).join("，"));
-    if (!source) return "";
-    return [
-        `为角色“${asset.name || "未命名角色"}”生成一段 6-10 秒中文角色声音试听样本。`,
-        `角色设定：${source}`,
-        style?.trim() ? `作品整体风格：${style.trim()}` : "",
-        profile?.instructions ? `声音画像：${profile.instructions}` : "",
-        "声音要求：音色、年龄感、气息、语速、情绪强度要稳定清晰；像角色在镜头外短声试音，不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
-        `试听台词固定朗读为：“${profile?.sampleText || "我知道了，我们继续吧。"}”；重点体现角色声音质感，不推进剧情。`,
-    ]
-        .filter(Boolean)
-        .join("\n");
+    return profile?.instructions || storyboardAssetVoiceProfile(asset, style, defaultConfig).instructions;
 }
 
 function storyboardAssetVoiceSampleText(asset: StoryboardAsset, profile?: StoryboardAssetVoiceProfile, scriptNode?: CanvasNodeData) {
-    const custom = asset.voiceSampleText?.trim();
-    if (custom) return custom;
     const scripted = scriptNode ? storyboardAssetScriptDialogueSampleText(scriptNode, asset) : "";
     if (scripted) return scripted;
     if (profile?.sampleText) return profile.sampleText;
@@ -6254,8 +6225,8 @@ function storyboardCleanVoiceDialogue(text: string, names: string[]) {
 
 function compactStoryboardVoiceSample(text: string) {
     const normalized = text.replace(/\s+/g, " ").replace(/^[：:，,。；;、\s]+/, "").trim();
-    if (normalized.length <= 90) return normalized;
-    return `${normalized.slice(0, 90).replace(/[，,、；;：:。！？!?]*$/, "")}。`;
+    if (normalized.length <= 48) return normalized;
+    return `${normalized.slice(0, 48).replace(/[，,、；;：:。！？!?]*$/, "")}。`;
 }
 
 function escapeRegExp(value: string) {
@@ -6269,6 +6240,8 @@ function storyboardAssetVoiceGender(source: string) {
 }
 
 function storyboardAssetVoiceAge(source: string) {
+    if (/婴儿|新生儿|宝宝|襁褓|幼儿/.test(source)) return "baby";
+    if (/儿童|孩子|小孩|童年|年幼/.test(source)) return "child";
     if (/老人|老年|年迈|花甲|古稀|爷爷|奶奶|外公|外婆|阿婆|阿公|老父|老母|白发/.test(source)) return "old";
     if (/中年|父亲|母亲|爸爸|妈妈|家中父亲|家中母亲|成年/.test(source)) return "adult";
     if (/年轻|少年|少女|青年|女孩|男孩|女儿|儿子|妹妹|弟弟/.test(source)) return "young";
@@ -6276,6 +6249,8 @@ function storyboardAssetVoiceAge(source: string) {
 }
 
 function storyboardAssetVoiceRole(source: string) {
+    if (/婴儿|新生儿|宝宝|襁褓|幼儿/.test(source)) return "baby";
+    if (/儿童|孩子|小孩|童年|年幼/.test(source)) return "child";
     if (/父|爸爸|爹|家中父亲|父亲/.test(source)) return "father";
     if (/母|妈妈|娘|家中母亲|母亲/.test(source)) return "mother";
     if (/老人|老年|爷爷|奶奶|外公|外婆|阿婆|阿公/.test(source)) return "elder";
@@ -6283,19 +6258,11 @@ function storyboardAssetVoiceRole(source: string) {
     return "default";
 }
 
-function storyboardAssetVoiceName(gender: string, age: string, role: string, currentVoice: string) {
-    const current = currentVoice.trim();
-    if (current && current !== "alloy") return current;
-    if (role === "father" || gender === "male" || age === "old") return "onyx";
-    if (role === "mother") return "shimmer";
-    if (gender === "female" && age === "young") return "nova";
-    if (gender === "female") return "coral";
-    return current || "alloy";
-}
-
 function storyboardAssetVoiceSpeed(age: string, role: string, currentSpeed: string) {
     const speed = Number(currentSpeed);
     const base = Number.isFinite(speed) && speed > 0 ? speed : 1;
+    if (role === "baby" || age === "baby") return String(Math.max(base, 1.1));
+    if (role === "child" || age === "child") return String(Math.max(base, 1.05));
     if (role === "elder" || age === "old") return String(Math.min(base, 0.9));
     if (role === "father" || role === "mother") return String(Math.min(base, 0.95));
     if (age === "young") return String(Math.max(base, 1.05));
@@ -6303,6 +6270,8 @@ function storyboardAssetVoiceSpeed(age: string, role: string, currentSpeed: stri
 }
 
 function storyboardAssetVoiceTrait(gender: string, age: string, role: string) {
+    if (role === "baby" || age === "baby") return "婴儿声音，稚嫩轻软，以短促自然的咿呀声和含混发音为主，情绪单纯，不使用成年人的完整说话方式。";
+    if (role === "child" || age === "child") return gender === "female" ? "年幼女孩声音，稚嫩清亮，气息较轻，语速自然，情绪真实，不使用成年女性腔调。" : "年幼男孩声音，稚嫩自然，音高略高，语气直接，避免成年男性的低沉感。";
     if (role === "father") return "成年男性，音色偏低沉，带一点劳累后的沙哑和克制，语速略慢，情绪疲惫但可靠。";
     if (role === "mother") return "成熟女性，音色温和但有生活压力感，气息柔和，语速略慢，情绪含蓄坚韧。";
     if (role === "elder" || age === "old") return gender === "female" ? "老年女性，音色偏轻，气息稍弱，语速缓慢，情绪温和而坚韧。" : "老年男性，音色低哑，气息较沉，语速缓慢，情绪克制而有沧桑感。";
@@ -6312,7 +6281,21 @@ function storyboardAssetVoiceTrait(gender: string, age: string, role: string) {
     return "自然中文口语音色，年龄感清晰，气息稳定，语速中等，情绪克制。";
 }
 
+function storyboardAssetVoicePersonality(source: string) {
+    return [
+        /坚韧|倔强|不屈|顽强|早熟/.test(source) ? "内心坚韧，表达克制，不轻易外露情绪" : "",
+        /疲惫|劳累|沧桑|工地|重活|贫困|艰难/.test(source) ? "带一点长期劳作和生活压力形成的疲惫感，但不要故意沙哑" : "",
+        /温柔|善良|慈爱|关怀|体贴/.test(source) ? "语气温和，有照顾和陪伴他人的感觉" : "",
+        /严肃|威严|强势|冷静|克制/.test(source) ? "表达沉稳克制，重音明确，不夸张" : "",
+        /胆怯|害怕|内向|沉默|拘谨/.test(source) ? "说话略显谨慎，音量适中偏轻，保留真实犹豫感" : "",
+    ]
+        .filter(Boolean)
+        .join("；");
+}
+
 function storyboardAssetVoiceSampleTextForProfile(gender: string, age: string, role: string) {
+    if (role === "baby" || age === "baby") return "啊……咿呀，咿呀。";
+    if (role === "child" || age === "child") return "我会认真记住的。虽然还有一点害怕，但我想自己再试一次。";
     if (role === "father") return "先别急，听我把话说完。天再难，也得把家里的人照看好，我们一步一步来。";
     if (role === "mother") return "我知道你心里苦，可日子还得往前走。先稳住，把眼前这件事慢慢做好。";
     if (role === "elder" || age === "old") return "我这一辈子见过不少风浪，眼下先别慌，稳住脚步，再往前走。";
@@ -6320,10 +6303,6 @@ function storyboardAssetVoiceSampleTextForProfile(gender: string, age: string, r
     if (gender === "female") return "我明白你的意思。先把心放稳，眼前这一步走好了，后面的路才有办法。";
     if (gender === "male") return "这件事我明白了。先把眼前的问题处理好，剩下的我们慢慢想办法。";
     return "我知道了，我们继续吧。先把眼前这一步做好，后面的事情再慢慢解决。";
-}
-
-function isVolcengineAudioConfig(config: AiConfig) {
-    return /openspeech\.bytedance\.com/i.test(config.baseUrl) || /^seed-(tts|icl)-/i.test(config.model || config.audioModel);
 }
 
 function storyboardSceneSheetPrompt(asset: StoryboardAsset) {
