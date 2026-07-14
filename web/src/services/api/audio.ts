@@ -7,7 +7,7 @@ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } fro
 import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceAudio } from "@/types/media";
 
-type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string };
+type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string; seed?: number };
 export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
 type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
 type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
@@ -117,6 +117,7 @@ async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string
                 ...(config.audioInstructions.trim() ? { instructions: config.audioInstructions.trim() } : {}),
                 ...(reference ? { reference_audio: await referenceAudioDataUrl(reference, options?.signal) } : {}),
                 ...(reference && options?.promptText?.trim() ? { prompt_text: options.promptText.trim() } : {}),
+                ...(options?.seed ? { seed: options.seed } : {}),
             },
             { headers: aiHeaders(config), responseType: "blob", signal: options?.signal },
         );
@@ -359,7 +360,7 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string, options
     const voice = provider.kind === "voxcpm" ? "default" : normalizeAudioVoiceValue(requestConfig.audioVoice);
     const model = isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim()) ? normalizeVolcengineResourceId(requestConfig.model, voice) : requestConfig.model.trim();
     const payload = JSON.stringify({
-        v: 2,
+        v: 3,
         baseUrl: requestConfig.baseUrl.trim().replace(/\/+$/, ""),
         model,
         voice,
@@ -369,6 +370,7 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string, options
         prompt: prompt.trim(),
         referenceAudios: (options?.referenceAudios || []).map((audio) => ({ id: audio.id, storageKey: audio.storageKey, url: audio.url, durationMs: audio.durationMs })),
         promptText: options?.promptText?.trim() || "",
+        seed: options?.seed || null,
     });
     return `audio-preview:${await sha256(payload)}`;
 }

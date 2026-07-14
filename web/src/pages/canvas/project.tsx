@@ -16,7 +16,7 @@ import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
@@ -2672,7 +2672,7 @@ function InfiniteCanvasPage() {
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
                 const audioConfig = { ...generationConfig, audioSpeed: voiceProfile.speed, audioInstructions: voicePrompt };
-                const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal });
+                const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal, seed: Math.floor(Math.random() * 2_147_483_646) + 1 });
                 updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: audio.cacheKey, voiceAudioCacheHit: audio.cacheHit, voiceSampleText: sampleText });
                 const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
                 if (voiceReference) {
@@ -2828,6 +2828,7 @@ function InfiniteCanvasPage() {
             const assetNodeIds = { ...(scriptNode.metadata?.storyboardAssetNodeIds || {}) };
             const mentionNodeIds = { ...(scriptNode.metadata?.storyboardAssetMentionNodeIds || {}) };
             const exportedNodes: CanvasNodeData[] = [];
+            const libraryAssets: Omit<ImageAsset, "id" | "createdAt" | "updatedAt">[] = [];
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-assets" && item.metadata.workspaceSourceNodeId === scriptNode.id);
             const workspaceId = existingWorkspace?.id || nanoid();
             const workspacePosition = existingWorkspace?.position || defaultStoryboardAssetWorkspacePosition(scriptNode);
@@ -2879,11 +2880,38 @@ function InfiniteCanvasPage() {
                         },
                     };
                     exportedNodes.push(assetNode);
+                    libraryAssets.push({
+                        kind: "image",
+                        title: asset.name,
+                        coverUrl: content,
+                        tags: [ASSET_KIND_TEXT[asset.kind]],
+                        source: "Script",
+                        note: asset.description,
+                        data: {
+                            dataUrl: content,
+                            storageKey: nextAssets[index].storageKey,
+                            width: assetNode.metadata?.naturalWidth || assetNode.width,
+                            height: assetNode.metadata?.naturalHeight || assetNode.height,
+                            bytes: assetNode.metadata?.bytes || 0,
+                            mimeType: assetNode.metadata?.mimeType || "image/png",
+                        },
+                        metadata: { source: "storyboard", storyboardSourceNodeId: scriptNode.id, storyboardAssetId: asset.id, storyboardAssetKind: asset.kind, prompt: prompt || asset.prompt || asset.description },
+                    });
                 }
                 if (!exportedNodes.length) {
                     message.warning("没有可导出的资产图");
                     return;
                 }
+                const assetStore = useAssetStore.getState();
+                libraryAssets.forEach((asset) => {
+                    const storyboardAssetId = asset.metadata?.storyboardAssetId;
+                    const existingAsset = assetStore.assets.find((item) => item.kind === "image" && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata?.storyboardAssetId === storyboardAssetId);
+                    if (existingAsset) {
+                        assetStore.updateAsset(existingAsset.id, { ...asset, tags: existingAsset.tags, metadata: { ...existingAsset.metadata, ...asset.metadata } });
+                    } else {
+                        assetStore.addAsset(asset);
+                    }
+                });
                 const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, exportedNodes, workspacePosition, "storyboard-assets");
                 setNodes((prev) => {
                     const lookupNodes = [...prev, ...exportedNodes];
@@ -2903,7 +2931,7 @@ function InfiniteCanvasPage() {
                     const next = [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id }, ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: assetNode.id }))];
                     return addUniqueConnections(prev, next);
                 });
-                message.success(`已搭建资产工作区，包含 ${exportedNodes.length} 个资产节点`);
+                message.success(`已搭建资产工作区，并将 ${libraryAssets.length} 个资产加入我的素材`);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "导出资产失败");
             } finally {
@@ -6164,33 +6192,32 @@ function storyboardAssetVoiceAudioReference(asset: StoryboardAsset, audio?: Pick
 }
 
 type StoryboardAssetVoiceProfile = {
+    age: string;
+    gender: string;
+    role: string;
     speed: string;
     instructions: string;
     sampleText: string;
 };
 
 function storyboardAssetVoiceProfile(asset: StoryboardAsset, style: string | undefined, config: AiConfig): StoryboardAssetVoiceProfile {
+    const identity = [asset.baseName, asset.name, asset.lifeStage].filter(Boolean).join("，");
     const source = [asset.baseName, asset.name, asset.lifeStage, asset.description, asset.prompt].filter(Boolean).join("，");
-    const normalized = safetyNeutralStoryboardPrompt(source);
-    const gender = storyboardAssetVoiceGender(source);
-    const age = storyboardAssetVoiceAge(source);
-    const role = storyboardAssetVoiceRole(source);
+    const identityGender = storyboardAssetVoiceGender(identity);
+    const gender = identityGender === "neutral" ? storyboardAssetVoiceGender(source) : identityGender;
+    const identityAge = storyboardAssetVoiceAge(identity);
+    const age = identityAge === "adult" && !/成年|父亲|母亲|爸爸|妈妈/.test(identity) ? storyboardAssetVoiceAge(source) : identityAge;
+    const role = storyboardAssetVoiceRole(source, age);
+    const years = storyboardAssetVoiceAgeYears(source);
     const speed = storyboardAssetVoiceSpeed(age, role, config.audioSpeed);
+    const demographic = storyboardAssetVoiceDemographic(gender, age, years);
     const trait = storyboardAssetVoiceTrait(gender, age, role);
     const personality = storyboardAssetVoicePersonality(source);
+    const accent = storyboardAssetVoiceAccent(source);
+    const performance = storyboardAssetVoiceProjectStyle(style);
     const sampleText = storyboardAssetVoiceSampleTextForProfile(gender, age, role);
-    const characterSummary = safetyNeutralStoryboardPrompt([asset.baseName || asset.name, asset.lifeStage, asset.description || asset.prompt].filter(Boolean).join("；")).slice(0, 260);
-    const instructions = [
-        "只朗读输入台词，不要读出角色设定、声音指令、引号或括号。",
-        `角色声音画像：${trait}`,
-        personality ? `人物性格与经历：${personality}` : "",
-        characterSummary ? `人物设定摘要：${characterSummary}` : normalized ? `人物设定摘要：${normalized.slice(0, 260)}` : "",
-        style?.trim() ? `作品整体风格：${style.trim().slice(0, 160)}` : "",
-        "根据人物年龄、身份、生活经历和当前情绪自然表演，保持中文口语真实、气息稳定、音色前后一致；不要新闻播音腔，不要加入背景音乐、环境音、字幕、报幕或多角色对话。",
-    ]
-        .filter(Boolean)
-        .join("\n");
-    return { speed, instructions, sampleText };
+    const instructions = [demographic, trait, personality, accent, performance, "自然口语，气息真实，不要播音腔，只朗读输入台词"].filter(Boolean).join("，");
+    return { age, gender, role, speed, instructions, sampleText };
 }
 
 function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string, profile?: StoryboardAssetVoiceProfile) {
@@ -6198,26 +6225,26 @@ function storyboardAssetVoicePrompt(asset: StoryboardAsset, style?: string, prof
 }
 
 function storyboardAssetVoiceSampleText(asset: StoryboardAsset, profile?: StoryboardAssetVoiceProfile, scriptNode?: CanvasNodeData) {
+    if (profile?.age === "baby") return profile.sampleText;
     const scripted = scriptNode ? storyboardAssetScriptDialogueSampleText(scriptNode, asset) : "";
     if (scripted) return scripted;
     if (profile?.sampleText) return profile.sampleText;
     const source = [asset.description, asset.prompt].join("\n");
     const quoted = source.match(/[“"{｛]([^”"}｝]{4,40})[”"}｝]/)?.[1]?.trim();
     if (quoted) return quoted;
-    return storyboardAssetVoiceSampleTextForProfile(storyboardAssetVoiceGender(source), storyboardAssetVoiceAge(source), storyboardAssetVoiceRole(source));
+    const age = storyboardAssetVoiceAge(source);
+    return storyboardAssetVoiceSampleTextForProfile(storyboardAssetVoiceGender(source), age, storyboardAssetVoiceRole(source, age));
 }
 
 function storyboardAssetScriptDialogueSampleText(scriptNode: CanvasNodeData, asset: StoryboardAsset) {
     const rows = scriptNode.metadata?.storyboardRows || [];
     if (!rows.length) return "";
-    const detailByIndex = scriptNode.metadata?.storyboardPromptDetails || {};
-    const names = Array.from(new Set([asset.name, asset.name ? `@${asset.name}` : "", ...asset.name.split(/[、，,\s/]+/)].map((item) => item.trim()).filter((item) => item.length >= 2)));
+    const names = Array.from(new Set([asset.baseName, asset.name, asset.name ? `@${asset.name}` : "", ...asset.name.split(/[·、，,\s/]+/)].map((item) => item?.trim() || "").filter((item) => item.length >= 2)));
     const candidates: string[] = [];
-    rows.forEach((row, index) => {
-        const detail = detailByIndex[String(index)];
-        const context = [row[2], row[5], row[8], detail?.storyboardPrompt, detail?.videoMotionPrompt, detail?.assetMentions?.join(" ")].filter(Boolean).join("\n");
-        if (!names.some((name) => context.includes(name))) return;
-        const dialogue = storyboardCleanVoiceDialogue(row[5] || "", names);
+    rows.forEach((row) => {
+        const dialogueSource = row[5] || "";
+        if (!names.some((name) => dialogueSource.includes(name))) return;
+        const dialogue = storyboardCleanVoiceDialogue(dialogueSource, names);
         if (dialogue) candidates.push(dialogue);
     });
     return compactStoryboardVoiceSample(candidates.join(" "));
@@ -6249,28 +6276,50 @@ function escapeRegExp(value: string) {
 }
 
 function storyboardAssetVoiceGender(source: string) {
-    if (/父|爸爸|爹|叔|伯|爷|公|丈夫|男人|男性|男/.test(source)) return "male";
-    if (/母|妈妈|娘|婶|姨|奶|婆|妻|女人|女性|女/.test(source)) return "female";
+    if (/父亲|爸爸|爹|哥哥|弟弟|兄长|叔叔|伯父|爷爷|外公|阿公|丈夫|男孩|男童|儿子|男人|男性/.test(source)) return "male";
+    if (/母亲|妈妈|娘|姐姐|妹妹|姊|婶婶|阿姨|奶奶|外婆|阿婆|妻子|女孩|女童|女儿|少女|女人|女性|妹/.test(source)) return "female";
     return "neutral";
 }
 
 function storyboardAssetVoiceAge(source: string) {
+    const years = storyboardAssetVoiceAgeYears(source);
+    if (years !== null) {
+        if (years <= 2) return "baby";
+        if (years <= 12) return "child";
+        if (years <= 17) return "teen";
+        if (years <= 30) return "young";
+        if (years <= 55) return "adult";
+        if (years <= 69) return "middle";
+        return "old";
+    }
     if (/婴儿|新生儿|宝宝|襁褓|幼儿/.test(source)) return "baby";
-    if (/儿童|孩子|小孩|童年|年幼/.test(source)) return "child";
-    if (/老人|老年|年迈|花甲|古稀|爷爷|奶奶|外公|外婆|阿婆|阿公|老父|老母|白发/.test(source)) return "old";
-    if (/中年|父亲|母亲|爸爸|妈妈|家中父亲|家中母亲|成年/.test(source)) return "adult";
-    if (/年轻|少年|少女|青年|女孩|男孩|女儿|儿子|妹妹|弟弟/.test(source)) return "young";
+    if (/儿童|孩子|小孩|小男孩|小女孩|男童|女童|童年|年幼|小学|学龄/.test(source)) return "child";
+    if (/少年|少女|青春期|初中|中学/.test(source)) return "teen";
+    if (/老人|老年|年迈|晚年|暮年|花甲|古稀|爷爷|奶奶|外公|外婆|阿婆|阿公|老父|老母|白发/.test(source)) return "old";
+    if (/中年|壮年/.test(source)) return "middle";
+    if (/父亲|母亲|爸爸|妈妈|家中父亲|家中母亲|成年/.test(source)) return "adult";
+    if (/年轻|青年|女儿|儿子|妹妹|弟弟/.test(source)) return "young";
     return "adult";
 }
 
-function storyboardAssetVoiceRole(source: string) {
-    if (/婴儿|新生儿|宝宝|襁褓|幼儿/.test(source)) return "baby";
-    if (/儿童|孩子|小孩|童年|年幼/.test(source)) return "child";
-    if (/父|爸爸|爹|家中父亲|父亲/.test(source)) return "father";
-    if (/母|妈妈|娘|家中母亲|母亲/.test(source)) return "mother";
+function storyboardAssetVoiceRole(source: string, age: string) {
+    if (age === "baby") return "baby";
+    if (age === "child" || age === "teen") return "child";
+    if (/爸爸|爹|家中父亲|父亲/.test(source)) return "father";
+    if (/妈妈|娘|家中母亲|母亲/.test(source)) return "mother";
     if (/老人|老年|爷爷|奶奶|外公|外婆|阿婆|阿公/.test(source)) return "elder";
-    if (/孩子|女儿|儿子|妹妹|弟弟|少年|少女/.test(source)) return "young";
     return "default";
+}
+
+function storyboardAssetVoiceAgeYears(source: string) {
+    const arabic = source.match(/(?:^|[^\d])(\d{1,2})\s*岁/)?.[1];
+    if (arabic) return Number(arabic);
+    const chinese = source.match(/([零〇一二两三四五六七八九十]{1,3})\s*岁/)?.[1];
+    if (!chinese) return null;
+    const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+    if (!chinese.includes("十")) return digits[chinese] ?? null;
+    const [tens, ones] = chinese.split("十");
+    return (tens ? digits[tens] ?? 0 : 1) * 10 + (ones ? digits[ones] ?? 0 : 0);
 }
 
 function storyboardAssetVoiceSpeed(age: string, role: string, currentSpeed: string) {
@@ -6285,27 +6334,69 @@ function storyboardAssetVoiceSpeed(age: string, role: string, currentSpeed: stri
 }
 
 function storyboardAssetVoiceTrait(gender: string, age: string, role: string) {
-    if (role === "baby" || age === "baby") return "婴儿声音，稚嫩轻软，以短促自然的咿呀声和含混发音为主，情绪单纯，不使用成年人的完整说话方式。";
-    if (role === "child" || age === "child") return gender === "female" ? "年幼女孩声音，稚嫩清亮，气息较轻，语速自然，情绪真实，不使用成年女性腔调。" : "年幼男孩声音，稚嫩自然，音高略高，语气直接，避免成年男性的低沉感。";
-    if (role === "father") return "成年男性，音色偏低沉，带一点劳累后的沙哑和克制，语速略慢，情绪疲惫但可靠。";
-    if (role === "mother") return "成熟女性，音色温和但有生活压力感，气息柔和，语速略慢，情绪含蓄坚韧。";
-    if (role === "elder" || age === "old") return gender === "female" ? "老年女性，音色偏轻，气息稍弱，语速缓慢，情绪温和而坚韧。" : "老年男性，音色低哑，气息较沉，语速缓慢，情绪克制而有沧桑感。";
-    if (gender === "female" && age === "young") return "年轻女性，音色清亮自然，气息轻，语速稍快，情绪真诚但不夸张。";
-    if (gender === "female") return "成年女性，音色自然温和，气息稳定，语速中等，情绪细腻克制。";
-    if (gender === "male") return "成年男性，音色自然偏低，气息稳定，语速中等偏慢，情绪克制可信。";
-    return "自然中文口语音色，年龄感清晰，气息稳定，语速中等，情绪克制。";
+    if (role === "baby") return "稚嫩轻软的咿呀声，短促自然，不使用成人腔调";
+    if (role === "child") return gender === "female" ? "声音稚嫩清亮，气息较轻，保留真实童声" : gender === "male" ? "声音稚嫩自然，音高略高，保留真实童声" : "声音稚嫩自然，音高偏高，保留真实童声";
+    if (role === "father") return "声音低沉略粗粝，语速偏慢，克制可靠";
+    if (role === "mother") return "声音温和柔韧，气息柔和，情绪含蓄";
+    if (role === "elder" || age === "old") return gender === "female" ? "声音偏轻略哑，气息稍弱，语速缓慢" : "声音低哑沧桑，气息较沉，语速缓慢";
+    if (age === "teen") return gender === "female" ? "声音清亮稚嫩，情绪真实，不使用成年腔调" : "声音处于少年变声期，自然清晰，不刻意低沉";
+    if (gender === "female" && age === "young") return "声音清亮自然，气息轻，情绪真诚";
+    if (gender === "male" && age === "young") return "声音年轻自然，清晰有活力，不刻意低沉";
+    if (gender === "female") return "声音自然温和，气息稳定，情绪细腻克制";
+    if (gender === "male") return "声音自然偏低，气息稳定，情绪克制可信";
+    return "自然中文口语音色，年龄感清晰，气息稳定";
 }
 
 function storyboardAssetVoicePersonality(source: string) {
     return [
-        /坚韧|倔强|不屈|顽强|早熟/.test(source) ? "内心坚韧，表达克制，不轻易外露情绪" : "",
-        /疲惫|劳累|沧桑|工地|重活|贫困|艰难/.test(source) ? "带一点长期劳作和生活压力形成的疲惫感，但不要故意沙哑" : "",
-        /温柔|善良|慈爱|关怀|体贴/.test(source) ? "语气温和，有照顾和陪伴他人的感觉" : "",
-        /严肃|威严|强势|冷静|克制/.test(source) ? "表达沉稳克制，重音明确，不夸张" : "",
-        /胆怯|害怕|内向|沉默|拘谨/.test(source) ? "说话略显谨慎，音量适中偏轻，保留真实犹豫感" : "",
+        /坚韧|倔强|不屈|顽强|早熟/.test(source) ? "内心坚韧、表达克制" : "",
+        /疲惫|劳累|沧桑|工地|重活|贫困|艰难/.test(source) ? "带轻微劳作后的疲惫感" : "",
+        /温柔|善良|慈爱|关怀|体贴/.test(source) ? "语气温和有陪伴感" : "",
+        /严肃|威严|强势|冷静/.test(source) ? "表达沉稳、重音明确" : "",
+        /胆怯|害怕|内向|沉默|拘谨/.test(source) ? "略显谨慎和犹豫" : "",
     ]
         .filter(Boolean)
-        .join("；");
+        .slice(0, 2)
+        .join("，");
+}
+
+function storyboardAssetVoiceDemographic(gender: string, age: string, years: number | null) {
+    const genderLabel = gender === "female" ? "女性" : gender === "male" ? "男性" : "角色";
+    if (years !== null) {
+        if (years <= 2) return `${years}岁左右中国${gender === "female" ? "女婴" : gender === "male" ? "男婴" : "婴儿"}`;
+        if (years <= 12) return `${years}岁左右中国${gender === "female" ? "女孩" : gender === "male" ? "男孩" : "儿童"}`;
+        if (years <= 17) return `${years}岁左右中国${gender === "female" ? "少女" : gender === "male" ? "少年" : "青少年"}`;
+        return `${years}岁左右中国${genderLabel}`;
+    }
+    if (age === "baby") return `中国${gender === "female" ? "女婴" : gender === "male" ? "男婴" : "婴儿"}`;
+    if (age === "child") return `中国${gender === "female" ? "女孩童声" : gender === "male" ? "男孩童声" : "儿童声"}`;
+    if (age === "teen") return `中国${gender === "female" ? "少女" : gender === "male" ? "少年" : "青少年"}`;
+    if (age === "young") return `年轻中国${genderLabel}`;
+    if (age === "middle") return `中年中国${genderLabel}`;
+    if (age === "old") return `老年中国${genderLabel}`;
+    return `成年中国${genderLabel}`;
+}
+
+function storyboardAssetVoiceAccent(source: string) {
+    if (/重庆|四川|成都|酉阳|贵州|云南/.test(source)) return "带轻微西南地区口音";
+    if (/湖南|湘西|长沙/.test(source)) return "带轻微湖南口音";
+    if (/东北|辽宁|吉林|黑龙江/.test(source)) return "带轻微东北口音";
+    if (/广东|广州|粤语/.test(source)) return "带轻微粤语区普通话口音";
+    if (/河南/.test(source)) return "带轻微河南口音";
+    if (/陕西|西安/.test(source)) return "带轻微陕西口音";
+    if (/山东/.test(source)) return "带轻微山东口音";
+    if (/天津/.test(source)) return "带轻微天津口音";
+    if (/福建|闽南/.test(source)) return "带轻微闽南地区口音";
+    return "普通话自然";
+}
+
+function storyboardAssetVoiceProjectStyle(style?: string) {
+    if (!style) return "";
+    if (/纪实|写实|现实|纪录片/.test(style)) return "纪实克制的表演";
+    if (/喜剧|轻松|明快/.test(style)) return "轻松自然的表演";
+    if (/悬疑|压抑|沉重/.test(style)) return "低调克制的表演";
+    if (/动画|漫画|卡通/.test(style)) return "表现力清晰但不过度夸张";
+    return "情绪自然不过度表演";
 }
 
 function storyboardAssetVoiceSampleTextForProfile(gender: string, age: string, role: string) {
