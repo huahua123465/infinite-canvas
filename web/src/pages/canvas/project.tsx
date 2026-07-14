@@ -290,7 +290,7 @@ JSON 格式必须为：
 8. 一个片段只指定一种主要运镜，并写清起幅、速度、主体关系和落幅；内部节拍可用固定机位切景别或轻微推拉，但不要同时要求推拉摇移、无人机、环绕和手持。
 9. 有对白时用 {台词} 表示；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。对白要短，唇形镜头优先锁定机位或轻微推镜。
 10. 除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束；不要使用负面提示词语法，只用自然语言约束。
-11. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
+11. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具；画面中可见的角色必须选择准确年龄/时期资产，明确地点必须选择对应场景资产，再按需选择关键道具。只有纯空镜或明确无人物资产的 T2V 片段才允许不选择角色资产；不要为了“全面”引用所有资产。
 12. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
 13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、时期或场景，必须用空格或标点隔开，例如写“@白秋妹·年轻时期 走入院落”，不要把资产名和后续动作粘连。
 14. 如果同一人物存在多个年龄/时期资产，必须根据当前镜头内容选择精确状态的资产，例如年轻时期镜头只用 @白秋妹·年轻时期，成年时期镜头只用 @白秋妹·成年时期；不要用一个状态资产代表另一个年龄，也不要同时引用同一人物多个年龄状态，除非镜头明确是回忆对照或同框设定。
@@ -2120,8 +2120,8 @@ function InfiniteCanvasPage() {
         setNodes((prev) =>
             prev.map((node) => {
                 if (node.id !== nodeId) return node;
-                const linkedDetail = linkStoryboardPromptAssets(node, detail, prev);
                 const rows = parseStoryboardRows(node.metadata?.storyboardRows).map((row) => [...row]);
+                const linkedDetail = linkStoryboardPromptAssets(node, completeStoryboardPromptDetailAssets(node, rows, rowIndex, detail), prev);
                 if (rows[rowIndex]) rows[rowIndex][8] = linkedDetail.storyboardPrompt || linkedDetail.videoMotionPrompt;
                 const normalized = renumberStoryboardRowsForCanvas(rows);
                 return {
@@ -3108,7 +3108,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch } } : item)));
             }
             const row = parseStoryboardRows(scriptNode.metadata?.storyboardRows)[rowIndex];
-            const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+            const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
             const prompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || "");
             if (!row || !prompt) {
                 message.warning("请先到第三步合成视频运动提示词");
@@ -3116,8 +3116,9 @@ function InfiniteCanvasPage() {
             }
             const requestedMentions = storyboardAssetMentionsForPrompt(detail);
             const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodesRef.current);
-            if (requestedMentions.length && !assetReferences.length) {
-                message.warning("请先在脚本节点上批量生成资产，再生成引用资产的视频");
+            const missingMentions = requestedMentions.filter((mention) => !assetReferences.some((item) => item.mention === mention || item.mention.startsWith(`${mention}-`)));
+            if (missingMentions.length) {
+                message.warning(`请先生成或上传本镜头必要资产：${missingMentions.join("、")}`);
                 return;
             }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "video"), model: effectiveConfig.videoModel || effectiveConfig.model, count: "1" };
@@ -5711,12 +5712,14 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
     if (!references?.length) return "";
     const firstFrames = references.filter((item) => item.role === "firstFrame");
     const sceneLocks = references.filter((item) => item.role === "sceneLock");
+    const subjectReferences = references.filter((item) => (item.role || "reference") === "reference");
     const lastFrames = references.filter((item) => item.role === "lastFrame");
-    if (!firstFrames.length && !sceneLocks.length && !lastFrames.length) return "";
+    if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
         "视频连续性要求：",
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
         sceneLocks.length ? `- 以场景锁定参考图统一同一地点的空间结构、门窗位置、材质、道具摆放、光线方向和时代质感：${sceneLocks.map((item) => item.mention).join("、")}；如果参考图是多角度 sheet，只用于理解空间关系，不要生成分屏、拼图或多宫格画面。` : "",
+        subjectReferences.length ? `- 以主体参考图锁定对应角色的脸型、发型、年龄状态、体态、服装和画风，以及关键道具外观：${subjectReferences.map((item) => item.mention).join("、")}；每张图只控制对应主体，不要混合身份或互换外观。` : "",
         lastFrames.length ? `- 视频动作和镜头运动需要自然过渡到尾帧参考图对应的结束状态：${lastFrames.map((item) => item.mention).join("、")}` : "",
         "- 保持人物身份、服装、场景、光影和空间关系连续；同一镜头只使用一个主运镜，换角度时不要重塑场景结构。",
     ]
@@ -6604,7 +6607,7 @@ function isSafetyGenerationError(error: unknown) {
 }
 
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
-    const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+    const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
     const promptText = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
     const assets = scriptNode.metadata?.storyboardAssets || [];
     const mentions = Array.from(new Set([...storyboardAssetMentionsForPrompt(detail), ...assets.filter((asset) => promptText.includes(`@${asset.name}`) || promptText.includes(asset.name)).map((asset) => `@${asset.name}`)]));
@@ -6704,10 +6707,16 @@ function stripStoryboardVideoAudioContinuityPrompt(text: string) {
 
 function storyboardPromptDetailUsesAsset(scriptNode: CanvasNodeData, rowIndex: number | undefined, asset: StoryboardAsset) {
     if (rowIndex === undefined) return false;
-    const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+    const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
     const promptText = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
     const mention = `@${asset.name}`;
     return storyboardAssetMentionsForPrompt(detail).some((item) => item === mention || item.startsWith(`${mention}-`)) || promptText.includes(mention) || promptText.includes(asset.name);
+}
+
+function storyboardCompletedPromptDetailForRow(scriptNode: CanvasNodeData, rowIndex: number) {
+    const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+    if (!detail) return undefined;
+    return completeStoryboardPromptDetailAssets(scriptNode, parseStoryboardRows(scriptNode.metadata?.storyboardRows), rowIndex, detail);
 }
 
 function storyboardSceneContinuityAssetReferences(scriptNode: CanvasNodeData, current: Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] }>, nodes: CanvasNodeData[]) {
@@ -7061,7 +7070,7 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
 
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId);
-    const detail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+    const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
     const prompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "");
     const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
     const audioReferences = storyboardVideoAudioReferences(scriptNode, rowIndex);
@@ -7340,15 +7349,52 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     };
 }
 
+function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string[][], rowIndex: number, detail: StoryboardPromptDetail) {
+    const assets = node.metadata?.storyboardAssets || [];
+    const normalized = normalizeStoryboardPromptDetailAssets(detail, assets);
+    const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+    const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
+    const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
+    const episodeAssets = assets.filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const relevant = storyboardRelevantPromptAssets(episodeAssets, sourceBeats, rows[rowIndex] || [], shotPlan);
+    const characterNames = new Set<string>();
+    const requiredCharacters = relevant.filter((asset) => {
+        if (asset.kind !== "character") return false;
+        const name = asset.baseName || asset.name;
+        if (characterNames.has(name)) return false;
+        characterNames.add(name);
+        return true;
+    });
+    const scene = relevant.find((asset) => asset.kind === "scene");
+    const required = scene ? [...requiredCharacters, scene] : requiredCharacters;
+    const requiredCharacterNames = new Set(requiredCharacters.map((asset) => asset.name));
+    const requiredCharacterBases = new Set(requiredCharacters.map((asset) => asset.baseName || asset.name));
+    const retainedMentions = (normalized.assetMentions || []).filter((mention) => {
+        const asset = assets.find((item) => `@${item.name}` === mention);
+        if (!asset) return false;
+        if (asset.kind === "character" && requiredCharacterBases.has(asset.baseName || asset.name)) return requiredCharacterNames.has(asset.name);
+        if (asset.kind === "scene" && scene) return asset.id === scene.id;
+        return true;
+    });
+    return { ...normalized, assetMentions: Array.from(new Set([...required.map((asset) => `@${asset.name}`), ...retainedMentions])) };
+}
+
+function requiredAssetPriority(asset: StoryboardAsset) {
+    return (asset.sceneSheetUrl || asset.sceneSheetStorageKey ? 2 : 0) + (asset.imageUrl || asset.storageKey ? 1 : 0);
+}
+
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
+    const locations = sourceBeats.map((beat) => beat.location).filter(Boolean);
     return assets
         .map((asset) => {
-            const identityMatch = [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
-            const sceneOrPropMatch = asset.kind !== "character" && evidence.includes(asset.name);
+            const identityMatch = asset.kind === "character" && [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
+            const sceneMatch = asset.kind === "scene" && (evidence.includes(asset.name) || locations.some((location) => asset.name.includes(location) || location.includes(asset.name) || asset.description.includes(location)));
+            const propMatch = asset.kind === "prop" && evidence.includes(asset.name);
             const stateMatch = !asset.lifeStage || evidence.includes(asset.lifeStage) || Boolean(shotPlan?.timeStage && (shotPlan.timeStage.includes(asset.lifeStage) || asset.lifeStage.includes(shotPlan.timeStage)));
-            return { asset, score: (identityMatch ? 4 : 0) + (sceneOrPropMatch ? 3 : 0) + (stateMatch ? 1 : 0) };
+            const matchScore = (identityMatch ? 4 : 0) + (sceneMatch || propMatch ? 3 : 0);
+            return { asset, score: matchScore ? matchScore + (stateMatch ? 2 : 0) + requiredAssetPriority(asset) : 0 };
         })
         .filter((item) => item.score > 1)
         .sort((first, second) => second.score - first.score)

@@ -1,4 +1,5 @@
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { boolConfig, seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { cangyuanSeedanceFixedResolution } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -73,6 +74,9 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         const standardModel = ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"].includes(model);
         if (standardModel && !["480p", "720p"].includes(resolution)) issues.push(blocked("seedance_resolution", "当前 Seedance 标准模型仅支持 480p/720p", "请修改分辨率或切换固定分辨率模型。"));
         if (fixedResolution && resolution !== fixedResolution) issues.push(warning("seedance_fixed_resolution", `当前模型固定输出 ${fixedResolution}，设置中的 ${resolution} 不会生效`, "生成时会以模型档位为准。"));
+        if (cangyuanSeedanceFixedResolution(input.config) && boolConfig(input.config.videoGenerateAudio, true)) {
+            issues.push(warning("cangyuan_fixed_resolution_audio", "当前沧元固定分辨率型号不会接收“生成声音”设置", "本次不会发送 audio 字段，结果可能没有音轨；如需有声视频，请切换到 seedance-2.0、fast 或 mini 标准型号。"));
+        }
     }
 
     if (model.startsWith("grok-video")) {

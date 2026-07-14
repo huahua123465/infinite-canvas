@@ -8,3 +8,4 @@ description: 当前项目后续值得处理的事项
 本文档用来记录当前项目后续比较值得处理的事项。
 
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
+- 视频任务误提交保护：沧元公开 API 暂无暂停或取消任务端点；视频任务正式提交前增加短暂可撤回阶段，拿到任务 ID 后把“停止生成”明确区分为“停止等待”，并在同镜头再次创建版本前提示旧任务仍可能继续运行和计费。

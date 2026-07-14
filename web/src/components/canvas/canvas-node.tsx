@@ -1444,19 +1444,20 @@ function StoryboardVideoPromptPreviewModal({
     const assets = useAssetStore((state) => state.assets);
     const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
     const prompt = node.metadata?.prompt || "";
-    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
     const audioReferences = node.metadata?.storyboardVideoAudioReferences || [];
     const audioContinuityPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references, audioReferences);
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
     const draftConfigRef = useRef(draftConfig);
     const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
+    const [draftReferences, setDraftReferences] = useState<StoryboardVideoReference[]>(() => references);
     const referenceCandidates = storyboardReferenceAssetCandidates(references, scriptReferences, imageAssets);
-    const draftReferences = storyboardVideoReferencesFromPrompt(draftFinalPrompt, references, referenceCandidates);
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(draftReferences);
     const draftAssetLinks = draftReferences.map(storyboardReferenceToMentionLink);
     const orderedReferences = sortStoryboardVideoReferences(draftReferences);
     const modalFirstFrameSource = storyboardFirstFrameSourceText(draftReferences);
     const mentionReferences = storyboardReferencesToCanvasResources([...referenceCandidates, ...draftReferences]);
+    const missingContextReferences = storyboardMissingContextReferences(draftFinalPrompt, draftReferences, referenceCandidates);
     const credits = requestCreditCost({ channelMode: draftConfig.channelMode, model: draftConfig.model, count: 1 });
     const [saveHint, setSaveHint] = useState("");
     const [modalContentElement, setModalContentElement] = useState<HTMLDivElement | null>(null);
@@ -1471,6 +1472,7 @@ function StoryboardVideoPromptPreviewModal({
         draftConfigRef.current = nextConfig;
         setDraftConfig(nextConfig);
         setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences));
+        setDraftReferences(references);
         setSaveHint("");
     }, [open, node.id]);
 
@@ -1486,8 +1488,7 @@ function StoryboardVideoPromptPreviewModal({
         saveHintTimerRef.current = window.setTimeout(() => setSaveHint(""), 1800);
     };
 
-    const saveDraft = (config: AiConfig, finalPrompt: string, configCustomized = false) => {
-        const nextReferences = storyboardVideoReferencesFromPrompt(finalPrompt, references, referenceCandidates);
+    const saveDraft = (config: AiConfig, finalPrompt: string, nextReferences = draftReferences, configCustomized = false) => {
         onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()), ...(configCustomized ? { storyboardVideoConfigCustomized: true } : {}) });
         markAutoSaved();
     };
@@ -1496,7 +1497,7 @@ function StoryboardVideoPromptPreviewModal({
         setDraftConfig((current) => {
             const next = { ...current, ...patch };
             draftConfigRef.current = next;
-            saveDraft(next, draftFinalPrompt, true);
+            saveDraft(next, draftFinalPrompt, draftReferences, true);
             return next;
         });
     };
@@ -1508,16 +1509,23 @@ function StoryboardVideoPromptPreviewModal({
 
     const updateDraftFinalPrompt = (value: string) => {
         setDraftFinalPrompt(value);
-        saveDraft(draftConfig, value);
+        saveDraft(draftConfig, value, draftReferences);
     };
 
-    const insertReferenceToFinalPrompt = (reference: StoryboardVideoReference) => {
+    const toggleReference = (reference: StoryboardVideoReference) => {
+        const selected = draftReferences.some((item) => item.mention === reference.mention);
+        const nextReferences = selected ? draftReferences.filter((item) => item.mention !== reference.mention) : dedupeStoryboardReferences([...draftReferences, { ...reference, role: reference.role || "reference", status: "bound" }]);
+        setDraftReferences(nextReferences);
+        let nextPrompt = draftFinalPrompt;
         const textarea = finalPromptTextareaRef.current;
         const start = textarea?.selectionStart ?? draftFinalPrompt.length;
         const end = textarea?.selectionEnd ?? start;
-        const inserted = insertStoryboardMention(draftFinalPrompt, reference.mention, start, end);
-        updateDraftFinalPrompt(inserted.value);
-        requestAnimationFrame(() => {
+        const inserted = !selected && !draftFinalPrompt.includes(reference.mention) ? insertStoryboardMention(draftFinalPrompt, reference.mention, start, end) : null;
+        if (inserted) nextPrompt = inserted.value;
+        nextPrompt = storyboardVideoFinalPrompt(stripStoryboardVideoAudioContinuityPrompt(stripStoryboardVideoFrameContinuityPrompt(nextPrompt)), nextReferences, audioReferences);
+        setDraftFinalPrompt(nextPrompt);
+        saveDraft(draftConfig, nextPrompt, nextReferences);
+        if (inserted) requestAnimationFrame(() => {
             finalPromptTextareaRef.current?.focus();
             finalPromptTextareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
         });
@@ -1592,7 +1600,7 @@ function StoryboardVideoPromptPreviewModal({
                 <section>
                     <div className="mb-2 flex items-center justify-between">
                         <div className="text-sm font-semibold">参考资产</div>
-                        <span className="text-xs text-stone-500">顺序：首帧 → 场景锁定 → 参考 → 尾帧</span>
+                        <span className="text-xs text-stone-500">本次实际提交 {orderedReferences.length} 张 · 首帧 → 场景锁定 → 参考 → 尾帧</span>
                     </div>
                     {orderedReferences.length ? (
                         <div className="grid grid-cols-3 gap-3">
@@ -1610,8 +1618,9 @@ function StoryboardVideoPromptPreviewModal({
                             ))}
                         </div>
                     ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有参考资产" />
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有实际提交的参考资产" />
                     )}
+                    {missingContextReferences.length ? <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-200">提示词中出现了角色或场景，但尚未加入本镜头：{missingContextReferences.map((item) => item.mention).join("、")}。请先从下方加入，避免多镜头身份或场景漂移。</div> : null}
                 </section>
                 {continuityPrompt ? (
                     <section>
@@ -1636,9 +1645,9 @@ function StoryboardVideoPromptPreviewModal({
                 <section>
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold">最终生成提示词</div>
-                        <span className="text-xs text-stone-500">可手动修改，@ 资产会自动尝试绑定到参考图</span>
+                        <span className="text-xs text-stone-500">文字与参考图独立保存，删除 @ 名称不会移除已选图片</span>
                     </div>
-                    <StoryboardPromptAssetPicker references={referenceCandidates} theme={theme} onSelect={insertReferenceToFinalPrompt} />
+                    <StoryboardPromptAssetPicker references={referenceCandidates} selected={draftReferences} theme={theme} onToggle={toggleReference} />
                     <CanvasResourceMentionTextarea
                         ref={finalPromptTextareaRef}
                         value={draftFinalPrompt}
@@ -1663,7 +1672,7 @@ function StoryboardVideoPromptPreviewModal({
                 </div>
                 <div className="flex shrink-0 items-center justify-between gap-4 border-t border-stone-200 pt-4 dark:border-stone-800">
                     <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
-                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim()} onClick={generate}>
+                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim() || Boolean(missingContextReferences.length)} onClick={generate}>
                         <span className="flex items-center gap-1.5">
                             <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
                                 <CreditSymbol />
@@ -1683,25 +1692,27 @@ function PromptPreviewBox({ children, emptyText = "暂无内容" }: { children?:
     return <div className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">{children || <span className="text-stone-400">{emptyText}</span>}</div>;
 }
 
-function StoryboardPromptAssetPicker({ references, theme, onSelect }: { references: StoryboardVideoReference[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (reference: StoryboardVideoReference) => void }) {
+function StoryboardPromptAssetPicker({ references, selected, theme, onToggle }: { references: StoryboardVideoReference[]; selected: StoryboardVideoReference[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onToggle: (reference: StoryboardVideoReference) => void }) {
     const options = sortStoryboardVideoReferences(references).filter((reference) => reference.mention);
+    const selectedMentions = new Set(selected.map((reference) => reference.mention));
     return (
         <div className="mb-2 rounded-xl border px-3 py-2" style={{ borderColor: `${selectionBlue}33`, background: `${selectionBlue}0d` }}>
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="text-xs font-semibold" style={{ color: theme.node.text }}>
-                    可选资产
+                    本镜头可用资产
                 </div>
-                <div className="text-[11px] text-stone-500">点击插入，也可以输入 @ 搜索</div>
+                <div className="text-[11px] text-stone-500">未加入的资产不会提交给视频模型</div>
             </div>
             {options.length ? (
                 <div className="thin-scrollbar flex max-h-32 gap-2 overflow-x-auto pb-1">
-                    {options.map((reference) => (
-                        <button
+                    {options.map((reference) => {
+                        const active = selectedMentions.has(reference.mention);
+                        return <button
                             key={`${reference.source || "reference"}-${reference.assetId || reference.nodeId || reference.mention}`}
                             type="button"
                             className="flex w-40 shrink-0 items-center gap-2 rounded-lg border px-2 py-2 text-left text-xs transition hover:border-blue-400 hover:bg-blue-500/10"
-                            style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.text }}
-                            title={`插入 ${reference.mention}`}
+                            style={{ borderColor: active ? selectionBlue : theme.node.stroke, background: active ? `${selectionBlue}1a` : theme.node.fill, color: theme.node.text }}
+                            title={`${active ? "移除" : "加入"} ${reference.mention}`}
                             onPointerDown={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
@@ -1709,18 +1720,19 @@ function StoryboardPromptAssetPicker({ references, theme, onSelect }: { referenc
                             onClick={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
-                                onSelect(reference);
+                                onToggle(reference);
                             }}
                         >
                             <span className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-black/10">
                                 {reference.url || reference.storageKey ? <StoryboardAssetPreviewImage src={reference.storageKey || reference.url || ""} alt={reference.name || reference.mention} /> : <span className="grid size-full place-items-center"><ImageIcon className="size-4 opacity-55" /></span>}
+                                <span className={`absolute bottom-0 left-0 right-0 py-0.5 text-center text-[9px] font-semibold text-white ${active ? "bg-blue-500" : "bg-black/45"}`}>{active ? "已加入" : "未加入"}</span>
                             </span>
                             <span className="min-w-0 flex-1">
                                 <span className="block truncate font-semibold">{reference.mention}</span>
                                 <span className="mt-0.5 block truncate opacity-60">{storyboardReferenceOptionLabel(reference)}</span>
                             </span>
-                        </button>
-                    ))}
+                        </button>;
+                    })}
                 </div>
             ) : (
                 <div className="rounded-lg border border-dashed border-stone-300 px-3 py-3 text-center text-xs text-stone-500 dark:border-stone-700">当前剧本还没有可引用资产</div>
@@ -1762,25 +1774,24 @@ function storyboardReferenceAssetCandidates(references: StoryboardVideoReference
     return dedupeStoryboardReferences([...references, ...scriptReferences, ...materialReferences]);
 }
 
-function storyboardVideoReferencesFromPrompt(prompt: string, current: StoryboardVideoReference[], candidates: StoryboardVideoReference[]) {
-    const knownMentions = dedupeStoryboardReferences([...current, ...candidates]).map((item) => item.mention).filter((mention) => prompt.includes(mention));
-    const mentions = Array.from(new Set([...knownMentions, ...storyboardPromptMentions(prompt)]))
-        .filter((mention) => !knownMentions.some((known) => known !== mention && known.startsWith(`${mention} `)))
-        .sort((a, b) => prompt.indexOf(a) - prompt.indexOf(b));
-    if (!mentions.length) return current;
-    const candidateByMention = new Map(candidates.map((item) => [item.mention, item]));
-    const currentByMention = new Map(current.map((item) => [item.mention, item]));
-    return dedupeStoryboardReferences(mentions.map((mention) => {
-        const matched = currentByMention.get(mention) || candidateByMention.get(mention) || findMentionPrefixReference(mention, [...current, ...candidates]);
-        if (matched) return { ...matched, mention: matched.mention, name: matched.name || matched.mention.replace(/^@/, ""), role: matched.role || "reference", status: matched.status || ("bound" as const) };
-        return { mention, name: mention.replace(/^@/, ""), role: "reference" as const, status: "missing" as const };
-    }));
+function storyboardMissingContextReferences(prompt: string, selected: StoryboardVideoReference[], candidates: StoryboardVideoReference[]) {
+    const selectedKeys = new Set(selected.map(storyboardReferenceContextKey));
+    const missingKeys = new Set<string>();
+    return candidates.filter((reference) => {
+        if (reference.kind !== "character" && reference.kind !== "scene") return false;
+        const key = storyboardReferenceContextKey(reference);
+        if (selectedKeys.has(key) || missingKeys.has(key)) return false;
+        const name = (reference.name || reference.mention).replace(/^@/, "");
+        const baseName = name.split(/[·（(]/)[0]?.trim() || name;
+        if (!prompt.includes(reference.mention) && !prompt.includes(name) && (baseName.length < 2 || !prompt.includes(baseName))) return false;
+        missingKeys.add(key);
+        return true;
+    });
 }
 
-function findMentionPrefixReference(mention: string, references: StoryboardVideoReference[]) {
-    return [...references]
-        .filter((item) => item.mention && item.mention !== mention && item.mention.replace(/^@/, "").length >= 2 && mention.startsWith(item.mention))
-        .sort((a, b) => b.mention.length - a.mention.length)[0];
+function storyboardReferenceContextKey(reference: StoryboardVideoReference) {
+    const name = (reference.name || reference.mention).replace(/^@/, "");
+    return (name.split(/[·（(]/)[0]?.trim() || name).replace(/-(?:多角度锁定图|正面|左侧|右侧|俯视|背面|左前45度|右前45度|左后45度|右后45度)$/, "");
 }
 
 function dedupeStoryboardReferences(references: StoryboardVideoReference[]) {
@@ -1791,10 +1802,6 @@ function dedupeStoryboardReferences(references: StoryboardVideoReference[]) {
         seen.add(mention);
         return true;
     });
-}
-
-function storyboardPromptMentions(text: string) {
-    return Array.from(new Set(Array.from(text.matchAll(/@([^\s@，、。；;：:,.!?！？()[\]{}]+)/g)).map((match) => normalizeStoryboardMention(match[1])))).filter(Boolean);
 }
 
 function storyboardReferenceToMentionLink(reference: StoryboardVideoReference): StoryboardAssetMentionLink {
@@ -1865,12 +1872,14 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
     if (!references?.length) return "";
     const firstFrames = references.filter((item) => item.role === "firstFrame");
     const sceneLocks = references.filter((item) => item.role === "sceneLock");
+    const subjectReferences = references.filter((item) => (item.role || "reference") === "reference");
     const lastFrames = references.filter((item) => item.role === "lastFrame");
-    if (!firstFrames.length && !sceneLocks.length && !lastFrames.length) return "";
+    if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
         "视频连续性要求：",
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
         sceneLocks.length ? `- 以场景锁定参考图统一同一地点的空间结构、门窗位置、材质、道具摆放、光线方向和时代质感：${sceneLocks.map((item) => item.mention).join("、")}；如果参考图是多角度 sheet，只用于理解空间关系，不要生成分屏、拼图或多宫格画面。` : "",
+        subjectReferences.length ? `- 以主体参考图锁定对应角色的脸型、发型、年龄状态、体态、服装和画风，以及关键道具外观：${subjectReferences.map((item) => item.mention).join("、")}；每张图只控制对应主体，不要混合身份或互换外观。` : "",
         lastFrames.length ? `- 视频动作和镜头运动需要自然过渡到尾帧参考图对应的结束状态：${lastFrames.map((item) => item.mention).join("、")}` : "",
         "- 保持人物身份、服装、场景、光影和空间关系连续；同一镜头只使用一个主运镜，换角度时不要重塑场景结构。",
     ]
