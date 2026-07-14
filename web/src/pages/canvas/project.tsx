@@ -2925,12 +2925,12 @@ function InfiniteCanvasPage() {
             try {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
                 for (const index of indexes) {
-                    const source = buildStoryboardPromptComposeSource(scriptNode, rows, index);
                     let detail: StoryboardPromptDetail | null = null;
                     let lastError = "合成提示词失败";
                     for (let attempt = 0; attempt < 3 && !detail; attempt += 1) {
                         let answer = "";
                         try {
+                            const source = buildStoryboardPromptComposeSource(scriptNode, rows, index, attempt > 0);
                             answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction}\n\n${source}` }], () => {}, { signal: controller.signal });
                             detail = parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []);
                         } catch (error) {
@@ -6331,6 +6331,20 @@ function safetyNeutralStoryboardPrompt(text: string) {
         .trim();
 }
 
+function storyboardSafetyComposeText(text: string, strict = false) {
+    const neutral = safetyNeutralStoryboardPrompt(text)
+        .replace(/婴儿|新生儿|宝宝/g, "家庭新成员")
+        .replace(/夭折|死亡|去世/g, "离世")
+        .replace(/癌症|重病|绝症/g, "健康困境")
+        .replace(/失去(?:女儿|儿子|孩子)/g, "经历家庭离别")
+        .replace(/肿包|病态|病痛/g, "身体不适");
+    return strict
+        ? neutral
+              .replace(/年轻女性角色|年轻角色/g, "家庭成员")
+              .replace(/受伤|生病|高烧|住院|诊所/g, "经历健康与生活困境")
+        : neutral;
+}
+
 function friendlyGenerationError(error: unknown, fallback: string) {
     const raw = error instanceof Error ? error.message : fallback;
     if (!/safety system|rejected by the safety|safety/i.test(raw)) return raw;
@@ -6985,24 +6999,30 @@ function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storage
     return Boolean(asset.imageUrl || asset.storageKey);
 }
 
-function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number) {
+function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number, strictSafety = false) {
     const row = rows[rowIndex] || [];
     const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
-    const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const episodeAssets = (node.metadata?.storyboardAssets || []).filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
-    const assetLines = assets.length ? assets.map(storyboardPromptAssetLine).join("\n") : "暂无资产，请只根据镜头内容提炼，并在 assetMentions 里返回空数组。";
+    const assets = storyboardRelevantPromptAssets(episodeAssets, sourceBeats, row, shotPlan).filter((asset) => !strictSafety || !storyboardAssetHasSafetyRisk(asset));
+    const assetLines = assets.length ? assets.map((asset) => storyboardPromptAssetLine(asset, strictSafety)).join("\n") : "本片段不传入角色或场景资产，请使用环境、道具、成年人反应或象征画面安全呈现，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
-    const contextRows = rows
+    const contextRows = strictSafety ? "" : rows
         .slice(contextStart, Math.min(rows.length, rowIndex + 2))
-        .map((item, offset) => `${contextStart + offset === rowIndex ? "当前片段" : "相邻片段"}：${storyboardRowSummary(item)}`)
+        .map((item, offset) => `${contextStart + offset === rowIndex ? "当前片段" : "相邻片段"}：${storyboardSafetyComposeText(storyboardRowSummary(item))}`)
         .join("\n");
+    const safeSourceBeats = sourceBeats.map((beat) => ({ ...beat, sourceText: storyboardSafetyComposeText(beat.sourceText, strictSafety), event: storyboardSafetyComposeText(beat.event, strictSafety), emotion: storyboardSafetyComposeText(beat.emotion, strictSafety) }));
+    const safeShotPlan = shotPlan ? { ...shotPlan, timeStage: storyboardSafetyComposeText(shotPlan.timeStage, strictSafety), startState: storyboardSafetyComposeText(shotPlan.startState, strictSafety), endState: storyboardSafetyComposeText(shotPlan.endState, strictSafety) } : undefined;
+    const safeRow = row.map((cell) => storyboardSafetyComposeText(cell, strictSafety));
+    const directorInstruction = storyboardDirectorInstructionForNode(node);
     return [
-        storyboardSourceTextForNode(node) ? `原始剧本或补充要求：\n${storyboardSourceTextForNode(node)}` : "",
-        node.metadata?.storyboardAssetStyle ? `全局风格：\n${node.metadata.storyboardAssetStyle}` : "",
-        shotPlan ? `本片段事实与连续性计划：\n${JSON.stringify({ sourceBeats, ...shotPlan })}` : "",
+        directorInstruction ? `整体要求/导演提示词：\n${storyboardSafetyComposeText(directorInstruction, strictSafety)}` : "",
+        node.metadata?.storyboardAssetStyle ? `全局风格：\n${storyboardSafetyComposeText(node.metadata.storyboardAssetStyle, strictSafety)}` : "",
+        safeShotPlan ? `本片段事实与连续性计划：\n${JSON.stringify({ sourceBeats: safeSourceBeats, ...safeShotPlan })}` : "",
         buildSeedanceStoryboardPromptContext(node, rowIndex, assets),
-        `当前片段：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${row[colIndex] || ""}`).join("\n")}`,
+        strictSafety ? "安全呈现要求：不直接展示年少角色处于疾病、伤害、死亡、受害或极端困境的过程；优先使用空房间、熄灯、遗留物件、环境变化、成年人克制反应和旁白蒙太奇，保持原有事实结果不变。" : "",
+        `当前片段：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${safeRow[colIndex] || ""}`).join("\n")}`,
         contextRows ? `前后片段上下文：\n${contextRows}` : "",
         `第二步资产清单：\n${assetLines}`,
     ]
@@ -7010,9 +7030,30 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
         .join("\n\n");
 }
 
-function storyboardPromptAssetLine(asset: StoryboardAsset) {
-    const state = asset.kind === "character" ? [asset.baseName ? `本名：${asset.baseName}` : "", asset.lifeStage ? `状态：${asset.lifeStage}` : ""].filter(Boolean).join("，") : "";
-    return `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}${state ? `｜${state}` : ""}｜${asset.description || asset.prompt || "无描述"}`;
+function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
+    const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
+    const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
+    return assets
+        .map((asset) => {
+            const identityMatch = [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
+            const sceneOrPropMatch = asset.kind !== "character" && evidence.includes(asset.name);
+            const stateMatch = !asset.lifeStage || evidence.includes(asset.lifeStage) || Boolean(shotPlan?.timeStage && (shotPlan.timeStage.includes(asset.lifeStage) || asset.lifeStage.includes(shotPlan.timeStage)));
+            return { asset, score: (identityMatch ? 4 : 0) + (sceneOrPropMatch ? 3 : 0) + (stateMatch ? 1 : 0) };
+        })
+        .filter((item) => item.score > 1)
+        .sort((first, second) => second.score - first.score)
+        .slice(0, 6)
+        .map((item) => item.asset);
+}
+
+function storyboardAssetHasSafetyRisk(asset: StoryboardAsset) {
+    return /婴儿|新生儿|宝宝|儿童|小孩|幼女|未成年|残疾|残废|瘸|跛|断腿|夭折|死亡|去世|伤口|血迹|受虐|虐待|癌症|重病/.test([asset.name, asset.lifeStage, asset.description, asset.prompt].filter(Boolean).join(" "));
+}
+
+function storyboardPromptAssetLine(asset: StoryboardAsset, strictSafety = false) {
+    const state = asset.kind === "character" ? [asset.baseName ? `本名：${asset.baseName}` : "", asset.lifeStage ? `状态：${storyboardSafetyComposeText(asset.lifeStage, strictSafety)}` : ""].filter(Boolean).join("，") : "";
+    const description = strictSafety ? `${ASSET_KIND_TEXT[asset.kind]}身份与画风参考` : storyboardSafetyComposeText(asset.description || asset.prompt || "无描述");
+    return `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}${state ? `｜${state}` : ""}｜${description}`;
 }
 
 function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: number, assets: StoryboardAsset[]) {
