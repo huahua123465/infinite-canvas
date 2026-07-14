@@ -105,6 +105,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
 
 async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string, options?: RequestOptions): Promise<Blob> {
     const reference = options?.referenceAudios?.[0];
+    const targetPitchHz = reference ? null : voxCpmTargetPitchHz(config.audioInstructions);
     try {
         const response = await axios.post<Blob>(
             aiApiUrl(config, "/audio/speech"),
@@ -118,6 +119,7 @@ async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string
                 ...(reference ? { reference_audio: await referenceAudioDataUrl(reference, options?.signal) } : {}),
                 ...(reference && options?.promptText?.trim() ? { prompt_text: options.promptText.trim() } : {}),
                 ...(options?.seed ? { seed: options.seed } : {}),
+                ...(targetPitchHz ? { candidate_count: 3, target_pitch_hz: targetPitchHz } : {}),
             },
             { headers: aiHeaders(config), responseType: "blob", signal: options?.signal },
         );
@@ -371,8 +373,27 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string, options
         referenceAudios: (options?.referenceAudios || []).map((audio) => ({ id: audio.id, storageKey: audio.storageKey, url: audio.url, durationMs: audio.durationMs })),
         promptText: options?.promptText?.trim() || "",
         seed: options?.seed || null,
+        targetPitchHz: provider.kind === "voxcpm" ? voxCpmTargetPitchHz(requestConfig.audioInstructions) : null,
     });
     return `audio-preview:${await sha256(payload)}`;
+}
+
+function voxCpmTargetPitchHz(instructions: string) {
+    const text = instructions.trim();
+    if (/女婴/.test(text)) return 320;
+    if (/男婴/.test(text)) return 290;
+    if (/婴儿|宝宝|襁褓/.test(text)) return 305;
+    if (/女孩|女童/.test(text)) return 255;
+    if (/男孩|男童/.test(text)) return 225;
+    if (/少女/.test(text)) return 220;
+    if (/少年|变声期/.test(text)) return 160;
+    if (/老年中国女性|老年女性/.test(text)) return 175;
+    if (/中年中国女性|中年女性/.test(text)) return 185;
+    if (/年轻中国女性|成年中国女性|年轻女性|成年女性/.test(text)) return 205;
+    if (/老年中国男性|老年男性/.test(text)) return 105;
+    if (/中年中国男性|中年男性/.test(text)) return 110;
+    if (/年轻中国男性|成年中国男性|年轻男性|成年男性/.test(text)) return 120;
+    return null;
 }
 
 async function sha256(value: string) {

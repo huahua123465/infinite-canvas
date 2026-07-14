@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 
 import soundfile as sf
+import torch
+import torchaudio
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +45,8 @@ class SpeechRequest(BaseModel):
     cfg_value: float = Field(default=2, ge=1, le=3)
     inference_timesteps: int = Field(default=10, ge=1, le=50)
     seed: int | None = None
+    candidate_count: int = Field(default=1, ge=1, le=3)
+    target_pitch_hz: float | None = Field(default=None, ge=70, le=450)
 
 
 app = FastAPI(title="Infinite Canvas VoxCPM Service", version="1.0.0")
@@ -89,6 +93,24 @@ def build_text(request: SpeechRequest):
     return f"({control}){text}" if control else text
 
 
+def estimate_pitch_hz(audio, sample_rate: int):
+    waveform = torch.as_tensor(audio, dtype=torch.float32).flatten()
+    if waveform.numel() < sample_rate // 2:
+        return None
+    pitch = torchaudio.functional.detect_pitch_frequency(
+        waveform.unsqueeze(0),
+        sample_rate,
+        frame_time=0.02,
+        win_length=10,
+        freq_low=65,
+        freq_high=450,
+    ).flatten()
+    voiced = pitch[(pitch >= 65) & (pitch <= 450)]
+    if voiced.numel() < 3:
+        return None
+    return float(torch.median(voiced).item())
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "model": MODEL_ID, "device": DEVICE, "loaded": model is not None, "runtime_dir": str(RUNTIME_DIR), "hf_hub_cache": os.environ.get("HF_HUB_CACHE", "")}
@@ -106,17 +128,24 @@ def speech(request: SpeechRequest):
         reference_path = create_reference_file(request.reference_audio)
         with model_lock:
             current_model = get_model()
-            kwargs = {
-                "text": build_text(request),
-                "cfg_value": request.cfg_value,
-                "inference_timesteps": request.inference_timesteps,
-                "seed": request.seed,
-            }
-            if reference_path:
-                kwargs["reference_wav_path"] = str(reference_path)
-            if reference_path and request.prompt_text:
-                kwargs.update(prompt_wav_path=str(reference_path), prompt_text=request.prompt_text.strip())
-            audio = current_model.generate(**kwargs)
+            candidates = []
+            count = request.candidate_count if request.target_pitch_hz and not reference_path else 1
+            for index in range(count):
+                kwargs = {
+                    "text": build_text(request),
+                    "cfg_value": request.cfg_value,
+                    "inference_timesteps": request.inference_timesteps,
+                    "seed": request.seed + index if request.seed is not None else None,
+                }
+                if reference_path:
+                    kwargs["reference_wav_path"] = str(reference_path)
+                if reference_path and request.prompt_text:
+                    kwargs.update(prompt_wav_path=str(reference_path), prompt_text=request.prompt_text.strip())
+                candidate = current_model.generate(**kwargs)
+                pitch = estimate_pitch_hz(candidate, current_model.tts_model.sample_rate)
+                score = abs(pitch - request.target_pitch_hz) if pitch is not None and request.target_pitch_hz else float("inf")
+                candidates.append((score, candidate))
+            audio = min(candidates, key=lambda item: item[0])[1]
             output = io.BytesIO()
             sf.write(output, audio, current_model.tts_model.sample_rate, format="WAV")
         return Response(output.getvalue(), media_type="audio/wav", headers={"Content-Disposition": "inline; filename=voxcpm.wav"})
