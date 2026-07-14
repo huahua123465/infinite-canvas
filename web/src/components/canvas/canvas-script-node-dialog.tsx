@@ -92,6 +92,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const staticShotCount = activeRowIndexes.length - dynamicIndexes.length;
     const readyAssets = assets.filter(storyboardAssetReady).length;
     const missingAssets = assets.length - readyAssets;
+    const visibleAssetError = assets.length > 0 && missingAssets === 0 ? "" : assetError;
     const storedBatchProgress = node?.metadata?.storyboardAssetBatchProgress;
     const batchProgress = storedBatchProgress ? { ...storedBatchProgress, status: readyAssets === assets.length ? "completed" as const : storedBatchProgress.status === "running" && actionKey !== "asset:all" ? "interrupted" as const : storedBatchProgress.status, total: assets.length, completed: readyAssets, failed: assets.filter((asset) => asset.status === "error").length } : undefined;
     const preparingAssets = actionKey === "asset:prepare";
@@ -268,7 +269,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 assets={assets}
                                 groupedAssets={groupedAssets}
                                 style={style}
-                                error={assetError}
+                                error={visibleAssetError}
                                 batchProgress={batchProgress}
                                 onPrepareAssets={onPrepareAssets}
                                 onSelectAsset={setEditingAssetId}
