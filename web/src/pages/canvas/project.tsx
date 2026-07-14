@@ -314,15 +314,15 @@ JSON 格式必须为：
 3. 场景优先提炼时代、空间、光线、陈设、地域质感。
 4. 道具优先提炼剧情里反复出现或情绪关键的物件。
 5. style 和每个 prompt 必须继承原始剧本或补充要求里的整体风格、画风、视角和禁忌；例如要求皮克斯动画电影风、3D 渲染、温暖柔和色彩时，资产提示词必须以这些风格词开头，不要改成写实纪实、真实摄影、真人电影感或其他风格。
-6. 输入若包含“镜头时期索引”，必须按 timeStage 为反复出现的同一人物拆分独立时期资产，名称使用“人物名·时期”，不得让童年、年轻、成年、晚年共用一张角色图。
+6. 输入若包含“镜头时期索引”，必须按 timeStage 为反复出现的同一人物拆分独立时期资产，名称使用“人物名·时期”，不得让年少、青年、成年、晚年共用一张角色图。
 7. 资产必须覆盖完整分镜，不得只读取前几个镜头；同一场景跨镜复用时只建一个场景资产，不同地点或时代布局必须拆开。
 8. prompt 要能直接用于生图，包含画风、主体、构图、光影、材质和一致性要求。
 9. scene 类型必须是纯场景空镜，只写环境、空间、陈设、光线、时代和地域质感，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人入镜”。
 10. prop 类型必须是纯道具静物图，只写物件本身、材质、磨损、摆放环境和光影，prompt 必须明确“不出现人物、不出现角色、不出现人脸、不出现手部、无人持握”。遗照、照片、证件、奖状等必须作为道具静物呈现，可以出现照片/证件里的图像内容，但现场画面不能出现真实人物。
-9. 同一人物如果在剧本或分镜中出现不同年龄、时期、身份状态或造型阶段，必须拆成多个 character 资产；不要把童年、青年、成年、老年等多个状态塞进一张角色资产图。命名必须能区分状态，例如“白秋妹·年轻时期”“白秋妹·成年时期”“哥哥·童年”“哥哥·成年”。baseName 保留同一人物本名，lifeStage 写该资产唯一对应的年龄/时期。
+9. 同一人物如果在剧本或分镜中出现不同年龄、时期、身份状态或造型阶段，必须拆成多个 character 资产；不要把年少、青年、成年、老年等多个状态塞进一张角色资产图。命名必须能区分状态，例如“白秋妹·年少时期”“白秋妹·成年时期”“哥哥·年少时期”“哥哥·成年时期”。baseName 保留同一人物本名，lifeStage 写该资产唯一对应的年龄/时期。
 10. 每个 character prompt 只能描述一个角色的一个年龄状态，必须明确“单一角色设定图、只展示该年龄状态、不要出现其他年龄版本、不要出现同一人物成长时间线、不要出现多人合照”。如果需要表现同一角色的多个角度，只能是同一年龄状态的正面、侧面、背面、半身和表情参考。
 11. 角色资产图格式统一为横向角色设定图：干净背景，单一角色，同一脸型、发型、体型、服装、配色和画风；包含正面全身主视图，并可包含侧面、背面、半身头像和表情小参考；不要剧情场景、不要分镜画面、不要文字标注、Logo、水印或边框。
-12. 角色资产安全改写只调整敏感细节，不得改变项目画风：如果剧本里写“少女、十几岁、未成年、小孩”等，使用“年少时期角色/年少时期女性角色”；如果写“残疾、残废、瘸、断腿”等，使用“行动不便”；如果写“瘦小、瘦弱、破旧、破烂、草鞋、苦难”等，使用“身形单薄、朴素旧衣、旧布鞋、生活艰难”。不要写受伤、受害、血迹、虐待、裸露或刺激性痛苦细节，也不要因此强制改成虚拟、动画或漫画角色。
+12. 角色资产安全表达只调整敏感细节，不得改变项目画风：统一使用“年少时期角色/年少时期女性角色”“行动不便”“身形单薄”“朴素旧衣”“旧布鞋”“生活艰难”等中性视觉表达；不要加入刺激性经历、具体诊断、冲突过程或伤害细节，也不要因此强制改成虚拟、动画或漫画角色。
 13. 不要编造与剧本冲突的人物关系和物件。`;
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
@@ -2378,21 +2378,25 @@ function InfiniteCanvasPage() {
                 const activeBeats = (scriptNode.metadata?.storyboardSourceBeats || []).filter((beat) => activeBeatIds.has(beat.id));
                 const activeEpisodeId = scriptNode.metadata?.storyboardActiveChapterId || scriptNode.metadata?.storyboardChapters?.[0]?.id;
                 const activeEpisodeTitle = scriptNode.metadata?.storyboardChapters?.find((episode) => episode.id === activeEpisodeId)?.title || "当前集";
-                const source = [
-                    `当前生产集：${activeEpisodeTitle}`,
-                    activeBeats.length ? `当前集故事事实：\n${JSON.stringify(activeBeats)}` : "",
-                    `当前集精简片段表：\n${storyboardAssetRowsToMarkdownForCanvas(episodeRows)}`,
-                    storyboardAssetPlanningIndex(scriptNode, activeIndexes),
-                ]
-                    .filter(Boolean)
-                    .join("\n\n");
+                let source = storyboardAssetPlanningSource(scriptNode, activeEpisodeTitle, activeBeats, episodeRows, activeIndexes);
                 updateProgress(28, "提交资产识别请求");
-                let hasDelta = false;
-                const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_ASSET_PROMPT}\n\n${source}` }], () => {
-                    if (hasDelta) return;
-                    hasDelta = true;
-                    updateProgress(70, "模型返回中，整理角色与场景");
-                });
+                const requestAssets = (requestSource: string) => {
+                    let hasDelta = false;
+                    return requestImageQuestion(generationConfig, [{ role: "user", content: `${STORYBOARD_ASSET_PROMPT}\n\n${requestSource}` }], () => {
+                        if (hasDelta) return;
+                        hasDelta = true;
+                        updateProgress(70, "模型返回中，整理角色与场景");
+                    });
+                };
+                let answer: string;
+                try {
+                    answer = await requestAssets(source);
+                } catch (error) {
+                    if (!isSafetyGenerationError(error)) throw error;
+                    updateProgress(48, "内容审核拦截，使用严格安全摘要重试");
+                    source = storyboardAssetPlanningSource(scriptNode, activeEpisodeTitle, activeBeats, episodeRows, activeIndexes, true);
+                    answer = await requestAssets(source);
+                }
                 updateProgress(86, "解析角色、场景和道具");
                 const parsed = alignStoryboardAssetsWithSourceStyle(parseStoryboardAssetAnswer(answer), source);
                 const mergedAssets = mergeStoryboardEpisodeAssets(scriptNode.metadata?.storyboardAssets || [], parsed.assets, activeEpisodeId);
@@ -2418,7 +2422,7 @@ function InfiniteCanvasPage() {
                 );
                 message.success(`当前集资产已识别，项目资产库共 ${mergedAssets.length} 个`);
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : "识别资产失败";
+                const errorMessage = friendlyGenerationError(error, "识别资产失败");
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...scriptNode.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage, storyboardAssetProgress: undefined } } : item)));
                 message.error(errorMessage);
             } finally {
@@ -7455,7 +7459,44 @@ function storyboardRowsToMarkdownForCanvas(rows: string[][]) {
     return [`| ${STORYBOARD_COLUMNS.join(" | ")} |`, `| ${STORYBOARD_COLUMNS.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${STORYBOARD_COLUMNS.map((_, index) => (row[index] || "").replace(/\n/g, " ")).join(" | ")} |`)].join("\n");
 }
 
-function storyboardAssetRowsToMarkdownForCanvas(rows: string[][]) {
+function storyboardAssetPlanningSource(node: CanvasNodeData, episodeTitle: string, beats: StoryboardSourceBeat[], rows: string[][], rowIndexes: number[], strict = false) {
+    const safeBeats = beats.map((beat) => ({
+        id: beat.id,
+        phase: storyboardAssetSafetyText(beat.phase, strict),
+        timeStage: storyboardAssetSafetyText(beat.timeStage, strict),
+        location: storyboardAssetSafetyText(beat.location, strict),
+        characters: beat.characters.map((character) => storyboardAssetSafetyText(character, strict)),
+        event: storyboardAssetSafetyText(beat.event, strict),
+        emotion: storyboardAssetSafetyText(beat.emotion, strict),
+        treatment: beat.treatment,
+    }));
+    return [
+        `当前生产集：${storyboardAssetSafetyText(episodeTitle, strict)}`,
+        safeBeats.length ? `当前集故事事实（安全摘要）：\n${JSON.stringify(safeBeats)}` : "",
+        `当前集精简片段表（安全摘要）：\n${storyboardAssetRowsToMarkdownForCanvas(rows, strict)}`,
+        storyboardAssetPlanningIndex(node, rowIndexes, strict),
+    ]
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+function storyboardAssetSafetyText(text: string, strict = false) {
+    const safe = storyboardSafetyComposeText(text)
+        .replace(/婴儿|新生儿|宝宝|襁褓|摇篮|婴儿衣物/g, "家庭新成员阶段")
+        .replace(/怀孕|孕期|孕妇|分娩|生产/g, "家庭生活阶段")
+        .replace(/童年|幼年|年幼|孩童/g, "年少时期")
+        .replace(/住院|诊所|医院|病床|病房/g, "室内照护空间")
+        .replace(/死亡|去世|夭折|早逝|病逝/g, "家庭关系发生不可逆变化")
+        .replace(/受伤|生病|高烧|手术|急救/g, "生活状态发生变化");
+    return strict
+        ? safe
+              .replace(/行动不便|左腿不便|行动受限/g, "行动方式有差异")
+              .replace(/家庭关系发生不可逆变化/g, "家庭关系发生变化")
+              .replace(/身体不适|健康困境/g, "生活状态发生变化")
+        : safe;
+}
+
+function storyboardAssetRowsToMarkdownForCanvas(rows: string[][], strict = false) {
     const columns = [
         ["镜号", 0],
         ["画面描述", 2],
@@ -7464,19 +7505,19 @@ function storyboardAssetRowsToMarkdownForCanvas(rows: string[][]) {
         ["音效", 6],
         ["运镜", 7],
     ] as const;
-    return [`| ${columns.map(([title]) => title).join(" | ")} |`, `| ${columns.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${columns.map(([, index]) => compactStoryboardAssetCell(row[index] || "")).join(" | ")} |`)].join("\n");
+    return [`| ${columns.map(([title]) => title).join(" | ")} |`, `| ${columns.map(() => "---").join(" | ")} |`, ...rows.map((row) => `| ${columns.map(([, index]) => compactStoryboardAssetCell(index === 0 ? row[index] || "" : storyboardAssetSafetyText(row[index] || "", strict))).join(" | ")} |`)].join("\n");
 }
 
-function storyboardAssetPlanningIndex(node: CanvasNodeData, rowIndexes?: number[]) {
+function storyboardAssetPlanningIndex(node: CanvasNodeData, rowIndexes?: number[], strict = false) {
     const plans = node.metadata?.storyboardShotPlans || {};
     const beats = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const included = rowIndexes ? new Set(rowIndexes.map(String)) : null;
     const index = Object.entries(plans).filter(([rowIndex]) => !included || included.has(rowIndex)).map(([rowIndex, plan]) => ({
         shot: Number(rowIndex) + 1,
-        timeStage: plan.timeStage,
+        timeStage: storyboardAssetSafetyText(plan.timeStage, strict),
         continuityGroupId: plan.continuityGroupId,
-        characters: Array.from(new Set(plan.sourceBeatIds.flatMap((id) => beats.get(id)?.characters || []))),
-        location: Array.from(new Set(plan.sourceBeatIds.map((id) => beats.get(id)?.location).filter(Boolean))),
+        characters: Array.from(new Set(plan.sourceBeatIds.flatMap((id) => (beats.get(id)?.characters || []).map((character) => storyboardAssetSafetyText(character, strict))))),
+        location: Array.from(new Set(plan.sourceBeatIds.map((id) => storyboardAssetSafetyText(beats.get(id)?.location || "", strict)).filter(Boolean))),
     }));
     return index.length ? `镜头时期索引：\n${JSON.stringify(index)}` : "";
 }
