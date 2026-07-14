@@ -155,10 +155,10 @@ export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
     if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
-    if (/内容策略|策略拦截|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "请调整参考图或使用更中性的提示词，不要原样重试。" };
+    if (/内容策略|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "请调整参考图或使用更中性的提示词，不要原样重试。" };
     if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
     if (/timeout|超时|expired|长时间未完成/.test(value)) return { kind: "timeout", label: "任务等待超时", advice: "任务 ID 已保留，请优先查询原任务，不要直接重复提交。" };
-    if (/network error|网络|failed to fetch|查询失败|connection|cors/.test(value)) return { kind: "network", label: "网络或查询中断", advice: "请使用原任务 ID 继续查询，避免重新提交任务。" };
+    if (/network error|网络|failed to fetch|查询失败|视频地址.*(?:下载失败|不可播放|已失效)|视频下载结果为空|connection|cors/.test(value)) return { kind: "network", label: "视频结果未接回", advice: "请使用原任务 ID 继续查询，避免重新提交任务。" };
     return { kind: "unknown", label: "生成失败", advice: "请查看原始错误，调整模型、参考素材或提示词后再试。" };
 }
 
@@ -448,15 +448,24 @@ async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
 }
 
 async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
+    let downloadError: unknown;
     try {
         const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal });
         await assertVideoBlob(response.data);
         return { blob: response.data };
     } catch (error) {
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
+        downloadError = error;
         const blob = await downloadVideoViaAgent(url, options).catch(() => null);
         if (blob) return { blob };
-        return { url, mimeType: "video/mp4" };
+        try {
+            await assertPlayableVideoSource(url, options?.signal);
+            return { url, mimeType: "video/mp4" };
+        } catch (playbackError) {
+            if (playbackError instanceof DOMException && playbackError.name === "AbortError") throw playbackError;
+            const status = axios.isAxiosError(downloadError) ? downloadError.response?.status : undefined;
+            throw new Error(`平台任务已完成，但返回的视频地址${status ? `下载失败（${status}）` : "无法下载且不可播放"}。任务 ID 已保留，请点击“查询原任务”；不要直接重新生成，以免重复扣费。\n\n结果地址：${url}`);
+        }
     }
 }
 
@@ -709,15 +718,51 @@ function statusMessage(status: number | undefined, fallback: string) {
 }
 
 async function assertVideoBlob(blob: Blob) {
-    if (!blob.type.includes("json")) return;
-    let payload: { code?: number; msg?: string; error?: { message?: string } };
-    try {
-        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
-    } catch {
-        return;
+    if (!blob.size) throw new Error("视频下载结果为空文件");
+    if (blob.type.includes("json")) {
+        let payload: { code?: number; msg?: string; error?: { message?: string } };
+        try {
+            payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
+        } catch {
+            throw new Error("视频下载接口返回了无效 JSON");
+        }
+        if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "视频下载失败");
+        if (payload.error?.message) throw new Error(payload.error.message);
+        throw new Error(payload.msg || "视频下载接口没有返回视频文件");
     }
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "视频下载失败");
-    if (payload.error?.message) throw new Error(payload.error.message);
+    if (typeof document === "undefined") return;
+    const url = URL.createObjectURL(blob);
+    try {
+        await assertPlayableVideoSource(url);
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+function assertPlayableVideoSource(src: string, signal?: AbortSignal) {
+    if (typeof document === "undefined") return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+        const video = document.createElement("video");
+        const finish = (error?: Error | DOMException) => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", abort);
+            video.onloadedmetadata = null;
+            video.onerror = null;
+            video.removeAttribute("src");
+            video.load();
+            error ? reject(error) : resolve();
+        };
+        const abort = () => finish(new DOMException("Aborted", "AbortError"));
+        const timer = window.setTimeout(() => finish(new Error("读取视频信息超时")), 15_000);
+        video.preload = "metadata";
+        video.muted = true;
+        video.onloadedmetadata = () => (video.videoWidth > 0 && video.videoHeight > 0 && video.duration > 0 ? finish() : finish(new Error("视频没有可播放内容")));
+        video.onerror = () => finish(new Error("浏览器无法解码视频"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) return abort();
+        video.src = src;
+        video.load();
+    });
 }
 
 function isPublicMediaUrl(value: string) {
