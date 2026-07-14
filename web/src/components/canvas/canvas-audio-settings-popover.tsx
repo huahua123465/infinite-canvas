@@ -28,7 +28,8 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const modelValue = config.model || config.audioModel;
     const provider = resolveAudioProvider(config, modelValue);
-    const voiceLabel = provider.kind === "volcengine" ? volcengineVoiceLabel(normalizeVolcengineSpeakerValue(config.audioVoice) || config.audioVoice) : audioVoiceLabel(normalizeAudioVoiceForProvider(config, modelValue));
+    const voiceLabel = provider.kind === "volcengine" ? volcengineVoiceLabel(normalizeVolcengineSpeakerValue(config.audioVoice) || config.audioVoice) : provider.kind === "voxcpm" ? "自动音色" : audioVoiceLabel(normalizeAudioVoiceForProvider(config, modelValue));
+    const formatLabel = provider.kind === "voxcpm" ? "WAV" : audioFormatLabel(config.audioFormat);
 
     useEffect(() => {
         if (!open) return;
@@ -59,7 +60,7 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="truncate">
-                        {provider.label} · {voiceLabel} · {audioFormatLabel(config.audioFormat)} · {audioSpeedLabel(config.audioSpeed)}
+                        {provider.label} · {voiceLabel} · {formatLabel} · {audioSpeedLabel(config.audioSpeed)}
                     </span>
                 </Button>
             </span>

@@ -2,10 +2,12 @@ import axios from "axios";
 import localforage from "localforage";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, suggestVolcengineSpeakerForText } from "@/lib/audio-generation";
+import { resolveAudioProvider } from "@/lib/audio-provider";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import type { ReferenceAudio } from "@/types/media";
 
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string };
 export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
 type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
 type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
@@ -67,7 +69,8 @@ function aiHeaders(config: AiConfig) {
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
     let requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     let model = requestConfig.model.trim();
-    if (normalizeVolcengineSpeakerValue(config.audioVoice) && !isVolcengineSpeechConfig(requestConfig, model)) {
+    const selectedProvider = resolveAudioProvider(requestConfig, model);
+    if (selectedProvider.kind !== "voxcpm" && normalizeVolcengineSpeakerValue(config.audioVoice) && !isVolcengineSpeechConfig(requestConfig, model)) {
         const volcengineModel = findVolcengineAudioModel(config);
         if (volcengineModel) {
             requestConfig = resolveModelRequestConfig(config, volcengineModel);
@@ -76,6 +79,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     }
     assertAudioConfig(requestConfig, model);
     if (isVolcengineSpeechConfig(requestConfig, model)) return requestVolcengineSpeech(requestConfig, model, prompt, options);
+    if (resolveAudioProvider(requestConfig, model).kind === "voxcpm") return requestVoxCPMSpeech(requestConfig, model, prompt, options);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
 
@@ -97,6 +101,46 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     } catch (error) {
         throw new Error(await readAxiosError(error, "音频生成失败"));
     }
+}
+
+async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string, options?: RequestOptions): Promise<Blob> {
+    const reference = options?.referenceAudios?.[0];
+    try {
+        const response = await axios.post<Blob>(
+            aiApiUrl(config, "/audio/speech"),
+            {
+                model,
+                input: text,
+                voice: "default",
+                response_format: "wav",
+                speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
+                ...(config.audioInstructions.trim() ? { instructions: config.audioInstructions.trim() } : {}),
+                ...(reference ? { reference_audio: await referenceAudioDataUrl(reference, options?.signal) } : {}),
+                ...(reference && options?.promptText?.trim() ? { prompt_text: options.promptText.trim() } : {}),
+            },
+            { headers: aiHeaders(config), responseType: "blob", signal: options?.signal },
+        );
+        await assertAudioBlob(response.data);
+        return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: "audio/wav" });
+    } catch (error) {
+        throw new Error(await readAxiosError(error, "VoxCPM 音频生成失败"));
+    }
+}
+
+async function referenceAudioDataUrl(reference: ReferenceAudio, signal?: AbortSignal) {
+    let blob = reference.storageKey ? await getMediaBlob(reference.storageKey) : null;
+    if (!blob && reference.url?.startsWith("data:audio/")) return reference.url;
+    if (!blob && reference.url) {
+        const response = await fetch(reference.url, { signal });
+        if (response.ok) blob = await response.blob();
+    }
+    if (!blob) throw new Error("VoxCPM 参考音频不可用");
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("读取 VoxCPM 参考音频失败"));
+        reader.readAsDataURL(blob);
+    });
 }
 
 async function requestVolcengineSpeech(config: AiConfig, resourceId: string, text: string, options?: RequestOptions): Promise<Blob> {
@@ -243,12 +287,13 @@ export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<U
 }
 
 export async function requestStoredAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<StoredAudioFile> {
-    const cacheKey = await audioGenerationCacheKey(config, prompt);
+    const cacheKey = await audioGenerationCacheKey(config, prompt, options);
     const cached = await readLocalAudioCache(cacheKey);
     if (cached) return { ...cached, cacheKey, cacheHit: "local" };
-    const shared = await readSharedAudioCache(cacheKey, config.audioFormat);
+    const format = resolveAudioProvider(config, config.model || config.audioModel).kind === "voxcpm" ? "wav" : config.audioFormat;
+    const shared = options?.referenceAudios?.length ? null : await readSharedAudioCache(cacheKey, format);
     if (shared) return { ...shared, cacheKey, cacheHit: "shared" };
-    const audio = await storeGeneratedAudio(await requestAudioGeneration(config, prompt, options), config.audioFormat);
+    const audio = await storeGeneratedAudio(await requestAudioGeneration(config, prompt, options), format);
     await writeLocalAudioCache(cacheKey, audio);
     return { ...audio, cacheKey };
 }
@@ -303,23 +348,27 @@ function normalizeSharedAudioUrl(url: string) {
     return `/audio/voice-previews/${url.replace(/^\/+/, "")}`;
 }
 
-async function audioGenerationCacheKey(config: AiConfig, prompt: string) {
+async function audioGenerationCacheKey(config: AiConfig, prompt: string, options?: RequestOptions) {
     let requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
-    if (normalizeVolcengineSpeakerValue(requestConfig.audioVoice) && !isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim())) {
+    const selectedProvider = resolveAudioProvider(requestConfig, requestConfig.model);
+    if (selectedProvider.kind !== "voxcpm" && normalizeVolcengineSpeakerValue(requestConfig.audioVoice) && !isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim())) {
         const volcengineModel = findVolcengineAudioModel(config);
         if (volcengineModel) requestConfig = resolveModelRequestConfig(config, volcengineModel);
     }
-    const voice = normalizeAudioVoiceValue(requestConfig.audioVoice);
+    const provider = resolveAudioProvider(requestConfig, requestConfig.model);
+    const voice = provider.kind === "voxcpm" ? "default" : normalizeAudioVoiceValue(requestConfig.audioVoice);
     const model = isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim()) ? normalizeVolcengineResourceId(requestConfig.model, voice) : requestConfig.model.trim();
     const payload = JSON.stringify({
-        v: 1,
+        v: 2,
         baseUrl: requestConfig.baseUrl.trim().replace(/\/+$/, ""),
         model,
         voice,
-        format: normalizeAudioFormatValue(requestConfig.audioFormat),
+        format: provider.kind === "voxcpm" ? "wav" : normalizeAudioFormatValue(requestConfig.audioFormat),
         speed: normalizeAudioSpeedValue(requestConfig.audioSpeed),
         instructions: requestConfig.audioInstructions.trim(),
         prompt: prompt.trim(),
+        referenceAudios: (options?.referenceAudios || []).map((audio) => ({ id: audio.id, storageKey: audio.storageKey, url: audio.url, durationMs: audio.durationMs })),
+        promptText: options?.promptText?.trim() || "",
     });
     return `audio-preview:${await sha256(payload)}`;
 }
@@ -756,7 +805,7 @@ async function assertAudioBlob(blob: Blob) {
 
 async function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; detail?: string; code?: number }>(error)) {
         if (!error.response) {
             const message = error.message || fallback;
             if (/network error/i.test(message) && fallback.includes("本地代理")) return "火山语音合成本地代理没有响应，请确认 Infinite Canvas Agent 正在运行并已连接；如果刚更新代码，请重启本地 Agent 后再试。";
@@ -786,9 +835,9 @@ async function extractAxiosErrorMessage(data: unknown) {
 }
 
 function extractAxiosErrorMessageFromObject(data: object) {
-    const payload = data as { message?: string; msg?: string; code?: string | number; error?: { message?: string; code?: string | number } };
+    const payload = data as { message?: string; msg?: string; detail?: string; code?: string | number; error?: { message?: string; code?: string | number } };
     const code = payload.code || payload.error?.code;
-    const message = payload.msg || payload.message || payload.error?.message;
+    const message = payload.detail || payload.msg || payload.message || payload.error?.message;
     return [code, message].filter(Boolean).join("：");
 }
 

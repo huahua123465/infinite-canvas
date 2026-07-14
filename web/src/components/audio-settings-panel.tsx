@@ -1,4 +1,4 @@
-import { useState, type HTMLAttributes, type ReactNode } from "react";
+import { useEffect, useState, type HTMLAttributes, type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { VolcengineVoiceCloneModal } from "@/components/volcengine-voice-clone-modal";
@@ -24,13 +24,28 @@ type AudioSettingsPanelProps = {
 export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", titleDragHandleProps }: AudioSettingsPanelProps) {
     const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
     const [voiceCloneOpen, setVoiceCloneOpen] = useState(false);
+    const [voxcpmStatus, setVoxcpmStatus] = useState<"checking" | "offline" | "ready" | "loaded">("checking");
     const modelValue = config.model || config.audioModel;
     const provider = resolveAudioProvider(config, modelValue);
     const isVolcengine = provider.kind === "volcengine";
+    const isVoxCPM = provider.kind === "voxcpm";
     const voice = provider.kind === "openai" ? normalizeAudioVoiceForProvider(config, modelValue) : normalizeAudioVoiceValue(config.audioVoice);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const speed = normalizeAudioSpeedValue(config.audioSpeed);
     const volcengineSpeaker = normalizeVolcengineSpeakerValue(config.audioVoice) || DEFAULT_VOLCENGINE_SPEAKER;
+
+    useEffect(() => {
+        if (!isVoxCPM) return;
+        const controller = new AbortController();
+        setVoxcpmStatus("checking");
+        fetch(`${provider.baseUrl.replace(/\/v1\/?$/i, "")}/health`, { signal: controller.signal })
+            .then((response) => response.ok ? response.json() as Promise<{ loaded?: boolean }> : Promise.reject())
+            .then((result) => setVoxcpmStatus(result.loaded ? "loaded" : "ready"))
+            .catch(() => {
+                if (!controller.signal.aborted) setVoxcpmStatus("offline");
+            });
+        return () => controller.abort();
+    }, [isVoxCPM, provider.baseUrl]);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -43,7 +58,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                 ) : null}
-                <SettingGroup title={isVolcengine ? "火山音色 / Voice_type" : "OpenAI 声音"} color={theme.node.muted}>
+                <SettingGroup title={isVolcengine ? "火山音色 / Voice_type" : isVoxCPM ? "VoxCPM 生成方式" : "OpenAI 声音"} color={theme.node.muted}>
                     {provider.kind === "unsupported" ? (
                         <div className="rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             当前音频模型暂不支持生成，请切换到 OpenAI TTS 或火山 OpenSpeech 模型。
@@ -74,6 +89,23 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 试听会调用当前火山语音 API，成功后会写入缓存。
                             </div>
                         </>
+                    ) : isVoxCPM ? (
+                        <div className="space-y-2.5">
+                            <div className="flex items-center gap-2 text-xs" style={{ color: theme.node.muted }}>
+                                <span className="size-1.5 rounded-full" style={{ background: voxcpmStatus === "offline" ? theme.node.faint : voxcpmStatus === "checking" ? theme.node.muted : theme.node.activeStroke }} />
+                                {voxcpmStatus === "offline" ? "本地服务未运行" : voxcpmStatus === "loaded" ? "本地服务可用 · 模型已加载" : voxcpmStatus === "ready" ? "本地服务可用 · 首次生成时加载模型" : "正在检查本地服务"}
+                            </div>
+                            <div className="divide-y border-y text-sm" style={{ borderColor: theme.node.stroke }}>
+                                <div className="flex h-10 items-center justify-between">
+                                    <span>音色设计</span>
+                                    <span className="text-xs" style={{ color: theme.node.muted }}>无参考音频</span>
+                                </div>
+                                <div className="flex h-10 items-center justify-between">
+                                    <span>参考克隆</span>
+                                    <span className="text-xs" style={{ color: theme.node.muted }}>上游音频自动启用</span>
+                                </div>
+                            </div>
+                        </div>
                     ) : (
                         <>
                             <div className="grid grid-cols-3 gap-2.5">
@@ -90,13 +122,17 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     )}
                 </SettingGroup>
                 <SettingGroup title="格式" color={theme.node.muted}>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {audioFormatOptions.map((item) => (
-                            <OptionPill key={item.value} selected={format === item.value} theme={theme} onClick={() => onConfigChange("audioFormat", item.value)}>
-                                {item.label}
-                            </OptionPill>
-                        ))}
-                    </div>
+                    {isVoxCPM ? (
+                        <OptionPill selected theme={theme} onClick={() => onConfigChange("audioFormat", "wav")}>WAV 48 kHz</OptionPill>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {audioFormatOptions.map((item) => (
+                                <OptionPill key={item.value} selected={format === item.value} theme={theme} onClick={() => onConfigChange("audioFormat", item.value)}>
+                                    {item.label}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    )}
                 </SettingGroup>
                 <SettingGroup title="语速" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -119,7 +155,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         onMouseDown={(event) => event.stopPropagation()}
                     />
                 </SettingGroup>
-                <SettingGroup title="声音指令" color={theme.node.muted}>
+                <SettingGroup title={isVoxCPM ? "音色与表演指令" : "声音指令"} color={theme.node.muted}>
                     <textarea
                         value={config.audioInstructions || ""}
                         placeholder="例如：自然、温暖、适合旁白。"

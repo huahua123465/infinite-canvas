@@ -61,6 +61,8 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const CANGYUAN_BASE_URL = "https://ai.cangyuansuanli.cn";
+const VOXCPM_CHANNEL_ID = "local-voxcpm";
+const VOXCPM_MODEL_OPTION = `${VOXCPM_CHANNEL_ID}${CHANNEL_MODEL_SEPARATOR}VoxCPM2`;
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -75,6 +77,14 @@ export const defaultConfig: AiConfig = {
             apiKey: "",
             apiFormat: "openai",
             models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
+        },
+        {
+            id: VOXCPM_CHANNEL_ID,
+            name: "本地 VoxCPM",
+            baseUrl: "http://127.0.0.1:8810/v1",
+            apiKey: "local",
+            apiFormat: "openai",
+            models: ["VoxCPM2"],
         },
     ],
     model: "default::gpt-image-2",
@@ -91,11 +101,11 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts", VOXCPM_MODEL_OPTION],
     imageModels: ["default::gpt-image-2"],
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
-    audioModels: ["default::gpt-4o-mini-tts"],
+    audioModels: ["default::gpt-4o-mini-tts", VOXCPM_MODEL_OPTION],
     quality: "auto",
     size: "1:1",
     count: "1",
@@ -245,7 +255,7 @@ export const useConfigStore = create<ConfigStore>()(
                         imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : suggestModelsByCapability(channels, "image"),
                         videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : suggestModelsByCapability(channels, "video"),
                         textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : suggestModelsByCapability(channels, "text"),
-                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : suggestModelsByCapability(channels, "audio"),
+                        audioModels: uniqueModelOptions([...(Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : suggestModelsByCapability(channels, "audio")), VOXCPM_MODEL_OPTION]),
                     },
                 };
             },
@@ -364,6 +374,9 @@ function normalizeChannels(config: AiConfig) {
                 ]),
             }),
         );
+    }
+    if (!channels.some((channel) => channel.id === VOXCPM_CHANNEL_ID)) {
+        channels.push(createModelChannel({ id: VOXCPM_CHANNEL_ID, name: "本地 VoxCPM", baseUrl: "http://127.0.0.1:8810/v1", apiKey: "local", apiFormat: "openai", models: ["VoxCPM2"] }));
     }
     return channels.map((channel) => ({ ...channel, models: uniqueRawModels(channel.models) }));
 }

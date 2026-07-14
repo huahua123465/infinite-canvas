@@ -4303,7 +4303,7 @@ function InfiniteCanvasPage() {
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
                     const controller = startGenerationRequest(audioId, nodeId, nodeId, runController);
                     try {
-                        const audio = await requestStoredAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal });
+                        const audio = await requestStoredAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal, referenceAudios: generationContext.referenceAudios });
                         setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));
                     } finally {
                         finishGenerationRequest(audioId, controller);
@@ -4532,7 +4532,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
-                    const audio = await requestStoredAudioGeneration(generationConfig, prompt, { signal: controller.signal });
+                    const audio = await requestStoredAudioGeneration(generationConfig, prompt, { signal: controller.signal, referenceAudios: retryAudios });
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...audioMetadata(audio), prompt, ...buildAudioGenerationMetadata(generationConfig) } } : item)));
                     return;
                 }
