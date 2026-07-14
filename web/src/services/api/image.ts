@@ -67,8 +67,11 @@ type ResponseApiPayload = {
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
 type ImageApiResponse = {
-    id?: string;
+    id?: string | number;
+    task_id?: string;
     status?: string;
+    result_url?: string;
+    result_urls?: string[];
     data?: Array<Record<string, unknown>> | Record<string, unknown>;
     error?: { message?: string };
     code?: number;
@@ -228,14 +231,17 @@ function supportsGeminiImageSize(model: string) {
     return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
 }
 
-function resolveImageDataUrl(item: Record<string, unknown>) {
+function resolveImageDataUrls(item: Record<string, unknown>) {
+    const urls: string[] = [];
     if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
+        urls.push(`data:image/png;base64,${item.b64_json}`);
     }
     if (typeof item.url === "string" && item.url) {
-        return item.url;
+        urls.push(item.url);
     }
-    return null;
+    if (typeof item.result_url === "string" && item.result_url) urls.push(item.result_url);
+    if (Array.isArray(item.result_urls)) urls.push(...item.result_urls.filter((value): value is string => typeof value === "string" && Boolean(value)));
+    return urls;
 }
 
 function parseImagePayload(payload: ImageApiResponse) {
@@ -244,11 +250,8 @@ function parseImagePayload(payload: ImageApiResponse) {
     }
     if (payload.error?.message) throw new Error(payload.error.message);
     const items = Array.isArray(payload.data) ? payload.data : payload.data && typeof payload.data === "object" ? [payload.data] : [];
-    const images =
-        items
-            ?.map(resolveImageDataUrl)
-            .filter((value): value is string => Boolean(value))
-            .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
+    const urls = [payload as unknown as Record<string, unknown>, ...items].flatMap(resolveImageDataUrls);
+    const images = Array.from(new Set(urls)).map((dataUrl) => ({ id: nanoid(), dataUrl }));
 
     if (images.length === 0) {
         throw new Error("接口没有返回图片");
@@ -684,15 +687,24 @@ function shouldUseCangyuanImageAsync(config: AiConfig, references: ReferenceImag
 }
 
 function readCangyuanTaskId(payload: ImageApiResponse) {
-    if (typeof payload.id === "string" && payload.id) return payload.id;
-    if (payload.data && !Array.isArray(payload.data) && typeof payload.data.id === "string") return payload.data.id;
-    return "";
+    const nested = Array.isArray(payload.data) ? payload.data : payload.data ? [payload.data] : [];
+    const candidates: unknown[] = [payload.id, payload.task_id, ...nested.flatMap((item) => [item.id, item.task_id])];
+    const ids = candidates.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim());
+    return ids.find((value) => /^task_/i.test(value)) || ids[0] || "";
 }
 
 function readCangyuanStatus(payload: ImageApiResponse) {
-    if (typeof payload.status === "string") return payload.status;
-    if (payload.data && !Array.isArray(payload.data) && typeof payload.data.status === "string") return payload.data.status;
+    if (typeof payload.status === "string") return payload.status.toLowerCase();
+    if (payload.data && !Array.isArray(payload.data) && typeof payload.data.status === "string") return payload.data.status.toLowerCase();
     return "";
+}
+
+function isCangyuanImageCompleted(status: string) {
+    return ["completed", "complete", "success", "succeeded", "done"].includes(status);
+}
+
+function isCangyuanImageFailed(status: string) {
+    return ["failed", "fail", "error", "cancelled", "canceled", "expired", "timeout"].includes(status);
 }
 
 async function requestCangyuanImages(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
@@ -752,12 +764,12 @@ async function pollCangyuanImageTask(config: AiConfig, taskId: string, taskPath:
         await delay(3000, options?.signal);
         const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/${taskPath}/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal });
         const status = readCangyuanStatus(response.data);
-        if (status === "failed") throw new Error(response.data.error?.message || response.data.msg || "图片生成失败");
-        if (!status || status === "completed") {
+        if (isCangyuanImageFailed(status)) throw new Error(response.data.error?.message || response.data.msg || "图片生成失败");
+        if (!status || isCangyuanImageCompleted(status)) {
             try {
                 return parseImagePayload(response.data);
             } catch (error) {
-                if (status === "completed") throw error;
+                if (isCangyuanImageCompleted(status)) throw error;
             }
         }
     }

@@ -18,7 +18,20 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await downloadImage(input) : input;
+    let blob: Blob;
+    if (typeof input === "string") {
+        try {
+            blob = await downloadImage(input);
+        } catch (error) {
+            if (/^https?:\/\//i.test(input)) {
+                const meta = await readRemoteImageMeta(input).catch(() => null);
+                if (meta) return { url: input, storageKey: "", width: meta.width, height: meta.height, bytes: 0, mimeType: meta.mimeType };
+            }
+            throw error;
+        }
+    } else {
+        blob = input;
+    }
     const storageKey = `image:${nanoid()}`;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
@@ -55,6 +68,24 @@ async function downloadImageViaAgent(url: string) {
 function assertImageBlob(blob: Blob) {
     if (!blob.size) throw new Error("图片结果为空");
     if (blob.type && !blob.type.startsWith("image/") && blob.type !== "application/octet-stream") throw new Error("远程地址没有返回图片");
+}
+
+function readRemoteImageMeta(url: string) {
+    return new Promise<{ width: number; height: number; mimeType: string }>((resolve, reject) => {
+        const image = new Image();
+        const timer = setTimeout(() => reject(new Error("远程图片加载超时")), 5000);
+        image.onload = () => {
+            clearTimeout(timer);
+            const extension = url.match(/\.([a-z0-9]+)(?:\?|#|$)/i)?.[1]?.toLowerCase();
+            const mimeType = extension === "jpg" || extension === "jpeg" ? "image/jpeg" : extension === "webp" ? "image/webp" : extension === "gif" ? "image/gif" : "image/png";
+            resolve({ width: image.naturalWidth || 1024, height: image.naturalHeight || 1024, mimeType });
+        };
+        image.onerror = () => {
+            clearTimeout(timer);
+            reject(new Error("远程图片无法直接显示"));
+        };
+        image.src = url;
+    });
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
