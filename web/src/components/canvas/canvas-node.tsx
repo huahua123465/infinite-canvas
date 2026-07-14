@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, FileText, Image as I
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -2142,19 +2143,25 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 
 function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererProps) {
     const rows = normalizeStoryboardRows(node.metadata?.storyboardRows);
-    const assets = node.metadata?.storyboardAssets || [];
+    const activeEpisodeId = node.metadata?.storyboardActiveChapterId || node.metadata?.storyboardChapters?.[0]?.id;
+    const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
     const promptDetails = node.metadata?.storyboardPromptDetails || {};
     const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
-    const isReady = filledRows > 0;
+    const productionScope = node.metadata?.storyboardProductionScope || "single";
+    const productionMode = node.metadata?.storyboardProductionMode || "documentary";
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, node.metadata?.storyboardEpisodeDurationSeconds || 90, node.metadata?.storyboardCustomVideoBudget);
+    const planningStale = Boolean(rows.length && node.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
+    const isReady = filledRows > 0 && !planningStale;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;
-    const assetsDone = assets.length > 0 && readyAssets === assets.length;
+    const assetsDone = !planningStale && assets.length > 0 && readyAssets === assets.length;
     const dynamicIndexes = rows.map((_, index) => index).filter((index) => node.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
     const promptCount = dynamicIndexes.filter((index) => {
         const detail = promptDetails[String(index)];
         return detail?.videoMotionPrompt?.trim();
     }).length;
-    const promptsDone = dynamicIndexes.length > 0 && promptCount === dynamicIndexes.length;
-    const statusText = promptsDone ? `${promptCount} 个动态提示词已合成` : promptCount ? `${promptCount}/${dynamicIndexes.length} 个动态提示词已合成` : assets.length ? `${readyAssets}/${assets.length} 个资产已准备` : filledRows ? `${filledRows} 个镜头已生成` : "生成后在大表格中确认镜头";
+    const promptsDone = !planningStale && dynamicIndexes.length > 0 && promptCount === dynamicIndexes.length;
+    const episodeCount = node.metadata?.storyboardChapters?.length || 1;
+    const statusText = planningStale ? "生产配置已变更，请重新规划片段" : promptsDone ? `${promptCount} 个视频片段提示词已合成` : promptCount ? `${promptCount}/${dynamicIndexes.length} 个视频片段提示词已合成` : assets.length ? `${readyAssets}/${assets.length} 个资产已准备` : filledRows ? `${episodeCount} 集 / ${dynamicIndexes.length} 个视频片段` : "生成后在大表格中确认片段";
 
     return (
         <div className="flex h-full w-full flex-col justify-between p-5 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
@@ -2167,7 +2174,7 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
                     <FileText className="size-6 opacity-55" />
                 </div>
                 <div className="grid w-full max-w-[250px] grid-cols-[1fr_1fr_1fr] items-start gap-2 text-[11px]">
-                    <ScriptStep active done={isReady} index="1" label="确认镜头" />
+                    <ScriptStep active done={isReady} index="1" label="确认片段" />
                     <ScriptStep active={isReady || assets.length > 0} done={assetsDone} index="2" label="准备资产" />
                     <ScriptStep active={assetsDone || promptCount > 0} done={promptsDone} index="3" label="合成提示词" />
                 </div>

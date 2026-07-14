@@ -15,7 +15,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type StoryboardProductionMode } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type StoryboardProductionMode, type StoryboardProductionScope } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -45,6 +45,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
     const scriptVideoConfig = isScriptNode ? buildScriptVideoConfig(globalConfig, node) : null;
+    const productionScope = node.metadata?.storyboardProductionScope || "single";
     const productionMode = node.metadata?.storyboardProductionMode || "documentary";
     const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
@@ -222,6 +223,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     <>
                         {isScriptNode ? (
                             <>
+                                <Select value={productionScope} className="min-w-[150px]" options={STORYBOARD_PRODUCTION_SCOPE_OPTIONS} onChange={(value: StoryboardProductionScope) => onConfigChange(node.id, { storyboardProductionScope: value })} />
                                 <Select
                                     value={productionMode}
                                     className="min-w-[190px]"
@@ -332,6 +334,11 @@ const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
     { value: "documentary", label: "标准漫剧（每集约6-9片段）" },
     { value: "detailed", label: "细拍漫剧（每集约8-12片段）" },
     { value: "custom", label: "自定义" },
+];
+
+const STORYBOARD_PRODUCTION_SCOPE_OPTIONS = [
+    { value: "single", label: "单集浓缩（推荐）" },
+    { value: "series", label: "完整系列" },
 ];
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {

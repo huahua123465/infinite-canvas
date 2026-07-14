@@ -26,6 +26,7 @@ export type StoryboardAssetKind = "character" | "scene" | "prop";
 export type StoryboardStep = "shots" | "assets" | "prompts";
 export type StoryboardShotTransition = "continue" | "cut" | "montage" | "time-jump";
 export type StoryboardProductionMode = "economy" | "documentary" | "detailed" | "custom";
+export type StoryboardProductionScope = "single" | "series";
 export type StoryboardShotRenderMode = "video" | "still";
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 
@@ -144,6 +145,8 @@ export type StoryboardPlanningCheckpoint = {
     completedShotBatches: number;
     beats: StoryboardSourceBeat[];
     shots: Array<{ row: string[]; plan: StoryboardShotPlan }>;
+    condensed?: boolean;
+    originalBeatCount?: number;
 };
 
 export type StoryboardAssetProgress = {
@@ -175,8 +178,11 @@ export type CanvasNodeMetadata = {
     storyboardPlanningCheckpoint?: StoryboardPlanningCheckpoint;
     storyboardCoverage?: { covered: number; total: number; missingBeatIds: string[] };
     storyboardProductionMode?: StoryboardProductionMode;
+    storyboardProductionScope?: StoryboardProductionScope;
     storyboardCustomVideoBudget?: number;
     storyboardEpisodeDurationSeconds?: number;
+    storyboardPlanningConfigKey?: string;
+    storyboardOriginalBeatCount?: number;
     storyboardActiveChapterId?: string;
     storyboardChapters?: StoryboardChapter[];
     storyboardPlanningErrorStage?: string;

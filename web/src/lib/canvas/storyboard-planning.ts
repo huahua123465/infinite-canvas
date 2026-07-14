@@ -1,4 +1,4 @@
-import type { StoryboardChapter, StoryboardProductionMode, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
+import type { StoryboardChapter, StoryboardProductionMode, StoryboardProductionScope, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
 
 export const STORYBOARD_BEAT_BATCH_SIZE = 10;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
@@ -68,7 +68,7 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
     });
 }
 
-export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number, episodeDurationSeconds = 90) {
+export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number, episodeDurationSeconds = 90, scope: StoryboardProductionScope = "series") {
     const beatById = new Map(beats.map((beat) => [beat.id, beat]));
     const chapters: StoryboardChapter[] = [];
     let currentChapter: StoryboardChapter | undefined;
@@ -85,10 +85,10 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
         const segmentDuration = indexes.reduce((total, index) => total + storyboardClipDuration(shots[index].row[1]), 0);
         const firstShot = shots[indexes[0]];
         const beat = beatById.get(firstShot.plan.sourceBeatIds[0]);
-        if (!currentChapter || (currentChapter.shotIndexes.length > 0 && (currentChapter.durationSeconds || 0) + segmentDuration > episodeSeconds)) {
+        if (!currentChapter || (scope === "series" && currentChapter.shotIndexes.length > 0 && (currentChapter.durationSeconds || 0) + segmentDuration > episodeSeconds)) {
             const episodeNumber = chapters.length + 1;
             const phase = (beat?.phase || beat?.timeStage || "故事推进").trim();
-            currentChapter = { id: `E${String(episodeNumber).padStart(2, "0")}`, title: `第 ${episodeNumber} 集 · ${phase}`, shotIndexes: [], durationSeconds: 0, targetClipCount };
+            currentChapter = { id: `E${String(episodeNumber).padStart(2, "0")}`, title: scope === "single" ? `单集 · ${phase}` : `第 ${episodeNumber} 集 · ${phase}`, shotIndexes: [], durationSeconds: 0, targetClipCount };
             chapters.push(currentChapter);
         }
         const chapter = currentChapter;
@@ -114,10 +114,26 @@ export function storyboardEpisodeClipTarget(mode: StoryboardProductionMode, epis
     return Math.max(2, Math.min(30, requested));
 }
 
-export function storyboardClipPlanInstruction(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+export function storyboardEpisodeClipRange(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+    const target = storyboardEpisodeClipTarget(mode, episodeDurationSeconds, customBudget);
+    if (mode === "custom") return { min: target, max: target };
+    return { min: Math.max(2, target - 2), max: mode === "economy" ? target : target + (mode === "detailed" ? 2 : 1) };
+}
+
+export function storyboardSingleEpisodeBeatTarget(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+    const clips = storyboardEpisodeClipTarget(mode, episodeDurationSeconds, customBudget);
+    return Math.max(6, Math.min(30, clips * 3));
+}
+
+export function storyboardPlanningConfigKey(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+    return `${scope}/${mode}/${Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90))}/${mode === "custom" ? Number(customBudget) || 8 : "auto"}`;
+}
+
+export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
     const seconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
     const target = storyboardEpisodeClipTarget(mode, seconds, customBudget);
     const clipSeconds = Math.max(8, Math.min(15, Math.round(seconds / target)));
+    if (scope === "single") return `这是整篇故事的单集浓缩生产：只生成 1 集，总时长约 ${seconds} 秒，必须输出约 ${target} 个视频片段，每个片段约 ${clipSeconds} 秒。当前输入已经浓缩为核心事实，每个片段合并覆盖 2-4 个相邻核心事实，用旁白、蒙太奇和直接动作形成完整起承转合；跨度较长时允许在一个片段内用蒙太奇表现时间推进，但首帧只锁定开场时空，转折必须清楚。不得重新扩写成多集，不得为一句旁白或一个微小动作单独拆片段。`;
     return `按漫剧单集生产规划：每集约 ${seconds} 秒，目标约 ${target} 个视频片段，每个片段约 ${clipSeconds} 秒。一个片段必须合并覆盖 2-4 个时间、地点和人物状态相容的相邻事实；旁白、背景交代和情绪停留可与同场景动作合并，不得再按一事实一片段拆分。`;
 }
 
