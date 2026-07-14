@@ -38,6 +38,7 @@
 - [custom/jt-vite-merge 融合记录](/docs/progress/jt-vite-merge-notes)
 - [画布修改护栏](/docs/progress/infinite-canvas-change-guardrail)
 - [2026-07-08 工作交接](/docs/progress/2026-07-08-handoff)
+- [2026-07-10 分镜视频设置交接](/docs/progress/2026-07-10-storyboard-video-settings)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
 

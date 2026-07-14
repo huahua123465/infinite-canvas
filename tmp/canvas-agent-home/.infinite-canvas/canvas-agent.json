@@ -1,0 +1,22 @@
+{
+  "url": "http://127.0.0.1:17371",
+  "token": "52740b2731d9c23e415e1de09eea61073e08",
+  "origins": [
+    "http://127.0.0.1:3000"
+  ],
+  "canvases": {
+    "8QSBa_kpG2Y6_S7TT7RPJ": {
+      "workspacePath": "C:\\Users\\JT\\.infinite-canvas\\codex-workspaces\\8QSBa_kpG2Y6_S7TT7RPJ",
+      "activeThreadId": "019f1113-c20d-78c3-8232-6a5212af5390"
+    },
+    "32W-1yD5belchEx3US0xk": {
+      "workspacePath": "C:\\Users\\JT\\.infinite-canvas\\codex-workspaces\\32W-1yD5belchEx3US0xk"
+    },
+    "Vox81HdfkX77P0dgiUFYp": {
+      "workspacePath": "C:\\Users\\JT\\.infinite-canvas\\codex-workspaces\\Vox81HdfkX77P0dgiUFYp"
+    },
+    "H-0Amwnu570zZBfiWISEy": {
+      "workspacePath": "D:\\work\\codexplugins\\infinite-canvas\\tmp\\canvas-agent-home\\.infinite-canvas\\codex-workspaces\\H-0Amwnu570zZBfiWISEy"
+    }
+  }
+}

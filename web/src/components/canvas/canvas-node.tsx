@@ -2209,7 +2209,17 @@ function ScriptStep({ index, label, active, done }: { index: string; label: stri
 
 function WorkspaceNodeContent({ node, theme }: NodeContentRendererProps) {
     const childCount = node.metadata?.workspaceChildNodeIds?.length || 0;
-    const workspaceLabel = node.metadata?.workspaceKind === "storyboard-assets" ? "资产工作区" : node.metadata?.workspaceKind === "character-references" ? "角色基准图" : "视频工作区";
+    const workspaceLabel = String(node.metadata?.workspaceKind) === "storyboard-assets"
+        ? "资产工作区"
+        : node.metadata?.workspaceKind === "storyboard-character-assets"
+          ? "角色资产"
+          : node.metadata?.workspaceKind === "storyboard-scene-assets"
+            ? "场景资产"
+            : node.metadata?.workspaceKind === "storyboard-prop-assets"
+              ? "道具资产"
+              : node.metadata?.workspaceKind === "character-references"
+                ? "角色基准图"
+                : "视频工作区";
     return (
         <div
             className="pointer-events-none flex h-full w-full flex-col rounded-3xl border border-dashed px-5 py-4"

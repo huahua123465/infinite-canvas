@@ -16,7 +16,7 @@ import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
-import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
+import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
@@ -146,6 +146,12 @@ const STORYBOARD_ROW_LIMIT = 300;
 const STORYBOARD_VIDEO_GRID_COLUMNS = 5;
 const STORYBOARD_WORKSPACE_GAP = 160;
 const STORYBOARD_WORKSPACE_TOP_OFFSET = -40;
+const STORYBOARD_ASSET_KINDS: StoryboardAssetKind[] = ["character", "scene", "prop"];
+const STORYBOARD_ASSET_WORKSPACE_KIND: Record<StoryboardAssetKind, "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets"> = {
+    character: "storyboard-character-assets",
+    scene: "storyboard-scene-assets",
+    prop: "storyboard-prop-assets",
+};
 const STORYBOARD_SCRIPT_PRESET = `【可编辑项目设定】
 
 叙事原则：忠实连接剧本的原始事实、人物关系、事件顺序和情绪变化，不编造冲突剧情。
@@ -2832,10 +2838,12 @@ function InfiniteCanvasPage() {
             const assetNodeIds = { ...(scriptNode.metadata?.storyboardAssetNodeIds || {}) };
             const mentionNodeIds = { ...(scriptNode.metadata?.storyboardAssetMentionNodeIds || {}) };
             const exportedNodes: CanvasNodeData[] = [];
-            const libraryAssets: Omit<ImageAsset, "id" | "createdAt" | "updatedAt">[] = [];
-            const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-assets" && item.metadata.workspaceSourceNodeId === scriptNode.id);
-            const workspaceId = existingWorkspace?.id || nanoid();
-            const workspacePosition = existingWorkspace?.position || defaultStoryboardAssetWorkspacePosition(scriptNode);
+            const existingWorkspaces = Object.fromEntries(
+                STORYBOARD_ASSET_KINDS.map((kind) => [kind, nodesRef.current.find((item) => item.metadata?.workspaceKind === STORYBOARD_ASSET_WORKSPACE_KIND[kind] && item.metadata.workspaceSourceNodeId === scriptNode.id)]),
+            ) as Record<StoryboardAssetKind, CanvasNodeData | undefined>;
+            const defaultWorkspacePositions = defaultStoryboardAssetWorkspacePositions(scriptNode, assets, imageConfig);
+            const workspacePositions = Object.fromEntries(STORYBOARD_ASSET_KINDS.map((kind) => [kind, existingWorkspaces[kind]?.position || defaultWorkspacePositions[kind]])) as Record<StoryboardAssetKind, Position>;
+            const exportedCountByKind: Record<StoryboardAssetKind, number> = { character: 0, scene: 0, prop: 0 };
             setStoryboardActionKey("asset:export");
             try {
                 for (let index = 0; index < nextAssets.length; index += 1) {
@@ -2859,7 +2867,12 @@ function InfiniteCanvasPage() {
                     mentionNodeIds[`@${asset.name}`] = existingId;
                     const size = uploaded ? fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height) : imageConfig;
                     const sceneGroupId = asset.kind === "scene" ? `storyboard-scene:${scriptNode.id}:${asset.id}` : undefined;
-                    const position = existingNode?.position || { x: workspacePosition.x + 36 + (index % STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.width + 34), y: workspacePosition.y + 86 + Math.floor(index / STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.height + 74) };
+                    const workspacePosition = workspacePositions[asset.kind];
+                    const kindIndex = exportedCountByKind[asset.kind]++;
+                    const existingWorkspace = existingWorkspaces[asset.kind];
+                    const position = existingNode && existingWorkspace && isNodeInsideWorkspace(existingNode, existingWorkspace)
+                        ? existingNode.position
+                        : { x: workspacePosition.x + 36 + (kindIndex % STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.width + 34), y: workspacePosition.y + 86 + Math.floor(kindIndex / STORYBOARD_ASSET_GRID_COLUMNS) * (imageConfig.height + 74) };
                     const assetNode: CanvasNodeData = {
                         id: existingId,
                         type: CanvasNodeType.Image,
@@ -2884,43 +2897,22 @@ function InfiniteCanvasPage() {
                         },
                     };
                     exportedNodes.push(assetNode);
-                    libraryAssets.push({
-                        kind: "image",
-                        title: asset.name,
-                        coverUrl: content,
-                        tags: [ASSET_KIND_TEXT[asset.kind]],
-                        source: "Script",
-                        note: asset.description,
-                        data: {
-                            dataUrl: content,
-                            storageKey: nextAssets[index].storageKey,
-                            width: assetNode.metadata?.naturalWidth || assetNode.width,
-                            height: assetNode.metadata?.naturalHeight || assetNode.height,
-                            bytes: assetNode.metadata?.bytes || 0,
-                            mimeType: assetNode.metadata?.mimeType || "image/png",
-                        },
-                        metadata: { source: "storyboard", storyboardSourceNodeId: scriptNode.id, storyboardAssetId: asset.id, storyboardAssetKind: asset.kind, prompt: prompt || asset.prompt || asset.description },
-                    });
                 }
                 if (!exportedNodes.length) {
                     message.warning("没有可导出的资产图");
                     return;
                 }
-                const assetStore = useAssetStore.getState();
-                libraryAssets.forEach((asset) => {
-                    const storyboardAssetId = asset.metadata?.storyboardAssetId;
-                    const existingAsset = assetStore.assets.find((item) => item.kind === "image" && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata?.storyboardAssetId === storyboardAssetId);
-                    if (existingAsset) {
-                        assetStore.updateAsset(existingAsset.id, { ...asset, tags: existingAsset.tags, metadata: { ...existingAsset.metadata, ...asset.metadata } });
-                    } else {
-                        assetStore.addAsset(asset);
-                    }
+                const workspaceNodes = STORYBOARD_ASSET_KINDS.flatMap((kind) => {
+                    const childNodes = exportedNodes.filter((item) => item.metadata?.storyboardAssetKind === kind);
+                    if (!childNodes.length) return [];
+                    const existingWorkspace = existingWorkspaces[kind];
+                    return [buildStoryboardWorkspaceNode(existingWorkspace, existingWorkspace?.id || `storyboard-assets:${scriptNode.id}:${kind}`, scriptNode, childNodes, workspacePositions[kind], STORYBOARD_ASSET_WORKSPACE_KIND[kind])];
                 });
-                const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, exportedNodes, workspacePosition, "storyboard-assets");
                 setNodes((prev) => {
                     const lookupNodes = [...prev, ...exportedNodes];
-                    const exportedById = new Map([workspaceNode, ...exportedNodes].map((item) => [item.id, item]));
-                    const updated = prev.map((item) => {
+                    const exportedById = new Map([...workspaceNodes, ...exportedNodes].map((item) => [item.id, item]));
+                    const nextWorkspaceIds = new Set(workspaceNodes.map((item) => item.id));
+                    const updated = prev.filter((item) => !isStoryboardAssetWorkspace(item) || item.metadata?.workspaceSourceNodeId !== scriptNode.id || nextWorkspaceIds.has(item.id)).map((item) => {
                         if (item.id === scriptNode.id) {
                             const updatedScriptNode = { ...item, metadata: { ...item.metadata, ...scriptNode.metadata, storyboardAssets: nextAssets, storyboardAssetNodeIds: assetNodeIds, storyboardAssetMentionNodeIds: mentionNodeIds } };
                             const promptDetails = relinkStoryboardPromptDetails(updatedScriptNode, lookupNodes);
@@ -2928,14 +2920,15 @@ function InfiniteCanvasPage() {
                         }
                         return exportedById.get(item.id) || item;
                     });
-                    const existingIds = new Set(prev.map((item) => item.id));
-                    return [...updated, ...[workspaceNode, ...exportedNodes].filter((item) => !existingIds.has(item.id))];
+                    const existingIds = new Set(updated.map((item) => item.id));
+                    return [...updated, ...[...workspaceNodes, ...exportedNodes].filter((item) => !existingIds.has(item.id))];
                 });
                 setConnections((prev) => {
-                    const next = [{ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id }, ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: assetNode.id }))];
-                    return addUniqueConnections(prev, next);
+                    const workspaceIds = new Set(nodesRef.current.filter((item) => isStoryboardAssetWorkspace(item) && item.metadata?.workspaceSourceNodeId === scriptNode.id).map((item) => item.id));
+                    const next = [...workspaceNodes.map((workspaceNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id })), ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: assetNode.id }))];
+                    return addUniqueConnections(prev.filter((connection) => !workspaceIds.has(connection.fromNodeId) && !workspaceIds.has(connection.toNodeId)), next);
                 });
-                message.success(`已搭建资产工作区，并将 ${libraryAssets.length} 个资产加入我的素材`);
+                message.success(`已拆分角色、场景、道具工作区，共包含 ${exportedNodes.length} 个资产节点`);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "导出资产失败");
             } finally {
@@ -3124,7 +3117,7 @@ function InfiniteCanvasPage() {
             setStoryboardActionKey(null);
             setScriptNodeId(null);
             window.setTimeout(() => window.dispatchEvent(new CustomEvent(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, { detail: draftNode.id })), 120);
-            message.success("已创建待审核视频节点，请确认最终提示词后生成");
+            message.success(`已创建待审核视频节点，已绑定 ${assetReferences.length} 条视觉参考，请确认最终提示词后生成`);
         },
         [effectiveConfig, isAiConfigReady, message, openConfigDialog],
     );
@@ -3182,7 +3175,7 @@ function InfiniteCanvasPage() {
             );
             if (!linkedAssetCount) message.info("视频工作区已搭建；如需资产参考，请先确认资产工作区已生成");
             const episodeTitle = scriptNode.metadata?.storyboardChapters?.find((episode) => episode.id === scriptNode.metadata?.storyboardActiveChapterId)?.title || "当前集";
-            message.success(`已搭建${episodeTitle}视频工作区，包含 ${videoNodes.length} 个待审核片段`);
+            message.success(`已搭建${episodeTitle}视频工作区，包含 ${videoNodes.length} 个待审核片段，已绑定 ${linkedAssetCount} 条视觉参考`);
         },
         [effectiveConfig, message],
     );
@@ -6494,10 +6487,13 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const linkByMention = new Map(storyboardPromptAssetLinks(detail).map((link) => [link.mention, link]));
     for (const mention of mentions) {
         const asset = assetByName.get(mention);
+        const nodeId = linkByMention.get(mention)?.nodeId || mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
+        const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
         const sceneSheetReference = asset?.kind === "scene" ? storyboardAssetSceneSheetReference(asset) : null;
         if (asset && sceneSheetReference) {
             resolved.set(`scene-sheet:${asset.id}`, {
                 mention: `@${asset.name}-多角度锁定图`,
+                node: assetNode,
                 reference: sceneSheetReference,
                 source: "script",
                 kind: "scene",
@@ -6505,8 +6501,6 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
             });
             continue;
         }
-        const nodeId = linkByMention.get(mention)?.nodeId || mentionNodeIds[mention] || (asset ? assetNodeIds[asset.id] : "");
-        const assetNode = nodes.find((node) => node.id === nodeId) || nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardAssetName && mention === `@${node.metadata.storyboardAssetName}`);
         const reference = referenceImageFromCanvasNode(assetNode);
         if (assetNode && reference) {
             resolved.set(assetNode.id, {
@@ -6998,18 +6992,32 @@ function storyboardVideoAssetReferenceNodes(videoNode: CanvasNodeData, nodes: Ca
     return nodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storyboardSourceNodeId === sourceId && node.metadata?.storyboardAssetName && mentions.includes(`@${node.metadata.storyboardAssetName}`));
 }
 
-function defaultStoryboardAssetWorkspacePosition(sourceNode: CanvasNodeData): Position {
-    return { x: sourceNode.position.x + sourceNode.width + 96, y: sourceNode.position.y + STORYBOARD_WORKSPACE_TOP_OFFSET };
+function defaultStoryboardAssetWorkspacePositions(sourceNode: CanvasNodeData, assets: StoryboardAsset[], spec: { width: number; height: number }): Record<StoryboardAssetKind, Position> {
+    const positions = {} as Record<StoryboardAssetKind, Position>;
+    let y = sourceNode.position.y + STORYBOARD_WORKSPACE_TOP_OFFSET;
+    for (const kind of STORYBOARD_ASSET_KINDS) {
+        positions[kind] = { x: sourceNode.position.x + sourceNode.width + 96, y };
+        y += estimateStoryboardGridWorkspaceHeight(assets.filter((asset) => asset.kind === kind).length, spec, STORYBOARD_ASSET_GRID_COLUMNS) + STORYBOARD_WORKSPACE_GAP;
+    }
+    return positions;
 }
 
 function defaultStoryboardVideoWorkspacePosition(sourceNode: CanvasNodeData, nodes: CanvasNodeData[]): Position {
     const videoWorkspaces = nodes.filter((node) => node.metadata?.workspaceKind === "storyboard-videos" && node.metadata.workspaceSourceNodeId === sourceNode.id).sort((a, b) => a.position.y - b.position.y);
     const previousEpisode = videoWorkspaces.at(-1);
     if (previousEpisode) return { x: previousEpisode.position.x, y: previousEpisode.position.y + previousEpisode.height + STORYBOARD_WORKSPACE_GAP };
-    const assetWorkspace = nodes.find((node) => node.metadata?.workspaceKind === "storyboard-assets" && node.metadata.workspaceSourceNodeId === sourceNode.id);
-    const assetPosition = assetWorkspace?.position || defaultStoryboardAssetWorkspacePosition(sourceNode);
-    const assetWidth = assetWorkspace?.width || estimateStoryboardGridWorkspaceWidth(sourceNode.metadata?.storyboardAssets?.length || STORYBOARD_ASSET_GRID_COLUMNS, storyboardNodeSize(CanvasNodeType.Image, sourceNode.metadata?.size), STORYBOARD_ASSET_GRID_COLUMNS);
-    return { x: assetPosition.x + assetWidth + STORYBOARD_WORKSPACE_GAP, y: assetPosition.y };
+    const assetSpec = storyboardNodeSize(CanvasNodeType.Image, sourceNode.metadata?.size);
+    const assetWorkspaces = nodes.filter((node) => isStoryboardAssetWorkspace(node) && node.metadata?.workspaceSourceNodeId === sourceNode.id);
+    if (assetWorkspaces.length) {
+        return {
+            x: Math.max(...assetWorkspaces.map((workspace) => workspace.position.x + workspace.width)) + STORYBOARD_WORKSPACE_GAP,
+            y: Math.min(...assetWorkspaces.map((workspace) => workspace.position.y)),
+        };
+    }
+    const assets = sourceNode.metadata?.storyboardAssets || [];
+    const fallbackPositions = defaultStoryboardAssetWorkspacePositions(sourceNode, assets, assetSpec);
+    const assetWidth = Math.max(...STORYBOARD_ASSET_KINDS.map((kind) => estimateStoryboardGridWorkspaceWidth(assets.filter((asset) => asset.kind === kind).length, assetSpec, STORYBOARD_ASSET_GRID_COLUMNS)));
+    return { x: fallbackPositions.character.x + assetWidth + STORYBOARD_WORKSPACE_GAP, y: fallbackPositions.character.y };
 }
 
 function estimateStoryboardGridWorkspaceWidth(count: number, spec: { width: number; height: number }, maxColumns: number) {
@@ -7017,7 +7025,16 @@ function estimateStoryboardGridWorkspaceWidth(count: number, spec: { width: numb
     return 36 + columns * spec.width + Math.max(columns - 1, 0) * 34 + 36;
 }
 
-function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: string, sourceNode: CanvasNodeData, childNodes: CanvasNodeData[], position: Position, kind: "storyboard-assets" | "storyboard-videos", storyboardChapterId?: string): CanvasNodeData {
+function estimateStoryboardGridWorkspaceHeight(count: number, spec: { width: number; height: number }, maxColumns: number) {
+    const rows = Math.ceil(Math.max(count, 1) / maxColumns);
+    return 86 + rows * spec.height + Math.max(rows - 1, 0) * 74 + 36;
+}
+
+function isStoryboardAssetWorkspace(node: CanvasNodeData) {
+    return String(node.metadata?.workspaceKind) === "storyboard-assets" || STORYBOARD_ASSET_KINDS.some((kind) => node.metadata?.workspaceKind === STORYBOARD_ASSET_WORKSPACE_KIND[kind]);
+}
+
+function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: string, sourceNode: CanvasNodeData, childNodes: CanvasNodeData[], position: Position, kind: "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets" | "storyboard-videos", storyboardChapterId?: string): CanvasNodeData {
     const workspacePosition = existing?.position || position;
     const bounds = childNodes.reduce(
         (box, child) => ({
@@ -7030,7 +7047,8 @@ function buildStoryboardWorkspaceNode(existing: CanvasNodeData | undefined, id: 
     );
     const padding = 36;
     const episodeTitle = sourceNode.metadata?.storyboardChapters?.find((episode) => episode.id === storyboardChapterId)?.title;
-    const title = kind === "storyboard-assets" ? `资产工作区｜${sourceNode.title || "脚本节点"}` : `视频工作区｜${episodeTitle || sourceNode.title || "脚本节点"}`;
+    const assetKind = STORYBOARD_ASSET_KINDS.find((item) => STORYBOARD_ASSET_WORKSPACE_KIND[item] === kind);
+    const title = assetKind ? `${assetKind === "character" ? "角色" : ASSET_KIND_TEXT[assetKind]}资产｜${sourceNode.title || "脚本节点"}` : `视频工作区｜${episodeTitle || sourceNode.title || "脚本节点"}`;
     return {
         id,
         type: CanvasNodeType.Workspace,

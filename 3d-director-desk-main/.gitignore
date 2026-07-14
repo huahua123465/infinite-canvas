@@ -1,0 +1,15 @@
+node_modules
+dist
+.DS_Store
+.vercel
+coverage
+.local-assets
+public/local-assets
+*.log
+npm-debug.log*
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

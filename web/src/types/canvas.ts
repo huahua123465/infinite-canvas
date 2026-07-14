@@ -227,7 +227,7 @@ export type CanvasNodeMetadata = {
     videoTaskRequestUrl?: string;
     videoTaskRequestModel?: string;
     videoTaskRequestFields?: string[];
-    workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
+    workspaceKind?: "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceStoryboardChapterId?: string;
     workspaceChildNodeIds?: string[];
