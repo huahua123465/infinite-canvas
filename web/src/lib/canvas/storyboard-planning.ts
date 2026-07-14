@@ -49,7 +49,7 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
     return records.flatMap((value) => {
         if (!value || typeof value !== "object") return [];
         const item = value as Record<string, unknown>;
-        const row = ["", text(item.duration) || "8s", text(item.visual), text(item.shotSize), text(item.lighting), text(item.dialogue), text(item.sound), text(item.camera), text(item.imagePrompt)];
+        const row = ["", text(item.duration) || "12s", text(item.visual), text(item.shotSize), text(item.lighting), text(item.dialogue), text(item.sound), text(item.camera), text(item.imagePrompt)];
         if (!row[2]) return [];
         const transition = text(item.transition) as StoryboardShotTransition;
         return [{
@@ -68,56 +68,61 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
     });
 }
 
-export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number) {
+export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number, episodeDurationSeconds = 90) {
     const beatById = new Map(beats.map((beat) => [beat.id, beat]));
     const chapters: StoryboardChapter[] = [];
     let currentChapter: StoryboardChapter | undefined;
-    let currentKey = "";
-    shots.forEach((shot, index) => {
-        const beat = beatById.get(shot.plan.sourceBeatIds[0]);
-        const title = beat?.phase || beat?.timeStage || `故事阶段 ${chapters.length + 1}`;
-        const baseKey = title.trim() || "未命名阶段";
-        if (!currentChapter || currentKey !== baseKey || currentChapter.shotIndexes.length >= 36) {
-            const sameTitleCount = chapters.filter((item) => item.title === baseKey || item.title.startsWith(`${baseKey}（`)).length;
-            currentChapter = { id: `C${String(chapters.length + 1).padStart(2, "0")}`, title: sameTitleCount ? `${baseKey}（${sameTitleCount + 1}）` : baseKey, shotIndexes: [] };
-            currentKey = baseKey;
+    const episodeSeconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
+    const targetClipCount = storyboardEpisodeClipTarget(mode, episodeSeconds, customBudget);
+    const segments = shots.reduce<number[][]>((items, shot, index) => {
+        const previous = shots[index - 1]?.plan;
+        const continues = Boolean(previous && shot.plan.continuityGroupId && previous.continuityGroupId === shot.plan.continuityGroupId && shot.plan.transition === "continue");
+        if (!continues) items.push([]);
+        items.at(-1)?.push(index);
+        return items;
+    }, []);
+    segments.forEach((indexes) => {
+        const segmentDuration = indexes.reduce((total, index) => total + storyboardClipDuration(shots[index].row[1]), 0);
+        const firstShot = shots[indexes[0]];
+        const beat = beatById.get(firstShot.plan.sourceBeatIds[0]);
+        if (!currentChapter || (currentChapter.shotIndexes.length > 0 && (currentChapter.durationSeconds || 0) + segmentDuration > episodeSeconds)) {
+            const episodeNumber = chapters.length + 1;
+            const phase = (beat?.phase || beat?.timeStage || "故事推进").trim();
+            currentChapter = { id: `E${String(episodeNumber).padStart(2, "0")}`, title: `第 ${episodeNumber} 集 · ${phase}`, shotIndexes: [], durationSeconds: 0, targetClipCount };
             chapters.push(currentChapter);
         }
-        currentChapter.shotIndexes.push(index);
-        shot.plan.chapterId = currentChapter.id;
-        shot.plan.chapterTitle = currentChapter.title;
-    });
-    const target = storyboardVideoBudget(mode, shots.length, customBudget);
-    const selected = new Set<number>();
-    chapters.forEach((chapter) => {
-        const best = [...chapter.shotIndexes].sort((a, b) => shotMotionScore(shots[b], beatById) - shotMotionScore(shots[a], beatById))[0];
-        if (best !== undefined) selected.add(best);
-    });
-    [...shots.keys()]
-        .sort((a, b) => shotMotionScore(shots[b], beatById) - shotMotionScore(shots[a], beatById))
-        .forEach((index) => {
-            if (selected.size < target) selected.add(index);
+        const chapter = currentChapter;
+        indexes.forEach((index) => {
+            const shot = shots[index];
+            chapter.shotIndexes.push(index);
+            shot.plan.chapterId = chapter.id;
+            shot.plan.chapterTitle = chapter.title;
+            shot.plan.renderMode = "video";
         });
-    shots.forEach((shot, index) => {
-        shot.plan.renderMode = selected.has(index) ? "video" : "still";
+        chapter.durationSeconds = (chapter.durationSeconds || 0) + segmentDuration;
     });
     shots.forEach((shot, index) => {
         const previous = shots[index - 1]?.plan;
-        shot.plan.usePreviousTailFrame = Boolean(shot.plan.renderMode === "video" && previous?.renderMode === "video" && previous.chapterId === shot.plan.chapterId && previous.continuityGroupId === shot.plan.continuityGroupId && shot.plan.transition === "continue" && shot.plan.usePreviousTailFrame);
+        shot.plan.usePreviousTailFrame = Boolean(shot.plan.renderMode === "video" && previous?.renderMode === "video" && shot.plan.continuityGroupId && previous.chapterId === shot.plan.chapterId && previous.continuityGroupId === shot.plan.continuityGroupId && shot.plan.transition === "continue");
     });
-    return { shots, chapters, videoCount: selected.size, stillCount: Math.max(0, shots.length - selected.size) };
+    return { shots, chapters, videoCount: shots.length, stillCount: 0 };
 }
 
-export function storyboardVideoBudget(mode: StoryboardProductionMode, total: number, customBudget?: number) {
-    const requested = mode === "economy" ? 30 : mode === "detailed" ? Math.max(80, Math.ceil(total * 0.8)) : mode === "custom" ? Number(customBudget) || 50 : 50;
-    return Math.max(1, Math.min(total, requested));
+export function storyboardEpisodeClipTarget(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+    const seconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
+    const requested = mode === "economy" ? Math.ceil(seconds / 15) : mode === "detailed" ? Math.ceil(seconds / 9) : mode === "custom" ? Number(customBudget) || Math.ceil(seconds / 12) : Math.ceil(seconds / 12);
+    return Math.max(2, Math.min(30, requested));
 }
 
-function shotMotionScore(shot: PlannedStoryboardShot, beatById: Map<string, StoryboardSourceBeat>) {
-    const beats = shot.plan.sourceBeatIds.map((id) => beatById.get(id)).filter(Boolean) as StoryboardSourceBeat[];
-    const direct = beats.some((beat) => beat.treatment === "direct") ? 2 : 0;
-    const emotional = beats.some((beat) => /决定|冲突|离开|追|跪|打|伤|死|哭|抱|逃|走|病|寻找|保护|失去/.test(`${beat.event}${beat.emotion}`)) ? 2 : 0;
-    return (shot.plan.motionPriority || 3) * 10 + direct + emotional;
+export function storyboardClipPlanInstruction(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+    const seconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
+    const target = storyboardEpisodeClipTarget(mode, seconds, customBudget);
+    const clipSeconds = Math.max(8, Math.min(15, Math.round(seconds / target)));
+    return `按漫剧单集生产规划：每集约 ${seconds} 秒，目标约 ${target} 个视频片段，每个片段约 ${clipSeconds} 秒。一个片段必须合并覆盖 2-4 个时间、地点和人物状态相容的相邻事实；旁白、背景交代和情绪停留可与同场景动作合并，不得再按一事实一片段拆分。`;
+}
+
+function storyboardClipDuration(value?: string) {
+    return Math.max(5, Math.min(15, Number(value?.match(/\d+(?:\.\d+)?/)?.[0]) || 12));
 }
 
 export function storyboardBeatBatches(beats: StoryboardSourceBeat[]) {

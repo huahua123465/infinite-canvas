@@ -58,6 +58,7 @@ export type StoryboardAsset = {
     voiceAudioCacheKey?: string;
     voiceAudioCacheHit?: "local" | "shared";
     voiceSampleText?: string;
+    chapterIds?: string[];
 };
 
 export type StoryboardAssetMentionLink = {
@@ -128,6 +129,8 @@ export type StoryboardChapter = {
     id: string;
     title: string;
     shotIndexes: number[];
+    durationSeconds?: number;
+    targetClipCount?: number;
 };
 
 export type StoryboardPlanningProgress = {
@@ -173,6 +176,8 @@ export type CanvasNodeMetadata = {
     storyboardCoverage?: { covered: number; total: number; missingBeatIds: string[] };
     storyboardProductionMode?: StoryboardProductionMode;
     storyboardCustomVideoBudget?: number;
+    storyboardEpisodeDurationSeconds?: number;
+    storyboardActiveChapterId?: string;
     storyboardChapters?: StoryboardChapter[];
     storyboardPlanningErrorStage?: string;
     storyboardPlanningRawResponse?: string;
@@ -182,11 +187,13 @@ export type CanvasNodeMetadata = {
     storyboardAssetProgress?: StoryboardAssetProgress;
     storyboardAssetBatchProgress?: StoryboardAssetBatchProgress;
     storyboardAssets?: StoryboardAsset[];
+    storyboardPreparedChapterIds?: string[];
     storyboardAssetNodeIds?: Record<string, string>;
     storyboardAssetMentionNodeIds?: Record<string, string>;
     storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
     storyboardPromptErrors?: Record<string, string>;
     storyboardSourceNodeId?: string;
+    storyboardChapterId?: string;
     storyboardAssetId?: string;
     storyboardAssetKind?: StoryboardAssetKind;
     storyboardAssetName?: string;
@@ -216,6 +223,7 @@ export type CanvasNodeMetadata = {
     videoTaskRequestFields?: string[];
     workspaceKind?: "storyboard-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
+    workspaceStoryboardChapterId?: string;
     workspaceChildNodeIds?: string[];
     workspaceTitle?: string;
     characterReferenceRole?: string;

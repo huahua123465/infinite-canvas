@@ -117,7 +117,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onPointerDown={(event) => event.stopPropagation()}
             className={`thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full min-h-0" : "pr-10 transition-[height] duration-150"}`}
             style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, overflowY: large || promptExpanded ? "auto" : "hidden" }}
-            placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击生成镜头" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
+            placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击规划分集片段" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
         />
     );
 
@@ -224,12 +224,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             <>
                                 <Select
                                     value={productionMode}
-                                    className="min-w-[176px]"
+                                    className="min-w-[190px]"
                                     options={STORYBOARD_PRODUCTION_MODE_OPTIONS}
                                     onChange={(value: StoryboardProductionMode) => onConfigChange(node.id, { storyboardProductionMode: value })}
                                 />
+                                <InputNumber min={60} max={300} step={30} value={node.metadata?.storyboardEpisodeDurationSeconds || 90} className="!w-28" addonAfter="秒/集" onChange={(value) => onConfigChange(node.id, { storyboardEpisodeDurationSeconds: Number(value) || 90 })} />
                                 {productionMode === "custom" ? (
-                                    <InputNumber min={1} max={300} value={node.metadata?.storyboardCustomVideoBudget || 50} className="!w-24" addonAfter="动态镜" onChange={(value) => onConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 50 })} />
+                                    <InputNumber min={2} max={30} value={node.metadata?.storyboardCustomVideoBudget || 8} className="!w-32" addonAfter="片段/集" onChange={(value) => onConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 8 })} />
                                 ) : null}
                             </>
                         ) : null}
@@ -327,9 +328,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 }
 
 const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
-    { value: "economy", label: "节省成本（约30动态镜）" },
-    { value: "documentary", label: "标准纪实（约50动态镜）" },
-    { value: "detailed", label: "完整细拍（80%动态镜）" },
+    { value: "economy", label: "节省成本（每集约4-6片段）" },
+    { value: "documentary", label: "标准漫剧（每集约6-9片段）" },
+    { value: "detailed", label: "细拍漫剧（每集约8-12片段）" },
     { value: "custom", label: "自定义" },
 ];
 
