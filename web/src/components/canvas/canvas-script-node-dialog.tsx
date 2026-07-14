@@ -221,7 +221,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
             }}
         >
             {node ? (
-                <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101010] text-[#f1f1f1]">
+                <div
+                    className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101010] text-[#f1f1f1]"
+                    onClick={(event) => {
+                        const target = event.target as HTMLElement;
+                        if (editingAsset && !target.closest("[data-asset-detail-panel], [data-storyboard-asset-card]")) setEditingAssetId(null);
+                    }}
+                >
                     <div className="sticky top-0 z-30 flex min-h-20 shrink-0 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3 shadow-[0_10px_28px_rgba(0,0,0,.35)]">
                         <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
                             <Step index="1" title="确认片段" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : planningStale ? "生产配置已变更，需要重新规划" : coverage ? `${node.metadata?.storyboardOriginalBeatCount && node.metadata.storyboardOriginalBeatCount !== coverage.total ? `原文浓缩 ${node.metadata.storyboardOriginalBeatCount}→${coverage.total}` : `事实覆盖 ${coverage.covered}/${coverage.total}`}，共 ${episodes.length || 1} 集` : `${filledCount}/${rows.length} 片段待校对`} active={view === "shots"} done={!planningStale && Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0)} onClick={() => setView("shots")} />
@@ -349,8 +355,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         </Modal>
                     ) : null}
                     {editingAsset ? (
-                        <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setEditingAssetId(null)}>
-                            <div className="absolute inset-y-0 right-0 flex min-h-0 w-[490px] flex-col overflow-hidden border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
+                        <div className="pointer-events-none absolute inset-0 z-40 bg-transparent">
+                            <div data-asset-detail-panel className="pointer-events-auto absolute inset-y-0 right-0 flex min-h-0 w-[490px] flex-col overflow-hidden border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]">
                                 <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[#353535] px-5 pr-12">
                                     <div className="flex min-w-0 items-center gap-3">
                                         <div className="shrink-0 text-sm font-semibold">编辑{ASSET_KIND_LABEL[editingAsset.kind]}</div>
@@ -1082,6 +1088,7 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
     const characterState = characterAssetStateText(asset);
     return (
         <div
+            data-storyboard-asset-card
             className="group min-w-0 cursor-pointer text-left"
             role="button"
             tabIndex={0}
