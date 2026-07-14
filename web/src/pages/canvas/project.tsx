@@ -68,6 +68,7 @@ import {
     type CanvasImageGenerationType,
     type CanvasNodeData,
     type CanvasNodeMetadata,
+    type CanvasVideoFrameRole,
     type StoryboardAsset,
     type StoryboardAssetKind,
     type StoryboardAudioReference,
@@ -629,6 +630,7 @@ function InfiniteCanvasPage() {
     const generationBatchControllersRef = useRef(new Map<string, AbortController>());
     const recoveringVideoTasksRef = useRef(new Map<string, AbortController>());
     const tailFrameBackfillRef = useRef(new Set<string>());
+    const videoFrameExtractionRef = useRef(new Set<string>());
     const promptAssistantRequestSeqRef = useRef(0);
 
     const createHistoryEntry = useCallback(
@@ -3524,6 +3526,89 @@ function InfiniteCanvasPage() {
         [audioSeparatingNodeIds, message],
     );
 
+    const showVideoFrame = useCallback(
+        async (node: CanvasNodeData, role: CanvasVideoFrameRole) => {
+            if (node.type !== CanvasNodeType.Video || !node.metadata?.content) return message.error("当前视频为空，无法提取画面");
+            const label = role === "first" ? "首帧" : "尾帧";
+            const extractionKey = `${node.id}:${role}`;
+            if (videoFrameExtractionRef.current.has(extractionKey)) return;
+            const existing = nodesRef.current.find((item) => item.type === CanvasNodeType.Image && item.metadata?.videoFrameSourceNodeId === node.id && item.metadata.videoFrameRole === role);
+            if (existing?.metadata?.content && node.metadata.storageKey && existing.metadata.videoFrameSourceStorageKey === node.metadata.storageKey) {
+                const slot = role === "first" ? 0 : 1;
+                setNodes((current) =>
+                    current.map((item) =>
+                        item.id === existing.id
+                            ? { ...item, position: { x: node.position.x + node.width + 96 + slot * (item.width + 20), y: node.position.y + node.height / 2 - item.height / 2 } }
+                            : item,
+                    ),
+                );
+                setSelectedNodeIds(new Set([existing.id]));
+                setSelectedConnectionId(null);
+                return message.success(`已在视频右侧显示${label}`);
+            }
+
+            videoFrameExtractionRef.current.add(extractionKey);
+            const messageKey = `video-frame-${extractionKey}`;
+            message.open({ key: messageKey, type: "loading", content: `正在提取视频${label}`, duration: 0 });
+            try {
+                const frame = await extractVideoFrame(
+                    {
+                        url: node.metadata.content,
+                        storageKey: node.metadata.storageKey || "",
+                        bytes: node.metadata.bytes || 0,
+                        mimeType: node.metadata.mimeType || "video/mp4",
+                        width: node.metadata.naturalWidth,
+                        height: node.metadata.naturalHeight,
+                        durationMs: node.metadata.durationMs,
+                    },
+                    role,
+                );
+                if (!frame) throw new Error(`视频${label}提取失败`);
+                const size = fitNodeSize(frame.width, frame.height);
+                const frameNodeId = existing?.id || `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                const title = `${node.title || "视频"} - ${label}`;
+                const slot = role === "first" ? 0 : 1;
+                const metadata: CanvasNodeMetadata = { ...imageMetadata(frame), videoFrameSourceNodeId: node.id, videoFrameSourceStorageKey: node.metadata.storageKey, videoFrameRole: role };
+                setNodes((current) => {
+                    const hasFrameNode = current.some((item) => item.id === frameNodeId);
+                    const next = current.map((item) => {
+                        if (item.id === node.id && role === "last") return { ...item, metadata: { ...item.metadata, ...storyboardTailFrameMetadata(frame) } };
+                        if (item.id !== frameNodeId) return item;
+                        return {
+                            ...item,
+                            title,
+                            position: { x: item.position.x + item.width / 2 - size.width / 2, y: item.position.y + item.height / 2 - size.height / 2 },
+                            width: size.width,
+                            height: size.height,
+                            metadata: { ...item.metadata, ...metadata },
+                        };
+                    });
+                    if (hasFrameNode) return next;
+                    return [
+                        ...next,
+                        {
+                            id: frameNodeId,
+                            type: CanvasNodeType.Image,
+                            title,
+                            position: { x: node.position.x + node.width + 96 + slot * (size.width + 20), y: node.position.y + node.height / 2 - size.height / 2 },
+                            width: size.width,
+                            height: size.height,
+                            metadata,
+                        },
+                    ];
+                });
+                setSelectedNodeIds(new Set([frameNodeId]));
+                setSelectedConnectionId(null);
+                message.success({ key: messageKey, content: `已在视频右侧显示${label}`, duration: 2 });
+            } catch (error) {
+                message.error({ key: messageKey, content: error instanceof Error ? error.message : `视频${label}提取失败`, duration: 6 });
+            } finally {
+                videoFrameExtractionRef.current.delete(extractionKey);
+            }
+        },
+        [message],
+    );
+
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
             if (node.type === CanvasNodeType.Text) {
@@ -4973,6 +5058,7 @@ function InfiniteCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
+                    onShowVideoFrame={(node, role) => void showVideoFrame(node, role)}
                     onSeparateAudio={(node) => void separateNodeAudio(node)}
                     separatingAudio={Boolean(toolbarNode && audioSeparatingNodeIds.has(toolbarNode.id))}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
@@ -5506,7 +5592,7 @@ function isStoryboardLinkedVideo(node: CanvasNodeData, nodes: CanvasNodeData[], 
     });
 }
 
-async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedImage | null> {
+async function extractVideoFrame(videoFile: UploadedFile, role: CanvasVideoFrameRole): Promise<UploadedImage | null> {
     const url = await resolveMediaUrl(videoFile.storageKey, videoFile.url);
     if (!url) return null;
     const video = document.createElement("video");
@@ -5514,18 +5600,19 @@ async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedI
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
+    const label = role === "first" ? "首帧" : "尾帧";
     const loaded = new Promise<void>((resolve, reject) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => reject(new Error("视频尾帧读取失败"));
+        video.onloadeddata = () => resolve();
+        video.onerror = () => reject(new Error(`视频${label}读取失败`));
     });
     video.src = url;
     await loaded;
     const duration = Number.isFinite(video.duration) ? video.duration : (videoFile.durationMs || 0) / 1000;
-    const targetTime = Math.max(0, duration - 0.08);
+    const targetTime = role === "first" ? 0 : Math.max(0, duration - 0.08);
     if (targetTime > 0) {
         await new Promise<void>((resolve, reject) => {
             video.onseeked = () => resolve();
-            video.onerror = () => reject(new Error("视频尾帧定位失败"));
+            video.onerror = () => reject(new Error(`视频${label}定位失败`));
             video.currentTime = targetTime;
         });
     }
@@ -5534,9 +5621,15 @@ async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedI
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext("2d")?.drawImage(video, 0, 0, width, height);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error(`视频${label}提取失败`);
+    context.drawImage(video, 0, 0, width, height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     return blob ? uploadImage(blob) : null;
+}
+
+async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedImage | null> {
+    return extractVideoFrame(videoFile, "last");
 }
 
 function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {

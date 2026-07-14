@@ -29,6 +29,7 @@ export type StoryboardProductionMode = "economy" | "documentary" | "detailed" | 
 export type StoryboardProductionScope = "single" | "series";
 export type StoryboardShotRenderMode = "video" | "still";
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
+export type CanvasVideoFrameRole = "first" | "last";
 
 export type StoryboardVoiceCandidate = {
     id: string;
@@ -227,6 +228,9 @@ export type CanvasNodeMetadata = {
     storyboardVideoResultNodeIds?: string[];
     storyboardVideoTailFrameUrl?: string;
     storyboardVideoTailFrameStorageKey?: string;
+    videoFrameSourceNodeId?: string;
+    videoFrameSourceStorageKey?: string;
+    videoFrameRole?: CanvasVideoFrameRole;
     storyboardVideoConfigCustomized?: boolean;
     videoGenerationProgress?: VideoGenerationProgress;
     videoTaskId?: string;

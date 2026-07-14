@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Modal, Segmented, Tooltip } from "antd";
-import { AudioLines, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LoaderCircle, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Video } from "lucide-react";
+import { AudioLines, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LoaderCircle, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, SkipBack, SkipForward, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasVideoFrameRole, type ViewportTransform } from "@/types/canvas";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 import { canvasImagePresetOptions, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
@@ -24,6 +24,7 @@ type CanvasNodeHoverToolbarProps = {
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
+    onShowVideoFrame: (node: CanvasNodeData, role: CanvasVideoFrameRole) => void;
     onSeparateAudio: (node: CanvasNodeData) => void;
     separatingAudio: boolean;
     onSaveAsset: (node: CanvasNodeData) => void;
@@ -68,6 +69,7 @@ export function CanvasNodeHoverToolbar({
     onGenerateImage,
     onUpload,
     onDownload,
+    onShowVideoFrame,
     onSeparateAudio,
     separatingAudio,
     onSaveAsset,
@@ -204,6 +206,8 @@ export function CanvasNodeHoverToolbar({
         ...(canRetry ? [{ id: "retry", title: "重新生成", label: "重试", icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: "加入我的素材", label: "存素材", icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasVideo ? [{ id: "firstFrame", title: "在右侧显示视频首帧", label: "首帧", icon: <SkipBack className="size-4" />, onClick: () => onShowVideoFrame(node, "first") }] : []),
+        ...(hasVideo ? [{ id: "lastFrame", title: "在右侧显示视频尾帧", label: "尾帧", icon: <SkipForward className="size-4" />, onClick: () => onShowVideoFrame(node, "last") }] : []),
         ...(hasVideo ? [{ id: "separateAudio", title: separatingAudio ? "正在分离人声和背景音乐" : "将视频分离为人声和背景音乐", label: separatingAudio ? "分离中" : "分离音频", icon: separatingAudio ? <LoaderCircle className="size-4 animate-spin" /> : <AudioLines className="size-4" />, onClick: () => onSeparateAudio(node), disabled: separatingAudio }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isScript ? [{ id: "exportScriptAssets", title: "批量生成并导出资产", label: "批量生成资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
