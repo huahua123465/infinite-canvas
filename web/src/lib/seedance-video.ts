@@ -184,14 +184,18 @@ export function seedanceReferenceLabel(kind: "image" | "video" | "audio", index:
 }
 
 export function buildSeedancePromptText(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
-    const labels = [
-        ...images.map((_, index) => seedanceReferenceLabel("image", index)),
-        ...videos.map((_, index) => seedanceReferenceLabel("video", index)),
-        ...audios.map((_, index) => seedanceReferenceLabel("audio", index)),
+    const mappings = [
+        ...images.map((item, index) => `${seedanceReferenceLabel("image", index)} = ${seedanceReferenceName(item.name)}`),
+        ...videos.map((item, index) => `${seedanceReferenceLabel("video", index)} = ${seedanceReferenceName(item.name)}`),
+        ...audios.map((item, index) => `${seedanceReferenceLabel("audio", index)} = ${seedanceReferenceName(item.name)}`),
     ];
     const text = prompt.trim();
-    if (!labels.length) return text;
-    return `参考素材编号：${labels.join("、")}。请按这些编号理解提示词中的图片、视频和音频引用。\n\n${text}`;
+    if (!mappings.length) return text;
+    return `参考素材映射：${mappings.join("；")}。提示词中的 @资产名 与这里的图片、视频、音频编号一一对应，每个素材只控制对应主体、场景、道具、动作或声音。\n\n${text}`;
+}
+
+function seedanceReferenceName(name: string) {
+    return name.replace(/\.(?:png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a|aac)$/i, "").trim() || "未命名素材";
 }
 
 export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {

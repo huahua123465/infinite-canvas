@@ -1,4 +1,4 @@
-import type { StoryboardChapter, StoryboardProductionMode, StoryboardProductionScope, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
+import type { StoryboardChapter, StoryboardDramaturgyPhase, StoryboardDramaturgyPlan, StoryboardProductionMode, StoryboardProductionScope, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
 
 export const STORYBOARD_BEAT_BATCH_SIZE = 10;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
@@ -42,6 +42,46 @@ export function parseStoryboardSourceBeats(content: string): StoryboardSourceBea
     });
 }
 
+export function parseStoryboardDramaturgyPlan(content: string, beats: StoryboardSourceBeat[]): StoryboardDramaturgyPlan {
+    const item = parseJson(content) as Record<string, unknown>;
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("模型没有返回可用的剧作总纲 JSON");
+    const logline = text(item.logline);
+    const coreConflict = text(item.coreConflict);
+    if (!logline || !coreConflict) throw new Error("剧作总纲缺少一句话故事或核心冲突");
+    const allowedIds = new Set(beats.map((beat) => beat.id));
+    const ids = (value: unknown) => stringList(value).filter((id) => allowedIds.has(id));
+    const opening = item.openingHook && typeof item.openingHook === "object" ? item.openingHook as Record<string, unknown> : {};
+    const format = text(item.format);
+    const rhythmRecords = Array.isArray(item.rhythmPlan) ? item.rhythmPlan : [];
+    const rhythmPlan = rhythmRecords.flatMap((value): StoryboardDramaturgyPhase[] => {
+        if (!value || typeof value !== "object") return [];
+        const phaseItem = value as Record<string, unknown>;
+        const phase = normalizeDramaturgyPhase(phaseItem.phase);
+        const sourceBeatIds = ids(phaseItem.sourceBeatIds);
+        if (!sourceBeatIds.length) return [];
+        return [{ phase, sourceBeatIds, plotRhythm: normalizePlotRhythm(phaseItem.plotRhythm), emotionRhythm: normalizeEmotionRhythm(phaseItem.emotionRhythm), purpose: text(phaseItem.purpose) }];
+    });
+    const fallbackOpeningIds = beats[0] ? [beats[0].id] : [];
+    return {
+        format: format === "biography" || format === "concept" || format === "series" ? format : "narrative",
+        logline,
+        protagonist: text(item.protagonist) || beats.flatMap((beat) => beat.characters)[0] || "当前故事主体",
+        want: text(item.want),
+        need: text(item.need),
+        coreConflict,
+        openingHook: { description: text(opening.description) || beats[0]?.event || "从第一个可见事实建立故事", sourceBeatIds: ids(opening.sourceBeatIds).length ? ids(opening.sourceBeatIds) : fallbackOpeningIds },
+        incitingBeatIds: ids(item.incitingBeatIds),
+        turningBeatIds: ids(item.turningBeatIds),
+        climaxBeatIds: ids(item.climaxBeatIds),
+        endingBeatIds: ids(item.endingBeatIds),
+        arcSummary: text(item.arcSummary),
+        rhythmPlan,
+        visualMotifs: stringList(item.visualMotifs).slice(0, 5),
+        dialoguePrinciples: stringList(item.dialoguePrinciples).slice(0, 5),
+        warnings: stringList(item.warnings).slice(0, 5),
+    };
+}
+
 export function parsePlannedStoryboardShots(content: string): PlannedStoryboardShot[] {
     const data = parseJson(content) as { shots?: unknown[] } | unknown[];
     const records = Array.isArray(data) ? data : data.shots;
@@ -63,6 +103,13 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
                 transition: ["continue", "cut", "montage", "time-jump"].includes(transition) ? transition : "cut",
                 usePreviousTailFrame: item.usePreviousTailFrame === true,
                 motionPriority: Math.max(1, Math.min(5, Number(item.motionPriority) || 3)),
+                dramaticFunction: normalizeDramaturgyPhase(item.dramaticFunction),
+                goal: text(item.goal),
+                obstacle: text(item.obstacle),
+                result: text(item.result),
+                plotRhythm: normalizePlotRhythm(item.plotRhythm),
+                emotionRhythm: normalizeEmotionRhythm(item.emotionRhythm),
+                valueShift: text(item.valueShift),
             },
         }];
     });
@@ -186,4 +233,19 @@ function text(value: unknown) {
 
 function stringList(value: unknown) {
     return Array.isArray(value) ? value.map(text).filter(Boolean) : text(value).split(/[、,，]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeDramaturgyPhase(value: unknown): StoryboardDramaturgyPhase["phase"] {
+    const phase = text(value);
+    return phase === "setup" || phase === "inciting" || phase === "escalation" || phase === "turn" || phase === "climax" || phase === "resolution" ? phase : "escalation";
+}
+
+function normalizePlotRhythm(value: unknown): StoryboardDramaturgyPhase["plotRhythm"] {
+    const rhythm = text(value);
+    return rhythm === "loose" || rhythm === "tight" ? rhythm : "medium";
+}
+
+function normalizeEmotionRhythm(value: unknown): StoryboardDramaturgyPhase["emotionRhythm"] {
+    const rhythm = text(value);
+    return rhythm === "light" || rhythm === "heavy" ? rhythm : "medium";
 }

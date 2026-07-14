@@ -17,7 +17,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardAudioReference, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_PROMPT_SOURCE_TEXT, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardAudioReference, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -1565,6 +1565,7 @@ function StoryboardVideoPromptPreviewModal({
                         <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
                             卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
                         </div>
+                        {node.metadata?.storyboardPromptSource ? <div title={node.metadata.storyboardPromptSkillRoot || STORYBOARD_PROMPT_SOURCE_TEXT[node.metadata.storyboardPromptSource]} className={`rounded-xl border px-3 py-2 text-xs leading-5 ${node.metadata.storyboardPromptSource === "skill" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200" : node.metadata.storyboardPromptSource === "fallback" ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200" : "border-stone-300 bg-stone-100 text-stone-600 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300"}`}>提示词来源：<span className="font-semibold">{STORYBOARD_PROMPT_SOURCE_TEXT[node.metadata.storyboardPromptSource]}</span>{node.metadata.storyboardPromptSource === "fallback" ? "，建议检查内容安全改写后再生成视频。" : ""}</div> : null}
                         <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${modalFirstFrameSource ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"}`}>
                             {modalFirstFrameSource ? `当前首帧来自：${modalFirstFrameSource}` : (node.metadata?.storyboardRowIndex || 0) > 0 ? "当前未接入上一镜尾帧，可在“编辑参考”里手动添加上一镜尾帧。" : "第一镜通常不需要接入上一镜尾帧。"}
                         </div>
@@ -1620,7 +1621,7 @@ function StoryboardVideoPromptPreviewModal({
                     ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有实际提交的参考资产" />
                     )}
-                    {missingContextReferences.length ? <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-200">提示词中出现了角色或场景，但尚未加入本镜头：{missingContextReferences.map((item) => item.mention).join("、")}。请先从下方加入，避免多镜头身份或场景漂移。</div> : null}
+                    {missingContextReferences.length ? <div className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-200">提示词中可能还引用了未加入本镜头的角色或场景：{missingContextReferences.map((item) => item.mention).join("、")}。建议从下方补充；也可以继续生成，并在提交前确认风险。</div> : null}
                 </section>
                 {continuityPrompt ? (
                     <section>
@@ -1671,8 +1672,8 @@ function StoryboardVideoPromptPreviewModal({
                     </div>
                 </div>
                 <div className="flex shrink-0 items-center justify-between gap-4 border-t border-stone-200 pt-4 dark:border-stone-800">
-                    <span className="text-xs text-stone-500">点击生成后会关闭确认页，并把视频结果写回当前待审核节点。</span>
-                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim() || Boolean(missingContextReferences.length)} onClick={generate}>
+                    <span className={`text-xs ${missingContextReferences.length ? "text-amber-600 dark:text-amber-300" : "text-stone-500"}`}>{missingContextReferences.length ? "存在参考资产提醒；点击后仍会执行生成前检查。" : "点击生成后会关闭确认页，并把视频结果写回当前待审核节点。"}</span>
+                    <Button type="primary" className="!h-10 !rounded-full !px-4" disabled={!draftFinalPrompt.trim()} onClick={generate}>
                         <span className="flex items-center gap-1.5">
                             <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
                                 <CreditSymbol />
@@ -1776,14 +1777,17 @@ function storyboardReferenceAssetCandidates(references: StoryboardVideoReference
 
 function storyboardMissingContextReferences(prompt: string, selected: StoryboardVideoReference[], candidates: StoryboardVideoReference[]) {
     const selectedKeys = new Set(selected.map(storyboardReferenceContextKey));
+    const selectedBaseKeys = new Set(selected.map(storyboardReferenceBaseKey));
     const missingKeys = new Set<string>();
     return candidates.filter((reference) => {
         if (reference.kind !== "character" && reference.kind !== "scene") return false;
         const key = storyboardReferenceContextKey(reference);
         if (selectedKeys.has(key) || missingKeys.has(key)) return false;
         const name = (reference.name || reference.mention).replace(/^@/, "");
-        const baseName = name.split(/[·（(]/)[0]?.trim() || name;
-        if (!prompt.includes(reference.mention) && !prompt.includes(name) && (baseName.length < 2 || !prompt.includes(baseName))) return false;
+        const explicitMentioned = prompt.includes(reference.mention);
+        const baseName = storyboardReferenceBaseKey(reference);
+        if (!explicitMentioned && selectedBaseKeys.has(baseName)) return false;
+        if (!explicitMentioned && !prompt.includes(name) && (baseName.length < 2 || !prompt.includes(baseName))) return false;
         missingKeys.add(key);
         return true;
     });
@@ -1791,7 +1795,11 @@ function storyboardMissingContextReferences(prompt: string, selected: Storyboard
 
 function storyboardReferenceContextKey(reference: StoryboardVideoReference) {
     const name = (reference.name || reference.mention).replace(/^@/, "");
-    return (name.split(/[·（(]/)[0]?.trim() || name).replace(/-(?:多角度锁定图|正面|左侧|右侧|俯视|背面|左前45度|右前45度|左后45度|右后45度)$/, "");
+    return (name.split(/[（(]/)[0]?.trim() || name).replace(/-(?:多角度锁定图|正面|左侧|右侧|俯视|背面|左前45度|右前45度|左后45度|右后45度)$/, "");
+}
+
+function storyboardReferenceBaseKey(reference: StoryboardVideoReference) {
+    return storyboardReferenceContextKey(reference).replace(/[·-](?:婴幼儿|年少|童年|少年|青年|年轻|成年|中年|老年|晚年)(?:时期|阶段)?$/, "");
 }
 
 function dedupeStoryboardReferences(references: StoryboardVideoReference[]) {

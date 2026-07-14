@@ -42,6 +42,7 @@ export function startHttpServer() {
     });
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
+    app.get("/api/skills/screenwriting/context", route(async (_req, res) => res.json({ ok: true, ...(await loadScreenwritingContext()) })));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.post("/api/proxy/volcengine/voice-clone", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/voice_clone")));
@@ -211,6 +212,35 @@ async function findSeedance20Root() {
         try {
             await fs.access(path.join(root, "SKILL.md"));
             await fs.access(path.join(root, "skills", "seedance-prompt", "SKILL.md"));
+            return root;
+        } catch {
+            // try next candidate
+        }
+    }
+    return "";
+}
+
+const SCREENWRITING_FILES = ["SKILL.md", "references/automatic-story-planning.md"] as const;
+
+async function loadScreenwritingContext() {
+    const root = await findScreenwritingRoot();
+    if (!root) throw new Error("Infinite Canvas screenwriting skill not found; set SCREENWRITING_SKILL_ROOT to the skill directory");
+    const files = await Promise.all(SCREENWRITING_FILES.map(async (relativePath) => ({ path: relativePath, content: await fs.readFile(path.join(root, relativePath), "utf8") })));
+    return { root, files };
+}
+
+async function findScreenwritingRoot() {
+    const candidates = [
+        process.env.SCREENWRITING_SKILL_ROOT || "",
+        path.resolve(process.cwd(), ".agents", "skills", "infinite-canvas-screenwriting"),
+        path.resolve(process.cwd(), "..", ".agents", "skills", "infinite-canvas-screenwriting"),
+        path.resolve(process.cwd(), "..", "..", ".agents", "skills", "infinite-canvas-screenwriting"),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+        const root = path.resolve(candidate);
+        try {
+            await fs.access(path.join(root, "SKILL.md"));
+            await fs.access(path.join(root, "references", "automatic-story-planning.md"));
             return root;
         } catch {
             // try next candidate

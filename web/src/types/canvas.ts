@@ -28,6 +28,8 @@ export type StoryboardShotTransition = "continue" | "cut" | "montage" | "time-ju
 export type StoryboardProductionMode = "economy" | "documentary" | "detailed" | "custom";
 export type StoryboardProductionScope = "single" | "series";
 export type StoryboardShotRenderMode = "video" | "still";
+export type StoryboardPromptSource = "skill" | "builtin" | "fallback";
+export const STORYBOARD_PROMPT_SOURCE_TEXT: Record<StoryboardPromptSource, string> = { skill: "技能包生成", builtin: "内置规则", fallback: "安全兜底" };
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 export type CanvasVideoFrameRole = "first" | "last";
 
@@ -110,6 +112,8 @@ export type StoryboardPromptDetail = {
     videoMotionPrompt: string;
     assetMentions?: string[];
     assetMentionLinks?: StoryboardAssetMentionLink[];
+    promptSource?: StoryboardPromptSource;
+    promptSkillRoot?: string;
 };
 
 export type StoryboardSourceBeat = {
@@ -124,6 +128,33 @@ export type StoryboardSourceBeat = {
     treatment: "direct" | "symbolic" | "voiceover";
 };
 
+export type StoryboardDramaturgyPhase = {
+    phase: "setup" | "inciting" | "escalation" | "turn" | "climax" | "resolution";
+    sourceBeatIds: string[];
+    plotRhythm: "loose" | "medium" | "tight";
+    emotionRhythm: "light" | "medium" | "heavy";
+    purpose: string;
+};
+
+export type StoryboardDramaturgyPlan = {
+    format: "biography" | "narrative" | "concept" | "series";
+    logline: string;
+    protagonist: string;
+    want: string;
+    need: string;
+    coreConflict: string;
+    openingHook: { description: string; sourceBeatIds: string[] };
+    incitingBeatIds: string[];
+    turningBeatIds: string[];
+    climaxBeatIds: string[];
+    endingBeatIds: string[];
+    arcSummary: string;
+    rhythmPlan: StoryboardDramaturgyPhase[];
+    visualMotifs: string[];
+    dialoguePrinciples: string[];
+    warnings: string[];
+};
+
 export type StoryboardShotPlan = {
     sourceBeatIds: string[];
     continuityGroupId: string;
@@ -136,6 +167,13 @@ export type StoryboardShotPlan = {
     chapterTitle?: string;
     renderMode?: StoryboardShotRenderMode;
     motionPriority?: number;
+    dramaticFunction?: StoryboardDramaturgyPhase["phase"];
+    goal?: string;
+    obstacle?: string;
+    result?: string;
+    plotRhythm?: StoryboardDramaturgyPhase["plotRhythm"];
+    emotionRhythm?: StoryboardDramaturgyPhase["emotionRhythm"];
+    valueShift?: string;
 };
 
 export type StoryboardChapter = {
@@ -159,6 +197,9 @@ export type StoryboardPlanningCheckpoint = {
     shots: Array<{ row: string[]; plan: StoryboardShotPlan }>;
     condensed?: boolean;
     originalBeatCount?: number;
+    dramaturgyPlan?: StoryboardDramaturgyPlan;
+    dramaturgySource?: "skill" | "builtin";
+    dramaturgySkillRoot?: string;
 };
 
 export type StoryboardAssetProgress = {
@@ -185,6 +226,9 @@ export type CanvasNodeMetadata = {
     storyboardSourceText?: string;
     storyboardRows?: string[][];
     storyboardSourceBeats?: StoryboardSourceBeat[];
+    storyboardDramaturgyPlan?: StoryboardDramaturgyPlan;
+    storyboardDramaturgySource?: "skill" | "builtin";
+    storyboardDramaturgySkillRoot?: string;
     storyboardShotPlans?: Record<string, StoryboardShotPlan>;
     storyboardPlanningProgress?: StoryboardPlanningProgress;
     storyboardPlanningCheckpoint?: StoryboardPlanningCheckpoint;
@@ -210,6 +254,8 @@ export type CanvasNodeMetadata = {
     storyboardAssetMentionNodeIds?: Record<string, string>;
     storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
     storyboardPromptErrors?: Record<string, string>;
+    storyboardPromptSource?: StoryboardPromptSource;
+    storyboardPromptSkillRoot?: string;
     storyboardSourceNodeId?: string;
     storyboardChapterId?: string;
     storyboardAssetId?: string;

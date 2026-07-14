@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Dropdown, Input, InputNumber, Modal, Select } from "antd";
-import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Trash2, Upload, Video, Volume2, X } from "lucide-react";
+import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, RefreshCw, Sparkles, Square, Trash2, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
-import type { CanvasNodeData, StoryboardAsset, StoryboardAssetBatchProgress, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardProductionMode, StoryboardProductionScope, StoryboardPromptDetail } from "@/types/canvas";
+import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionMode, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotPlan } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
@@ -54,7 +54,7 @@ type CanvasScriptNodeDialogProps = {
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
     onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
-    onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void;
+    onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void;
     onStopPromptGeneration: (node: CanvasNodeData) => void;
     onPromptDetailChange: (nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => void;
     onModelChange: (nodeId: string, model: string) => void;
@@ -89,7 +89,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const activeRowIndexes = rows.map((_, index) => index).filter((index) => !activeEpisodeId || shotPlans[String(index)]?.chapterId === activeEpisodeId);
     const dynamicIndexes = activeRowIndexes.filter((index) => shotPlans[String(index)]?.renderMode !== "still");
     const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)])).length;
-    const failedPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) && Boolean(promptErrors[String(index)])).length;
+    const failedPromptCount = dynamicIndexes.filter((index) => Boolean(promptErrors[String(index)])).length;
+    const pendingPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) || Boolean(promptErrors[String(index)])).length;
     const staticShotCount = activeRowIndexes.length - dynamicIndexes.length;
     const readyAssets = assets.filter(storyboardAssetReady).length;
     const missingAssets = assets.length - readyAssets;
@@ -200,6 +201,17 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         });
     };
 
+    const confirmRecomposeAllPrompts = () => {
+        if (!node || !dynamicIndexes.length) return;
+        modal.confirm({
+            title: `重新合成当前集全部 ${dynamicIndexes.length} 个视频提示词？`,
+            content: "无需重新规划分镜或生成资产；本操作会重新调用文本模型，并用新格式逐条覆盖当前集已有提示词。任务可暂停，已完成的新结果会立即保留。",
+            okText: "重新合成全部",
+            cancelText: "取消",
+            onOk: () => onComposeFinalPrompt(node, undefined, true),
+        });
+    };
+
     return (
         <Modal
             className="canvas-script-node-dialog"
@@ -257,7 +269,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             />
                         ) : null}
                         {view === "prompts" ? (
-                            <PromptStepToolbar node={node} actionKey={actionKey} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onStopPromptGeneration={onStopPromptGeneration} />
+                            <PromptStepToolbar node={node} actionKey={actionKey} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} pendingPromptCount={pendingPromptCount} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onRecomposeAll={confirmRecomposeAllPrompts} onStopPromptGeneration={onStopPromptGeneration} />
                         ) : null}
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
@@ -473,9 +485,27 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
     const videoSeconds = rowIndexes.reduce((total, index) => total + (plans[String(index)]?.renderMode === "video" ? Number(rows[index]?.[1]?.match(/\d+(?:\.\d+)?/)?.[0] || 0) : 0), 0);
     const displayRows = rowIndexes.map((rowIndex) => ({ row: rows[rowIndex], rowIndex }));
     const planningButtonText = `${rows.length ? "重新" : "自动"}规划${productionScope === "single" ? "单集" : "完整系列"}`;
+    const dramaturgy = node.metadata?.storyboardDramaturgyPlan;
     return (
         <>
             {planningStale ? <div className="flex h-11 shrink-0 items-center border-b border-amber-400/20 bg-amber-500/10 px-8 text-xs font-semibold text-amber-100">当前表格来自旧生产配置，请点击下方“{planningButtonText}”生成新的片段数量后再继续。</div> : null}
+            {!planningStale && dramaturgy ? (
+                <div className="flex min-h-20 shrink-0 items-center gap-5 border-b border-emerald-400/15 bg-[#111916] px-8 py-3 text-xs">
+                    <div className="w-28 shrink-0">
+                        <div className="font-semibold text-emerald-100">剧作总纲</div>
+                        <div title={node.metadata?.storyboardDramaturgySkillRoot || undefined} className="mt-1 text-[11px] text-emerald-200/65">{node.metadata?.storyboardDramaturgySource === "skill" ? "编剧技能包" : "内置编剧规则"}</div>
+                    </div>
+                    <div className="min-w-0 flex-1 leading-5 text-[#d8e2dd]">
+                        <div className="truncate font-semibold text-white" title={dramaturgy.logline}>{dramaturgy.logline}</div>
+                        <div className="truncate text-[#aebbb5]" title={dramaturgy.coreConflict}>核心冲突：{dramaturgy.coreConflict}</div>
+                    </div>
+                    <div className="max-w-[360px] min-w-0 leading-5 text-[#aebbb5]">
+                        <div className="truncate" title={dramaturgy.openingHook.description}>开场钩子：{dramaturgy.openingHook.description}</div>
+                        <div className="truncate" title={`${dramaturgy.protagonist} / ${dramaturgy.want}`}>主角目标：{dramaturgy.protagonist} · {dramaturgy.want || "按事实推进"}</div>
+                    </div>
+                    {dramaturgy.warnings.length ? <div className="shrink-0 text-amber-200" title={dramaturgy.warnings.join("\n")}>{dramaturgy.warnings.length} 项需留意</div> : null}
+                </div>
+            ) : null}
             {!planningStale && rows.length && chapters.length ? (
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[#303030] bg-[#171717] px-8 text-xs text-[#c9c9c9]">
                     <span className="font-semibold text-white">{productionModeLabel(node.metadata?.storyboardProductionMode)}</span>
@@ -523,6 +553,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                             {plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
                                         </span>
                                         {plans[String(rowIndex)]?.chapterTitle ? <div className="mt-1 truncate text-[#858585]" title={plans[String(rowIndex)]?.chapterTitle}>{plans[String(rowIndex)]?.chapterTitle}</div> : null}
+                                        {plans[String(rowIndex)]?.dramaticFunction ? <div className="mt-1 truncate font-semibold text-amber-200/80" title={storyboardShotDramaturgyTitle(plans[String(rowIndex)])}>{dramaticFunctionLabel(plans[String(rowIndex)]?.dramaticFunction)}</div> : null}
                                     </div>
                                     <div className="flex items-center justify-center gap-1.5">
                                         <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="打开合成提示词" onClick={() => onOpenPrompt(rowIndex)} />
@@ -569,6 +600,15 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
             </div>
         </>
     );
+}
+
+function dramaticFunctionLabel(value?: string) {
+    return ({ setup: "建置", inciting: "激励", escalation: "升级", turn: "转折", climax: "高潮", resolution: "结局" } as Record<string, string>)[value || ""] || "推进";
+}
+
+function storyboardShotDramaturgyTitle(plan?: StoryboardShotPlan) {
+    if (!plan) return "";
+    return [`功能：${dramaticFunctionLabel(plan.dramaticFunction)}`, plan.goal ? `目标：${plan.goal}` : "", plan.obstacle ? `阻碍：${plan.obstacle}` : "", plan.result ? `结果：${plan.result}` : "", plan.valueShift ? `变化：${plan.valueShift}` : "", `节奏：${plan.plotRhythm || "medium"} / ${plan.emotionRhythm || "medium"}`].filter(Boolean).join("\n");
 }
 
 function productionModeLabel(mode?: string) {
@@ -705,7 +745,10 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                 <div className="flex items-center justify-between border-b border-[#343434] bg-[#151515] px-6 py-4 pr-12">
                     <div className="min-w-0">
                         <div className="text-base font-semibold">第 {row[0] || rowIndex + 1} 镜：合成提示词</div>
-                        <div className="mt-1 truncate text-xs text-[#9f9f9f]">{row[2] || node.title}</div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-[#9f9f9f]">
+                            <span className="truncate">{row[2] || node.title}</span>
+                            {draft.promptSource ? <span title={draft.promptSkillRoot || STORYBOARD_PROMPT_SOURCE_TEXT[draft.promptSource]} className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${draft.promptSource === "skill" ? "bg-emerald-500/15 text-emerald-200" : draft.promptSource === "fallback" ? "bg-amber-500/15 text-amber-200" : "bg-white/10 text-[#cfcfcf]"}`}>{STORYBOARD_PROMPT_SOURCE_TEXT[draft.promptSource]}</span> : null}
+                        </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                         <ModelPicker config={config} value={model} capability="text" className="!h-9 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
@@ -994,16 +1037,16 @@ function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount
     );
 }
 
-function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; dynamicPromptCount: number; dynamicShotCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
-    const remaining = Math.max(0, dynamicShotCount - dynamicPromptCount);
+function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCount, pendingPromptCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onRecomposeAll, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; dynamicPromptCount: number; dynamicShotCount: number; pendingPromptCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onRecomposeAll: () => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
+    const remaining = pendingPromptCount;
     const generating = actionKey === "prompt:all";
     return (
         <div className="flex shrink-0 items-center gap-4">
             {generating ? (
                 <Button danger className="!h-10 !rounded-lg !px-7" icon={<Square className="size-4" />} onClick={() => onStopPromptGeneration(node)}>暂停合成</Button>
             ) : (
-                <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!remaining || actionKey !== null} icon={<Sparkles className="size-4" />} onClick={() => onComposeFinalPrompt(node)}>
-                    {failedPromptCount ? `重试失败及剩余 ${remaining} 个` : dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个视频片段`}
+                <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!dynamicShotCount || actionKey !== null} icon={remaining ? <Sparkles className="size-4" /> : <RefreshCw className="size-4" />} onClick={() => remaining ? onComposeFinalPrompt(node) : onRecomposeAll()}>
+                    {remaining ? failedPromptCount ? `重试失败及剩余 ${remaining} 个` : dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个视频片段` : `重新合成全部 ${dynamicShotCount} 个`}
                 </Button>
             )}
             <div className="text-sm font-semibold">{dynamicPromptCount}/{dynamicShotCount} 个视频片段完成</div>
