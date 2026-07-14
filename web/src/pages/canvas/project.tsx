@@ -285,7 +285,7 @@ JSON 格式必须为：
 10. 除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束；不要使用负面提示词语法，只用自然语言约束。
 11. 根据镜头内容从资产列表里选择真正相关的人物、场景、道具，通常只选 1-3 个核心资产；不要为了“全面”引用所有资产。
 12. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
-13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、年龄或场景，必须用空格或标点隔开，例如写“@白秋妹 年幼时站在坟地上”，不要写成“@白秋妹年幼时站在坟地上”。
+13. @资产名必须严格使用“第二步资产清单”里出现的原始名称，不要改写、不要补充括号、不要使用别名；资产名后如果要继续描述动作、时期或场景，必须用空格或标点隔开，例如写“@白秋妹·年轻时期 走入院落”，不要把资产名和后续动作粘连。
 14. 如果同一人物存在多个年龄/时期资产，必须根据当前镜头内容选择精确状态的资产，例如年轻时期镜头只用 @白秋妹·年轻时期，成年时期镜头只用 @白秋妹·成年时期；不要用一个状态资产代表另一个年龄，也不要同时引用同一人物多个年龄状态，除非镜头明确是回忆对照或同框设定。
 15. 有参考资产时，不要反复重描述资产已经可见的脸、服装、场景和道具细节；重点写参考资产没有表达清楚的运动、时间、镜头、光线变化、声音和保持不变的内容。
 16. 角色画风必须继承【可编辑项目设定】和资产参考：项目要求写实、真人或纪实时，使用真人演员与真实摄影质感；项目要求动画、漫画、2.5D、3D、水墨等风格时，严格保持对应媒介。不得擅自把写实改成动漫，也不得把动漫改成真人；保持同一角色的脸型、发型、体态、服装和画风一致，不要在提示词中写任何素材 URI 或内部 ID。
@@ -293,8 +293,8 @@ JSON 格式必须为：
 18. 如果上下文里有上一片段/下一片段，当前片段需要自然承接人物站位、光线、场景结构和情绪，不要突变角色外观、场景布局或画风。
 19. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
 20. “本片段事实与连续性计划”是事实约束：必须按顺序覆盖全部 sourceBeats，并让动作从 startState 到 endState；transition=continue 时承接上一片段，cut/time-jump 时明确新起场景，不得为了连续而混合两个时期。
-21. 安全改写只调整视觉呈现，不得改变事实结果。如果原文涉及未成年人、伤残、极端贫困、受虐、血腥或脆弱处境，使用行动不便、朴素旧衣、空摇篮、熄灭的灯、散落物件、人物反应等中性或象征画面；不得把死亡、失去、疾病或离别误写成健康、团聚或仍然存在。
-22. 输出前按 seedance-troubleshoot 保守重试思路自检并修正：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和高风险表述。`;
+21. 如素材包含不适合直观呈现的脆弱处境，只调整视觉表达：使用朴素服装、空镜、灯光变化、遗留物件、人物克制反应等间接画面，保留原始因果和关系变化，不得改写成相反结果。
+22. 输出前执行保守自检：是否模式匹配、主体是否绑定清楚、是否只有一个主动作和一个主运镜、动作是否有起点/过程/终点、光源是否物理可见、资产是否真实存在、是否删掉空泛堆词和不适合直接呈现的表述。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -337,18 +337,43 @@ type Seedance20SkillContext = {
     files?: Array<{ path: string; content: string }>;
 };
 
+const SEEDANCE_20_COMPOSE_SECTIONS: Record<string, string[]> = {
+    "skills/seedance-prompt/SKILL.md": ["Director Formula", "Mode Gate", "Prompt Build Process", "Compression Rules"],
+    "skills/seedance-camera/SKILL.md": ["Camera Contract", "Move Selection", "Continuity Rules", "Conflict Rule"],
+    "skills/seedance-motion/SKILL.md": ["Motion Contract", "Timing Pattern", "Reference Motion Rules", "Stability Rules"],
+    "skills/seedance-characters/SKILL.md": ["Character Contract", "Multi-Character Blocking", "Hand and Face Stability"],
+    "skills/seedance-audio/SKILL.md": ["Core Rules", "Sound Layer Pattern", "Multi-Character Dialogue", "Failure Fixes"],
+    "skills/seedance-antislop/SKILL.md": ["Visibility Test", "Rewrite Pass", "Do Not Over-Correct"],
+    "references/reference-workflow.md": ["Asset Role Map", "Rules", "Role Examples", "Template"],
+    "references/storytelling-framework.md": ["Useful Clip Beats", "Beat Formula", "Micro-Story Checklist"],
+};
+
 async function buildStoryboardFinalPromptInstruction() {
     const context = await loadSeedance20SkillContext();
     if (!context?.files?.length) return STORYBOARD_FINAL_PROMPT_PROMPT;
+    const packageRules = context.files
+        .map((file) => {
+            const sections = SEEDANCE_20_COMPOSE_SECTIONS[file.path]?.map((heading) => markdownSecondLevelSection(file.content, heading)).filter(Boolean) || [];
+            return sections.length ? `--- ${file.path} ---\n${sections.join("\n\n")}` : "";
+        })
+        .filter(Boolean);
     return [
         STORYBOARD_FINAL_PROMPT_PROMPT,
         "【运行时读取的 seedance-20 技能包】",
-        "下面内容来自本地 seedance-2.0-5.3.0/seedance-2.0-5.3.0 技能包，是第三步合成提示词的专业规则源，而不是普通参考资料。合成 videoMotionPrompt 时必须按 seedance-prompt 的 Director Formula、reference-workflow 的资产角色映射、camera/motion/characters/audio 的专项契约、antislop 的去空话规则、filter 的安全改写和 troubleshoot 的保守重试自检来写；如果与上方 JSON 输出格式冲突，仍保持上方 JSON 格式。",
+        "下面规则由本地 seedance-2.0-5.3.0/seedance-2.0-5.3.0 技能包实时读取，只保留当前第三步需要的导演规则。必须遵循导演公式、资产角色映射、单一主运镜、动作起止、角色一致性、声音分层、去空话和短片节奏；若与上方 JSON 格式冲突，仍保持上方 JSON 格式。",
         context.root ? `技能包路径：${context.root}` : "",
-        ...context.files.map((file) => `--- ${file.path} ---\n${file.content.trim()}`),
+        ...packageRules,
     ]
         .filter(Boolean)
         .join("\n\n");
+}
+
+function markdownSecondLevelSection(content: string, heading: string) {
+    const lines = content.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+    if (start < 0) return "";
+    const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
+    return lines.slice(start, next < 0 ? lines.length : next).join("\n").trim();
 }
 
 async function loadSeedance20SkillContext(): Promise<Seedance20SkillContext | null> {
@@ -6334,14 +6359,24 @@ function safetyNeutralStoryboardPrompt(text: string) {
 function storyboardSafetyComposeText(text: string, strict = false) {
     const neutral = safetyNeutralStoryboardPrompt(text)
         .replace(/婴儿|新生儿|宝宝/g, "家庭新成员")
-        .replace(/夭折|死亡|去世/g, "离世")
+        .replace(/丧女之痛|丧子之痛|丧亲之痛|失去(?:女儿|儿子|孩子|亲人)/g, "经历永久离别")
+        .replace(/夭折|早逝|病逝|死亡|去世/g, "离世")
         .replace(/癌症|重病|绝症/g, "健康困境")
-        .replace(/失去(?:女儿|儿子|孩子)/g, "经历家庭离别")
-        .replace(/肿包|病态|病痛/g, "身体不适");
+        .replace(/肿包|病态|病痛|病症/g, "身体不适");
     return strict
         ? neutral
               .replace(/年轻女性角色|年轻角色/g, "家庭成员")
-              .replace(/受伤|生病|高烧|住院|诊所/g, "经历健康与生活困境")
+              .replace(/弟弟|妹妹|女儿|儿子|孩子/g, "家庭成员")
+              .replace(/出生|诞生|分娩|生产/g, "家庭关系发生变化")
+              .replace(/离世|永久离别/g, "家庭关系发生不可逆变化")
+              .replace(/病故|身亡|死去|死于|没能活下来|不在人世/g, "家庭关系发生不可逆变化")
+              .replace(/丧母|丧父|丧偶|孤儿/g, "经历家庭关系变化")
+              .replace(/受伤|生病|高烧|手术|急救/g, "经历生活变化")
+              .replace(/住院|诊所|医院|病床|病房/g, "室内照护空间")
+              .replace(/挨打|殴打|打骂|欺凌/g, "家庭关系紧张")
+              .replace(/怀孕|孕妇/g, "家庭成员")
+              .replace(/身体不适|健康困境|行动不便/g, "生活状态发生变化")
+              .replace(/痛苦|悲痛|绝望|苦难|受害/g, "克制情绪")
         : neutral;
 }
 
@@ -7006,23 +7041,28 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const assets = storyboardRelevantPromptAssets(episodeAssets, sourceBeats, row, shotPlan).filter((asset) => !strictSafety || !storyboardAssetHasSafetyRisk(asset));
-    const assetLines = assets.length ? assets.map((asset) => storyboardPromptAssetLine(asset, strictSafety)).join("\n") : "本片段不传入角色或场景资产，请使用环境、道具、成年人反应或象征画面安全呈现，并在 assetMentions 里返回空数组。";
+    const assetLines = assets.length ? assets.map((asset) => storyboardPromptAssetLine(asset, strictSafety)).join("\n") : "本片段不传入角色或场景资产，请使用环境、道具、家庭成员反应或间接画面呈现，并在 assetMentions 里返回空数组。";
     const contextStart = Math.max(0, rowIndex - 1);
     const contextRows = strictSafety ? "" : rows
         .slice(contextStart, Math.min(rows.length, rowIndex + 2))
         .map((item, offset) => `${contextStart + offset === rowIndex ? "当前片段" : "相邻片段"}：${storyboardSafetyComposeText(storyboardRowSummary(item))}`)
         .join("\n");
-    const safeSourceBeats = sourceBeats.map((beat) => ({ ...beat, sourceText: storyboardSafetyComposeText(beat.sourceText, strictSafety), event: storyboardSafetyComposeText(beat.event, strictSafety), emotion: storyboardSafetyComposeText(beat.emotion, strictSafety) }));
-    const safeShotPlan = shotPlan ? { ...shotPlan, timeStage: storyboardSafetyComposeText(shotPlan.timeStage, strictSafety), startState: storyboardSafetyComposeText(shotPlan.startState, strictSafety), endState: storyboardSafetyComposeText(shotPlan.endState, strictSafety) } : undefined;
-    const safeRow = row.map((cell) => storyboardSafetyComposeText(cell, strictSafety));
+    const safeSourceBeats = sourceBeats.map((beat) =>
+        strictSafety
+            ? { id: beat.id, phase: storyboardSafetyComposeText(beat.phase, true), timeStage: storyboardSafetyComposeText(beat.timeStage, true), location: storyboardSafetyComposeText(beat.location, true), event: storyboardSafetyComposeText(beat.event, true), emotion: storyboardSafetyComposeText(beat.emotion, true), treatment: beat.treatment }
+            : { ...beat, sourceText: storyboardSafetyComposeText(beat.sourceText), event: storyboardSafetyComposeText(beat.event), emotion: storyboardSafetyComposeText(beat.emotion) },
+    );
+    const safeShotPlan = shotPlan ? { ...shotPlan, timeStage: storyboardSafetyComposeText(shotPlan.timeStage, strictSafety), startState: storyboardSafetyComposeText(shotPlan.startState, strictSafety), endState: storyboardSafetyComposeText(shotPlan.endState, strictSafety), chapterTitle: storyboardSafetyComposeText(shotPlan.chapterTitle || "", strictSafety) || undefined } : undefined;
+    const safeRow = row.map((cell, index) => (strictSafety && ![0, 1, 2, 3, 4, 6, 7].includes(index) ? "" : storyboardSafetyComposeText(cell, strictSafety)));
+    const currentRowLines = STORYBOARD_COLUMNS.map((column, colIndex) => (safeRow[colIndex] ? `${column}: ${safeRow[colIndex]}` : "")).filter(Boolean);
     const directorInstruction = storyboardDirectorInstructionForNode(node);
     return [
         directorInstruction ? `整体要求/导演提示词：\n${storyboardSafetyComposeText(directorInstruction, strictSafety)}` : "",
         node.metadata?.storyboardAssetStyle ? `全局风格：\n${storyboardSafetyComposeText(node.metadata.storyboardAssetStyle, strictSafety)}` : "",
         safeShotPlan ? `本片段事实与连续性计划：\n${JSON.stringify({ sourceBeats: safeSourceBeats, ...safeShotPlan })}` : "",
         buildSeedanceStoryboardPromptContext(node, rowIndex, assets),
-        strictSafety ? "安全呈现要求：不直接展示年少角色处于疾病、伤害、死亡、受害或极端困境的过程；优先使用空房间、熄灯、遗留物件、环境变化、成年人克制反应和旁白蒙太奇，保持原有事实结果不变。" : "",
-        `当前片段：\n${STORYBOARD_COLUMNS.map((column, colIndex) => `${column}: ${safeRow[colIndex] || ""}`).join("\n")}`,
+        strictSafety ? "保守呈现要求：采用适合大众观看的间接画面，以环境变化、空镜、遗留物件、家庭成员的克制反应和旁白蒙太奇承载情节；保留因果与前后状态，不补写新的事件。" : "",
+        `当前片段：\n${currentRowLines.join("\n")}`,
         contextRows ? `前后片段上下文：\n${contextRows}` : "",
         `第二步资产清单：\n${assetLines}`,
     ]
@@ -7047,7 +7087,7 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
 }
 
 function storyboardAssetHasSafetyRisk(asset: StoryboardAsset) {
-    return /婴儿|新生儿|宝宝|儿童|小孩|幼女|未成年|残疾|残废|瘸|跛|断腿|夭折|死亡|去世|伤口|血迹|受虐|虐待|癌症|重病/.test([asset.name, asset.lifeStage, asset.description, asset.prompt].filter(Boolean).join(" "));
+    return /婴儿|新生儿|宝宝|儿童|小孩|幼女|未成年|童年|残疾|残废|瘸|跛|断腿|瘫痪|夭折|早逝|病逝|死亡|去世|丧女|丧子|伤口|血迹|受虐|虐待|癌症|重病|绝症|高烧|病床|手术/.test([asset.name, asset.lifeStage, asset.description, asset.prompt].filter(Boolean).join(" "));
 }
 
 function storyboardPromptAssetLine(asset: StoryboardAsset, strictSafety = false) {
