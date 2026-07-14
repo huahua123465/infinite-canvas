@@ -214,13 +214,14 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
             width="100vw"
             centered
             styles={{
+                wrapper: { overflow: "hidden" },
                 mask: { background: "rgba(0,0,0,.72)" },
-                content: { height: "100vh", padding: 0, borderRadius: 0, background: "#101010", overflow: "hidden" },
-                body: { height: "100%" },
-            } as any}
+                container: { height: "100dvh", padding: 0, borderRadius: 0, background: "#101010", overflow: "hidden", display: "flex", flexDirection: "column" },
+                body: { minHeight: 0, flex: 1, overflow: "hidden" },
+            }}
         >
             {node ? (
-                <div className="flex h-full flex-col bg-[#101010] text-[#f1f1f1]">
+                <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101010] text-[#f1f1f1]">
                     <div className="sticky top-0 z-30 flex min-h-20 shrink-0 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3 shadow-[0_10px_28px_rgba(0,0,0,.35)]">
                         <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
                             <Step index="1" title="确认片段" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : planningStale ? "生产配置已变更，需要重新规划" : coverage ? `${node.metadata?.storyboardOriginalBeatCount && node.metadata.storyboardOriginalBeatCount !== coverage.total ? `原文浓缩 ${node.metadata.storyboardOriginalBeatCount}→${coverage.total}` : `事实覆盖 ${coverage.covered}/${coverage.total}`}，共 ${episodes.length || 1} 集` : `${filledCount}/${rows.length} 片段待校对`} active={view === "shots"} done={!planningStale && Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0)} onClick={() => setView("shots")} />
@@ -259,10 +260,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
                     {view === "assets" ? (
-                        <div className="flex min-h-0 flex-1 flex-col">
+                        <div className={`flex min-h-0 flex-1 flex-col ${editingAsset ? "mr-[490px]" : ""}`}>
                             <AssetPrepView
                                 node={node}
                                 actionKey={actionKey}
+                                detailOpen={Boolean(editingAsset)}
                                 assets={assets}
                                 groupedAssets={groupedAssets}
                                 style={style}
@@ -279,11 +281,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 onGenerateAssetVoice={onGenerateAssetVoice}
                                 onPreviewSceneSheet={setPreviewSceneSheetAssetId}
                             />
-                            <div className="flex h-16 shrink-0 items-center justify-end border-t border-[#303030] bg-[#121212] px-8">
-                                <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!assets.length || missingAssets > 0 || actionKey !== null} onClick={openPrompts}>
-                                    下一步：合成提示词
-                                </Button>
-                            </div>
+                            {!editingAsset ? (
+                                <div className="sticky bottom-0 z-30 flex h-16 shrink-0 items-center justify-end border-t border-[#303030] bg-[#121212] px-8 shadow-[0_-10px_28px_rgba(0,0,0,.35)]">
+                                    <Button type="primary" className="!h-10 !rounded-lg !px-8" disabled={!assets.length || missingAssets > 0 || actionKey !== null} onClick={openPrompts}>
+                                        下一步：合成提示词
+                                    </Button>
+                                </div>
+                            ) : null}
                         </div>
                     ) : view === "prompts" ? (
                         <PromptComposeView
@@ -346,8 +350,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     ) : null}
                     {editingAsset ? (
                         <div className="absolute inset-0 z-40 bg-transparent" onClick={() => setEditingAssetId(null)}>
-                            <div className="absolute inset-y-0 right-0 flex w-[490px] flex-col border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
-                                <div className="flex h-16 items-center justify-between gap-3 border-b border-[#353535] px-5 pr-12">
+                            <div className="absolute inset-y-0 right-0 flex min-h-0 w-[490px] flex-col overflow-hidden border-l border-[#303030] bg-[#242424] shadow-[-18px_0_50px_rgba(0,0,0,.45)]" onClick={(event) => event.stopPropagation()}>
+                                <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-[#353535] px-5 pr-12">
                                     <div className="flex min-w-0 items-center gap-3">
                                         <div className="shrink-0 text-sm font-semibold">编辑{ASSET_KIND_LABEL[editingAsset.kind]}</div>
                                         {editingAssetGenerating ? (
@@ -365,9 +369,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
                                     </div>
                                 </div>
-                                <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
+                                <div className="shrink-0 border-b border-[#353535] px-5 py-4">
                                     <div className="mb-4 text-xs font-semibold text-[#f0f0f0]">{ASSET_KIND_LABEL[editingAsset.kind]}形象</div>
-                                    <button className="relative mb-3 grid aspect-[4/3] w-full place-items-center overflow-hidden rounded-lg border border-dashed border-[#565656] bg-[#2d2d2d] text-xs text-[#979797]" onClick={() => uploadInputRef.current?.click()}>
+                                    <button className="relative mb-3 grid h-[min(42vh,340px)] w-full place-items-center overflow-hidden rounded-lg border border-dashed border-[#565656] bg-[#2d2d2d] text-xs text-[#979797]" onClick={() => uploadInputRef.current?.click()}>
                                         {editingAsset.imageUrl ? <img src={editingAsset.imageUrl} alt={editingAsset.name} className="size-full object-cover" /> : editingAsset.status === "loading" ? <LoaderCircle className="size-7 animate-spin" /> : <span className="flex flex-col items-center gap-2"><Plus className="size-7" />生成或上传{ASSET_KIND_LABEL[editingAsset.kind]}图</span>}
                                         <Dropdown
                                             trigger={["click"]}
@@ -410,6 +414,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                         )}
                                     </div>
                                     <input ref={uploadInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => uploadEditingAsset(event.target.files?.[0])} />
+                                </div>
+                                <div className="thin-scrollbar min-h-0 flex-1 overscroll-contain overflow-auto px-5 py-4">
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
                                     {editingAsset.kind === "character" ? (
                                         <div className="mb-4 grid grid-cols-2 gap-3">
@@ -458,7 +464,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                     ) : null}
                                     {editingAsset.errorDetails ? <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{editingAsset.errorDetails}</div> : null}
                                 </div>
-                                <div className="flex h-16 items-center justify-end gap-2 border-t border-[#353535] px-5">
+                                <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-t border-[#353535] bg-[#242424] px-5 shadow-[0_-10px_28px_rgba(0,0,0,.3)]">
                                     {editingAssetHasImage ? (
                                         <Button danger onClick={clearEditingAssetImage}>
                                             清除图片
@@ -941,34 +947,36 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onDeleteAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onDeleteAsset: (asset: StoryboardAsset) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
+function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onDeleteAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; detailOpen: boolean; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onDeleteAsset: (asset: StoryboardAsset) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
     const progress = node.metadata?.storyboardAssetProgress;
     return (
         <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-8 py-5">
-            <div className="mb-5 flex items-start gap-2 text-sm leading-7 text-[#d6d6d6]">
-                <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
-                <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
+            <div className={detailOpen ? "min-w-[calc(100vw-96px)]" : ""}>
+                <div className="mb-5 flex items-start gap-2 text-sm leading-7 text-[#d6d6d6]">
+                    <span className="rounded bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200">全局风格</span>
+                    <span>{preparing ? "正在根据剧本和分镜提炼统一视觉风格..." : style || "等待模型根据剧本和分镜提炼统一视觉风格。"}</span>
+                </div>
+                {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
+                {batchProgress ? <AssetBatchProgressBar progress={batchProgress} /> : null}
+                {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
+                {ASSET_SECTIONS.map(({ kind, title }) => (
+                    <section key={kind} className="mb-7">
+                        <div className="mb-3 flex min-h-8 items-center gap-3">
+                            <div className="text-sm font-semibold text-[#ededed]">{title}</div>
+                            {kind === "scene" && groupedAssets.scene.length ? <BatchSceneSheetButton node={node} actionKey={actionKey} scenes={groupedAssets.scene} onBatchGenerateSceneSheets={onBatchGenerateSceneSheets} onStopSceneSheets={onStopSceneSheets} /> : null}
+                        </div>
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
+                            {groupedAssets[kind].map((asset) => (
+                                <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onDelete={() => onDeleteAsset(asset)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
+                            ))}
+                            <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
+                                <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
+                            </button>
+                        </div>
+                    </section>
+                ))}
             </div>
-            {preparing || progress ? <AssetRecognitionProgress progress={progress} /> : null}
-            {batchProgress ? <AssetBatchProgressBar progress={batchProgress} /> : null}
-            {error ? <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">识别失败：{error}</div> : null}
-            {ASSET_SECTIONS.map(({ kind, title }) => (
-                <section key={kind} className="mb-7">
-                    <div className="mb-3 flex min-h-8 items-center gap-3">
-                        <div className="text-sm font-semibold text-[#ededed]">{title}</div>
-                        {kind === "scene" && groupedAssets.scene.length ? <BatchSceneSheetButton node={node} actionKey={actionKey} scenes={groupedAssets.scene} onBatchGenerateSceneSheets={onBatchGenerateSceneSheets} onStopSceneSheets={onStopSceneSheets} /> : null}
-                    </div>
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
-                        {groupedAssets[kind].map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onDelete={() => onDeleteAsset(asset)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
-                        ))}
-                        <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
-                            <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
-                        </button>
-                    </div>
-                </section>
-            ))}
         </div>
     );
 }
