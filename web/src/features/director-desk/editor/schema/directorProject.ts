@@ -35,18 +35,23 @@ export interface SceneSettings {
   position: [number, number, number];
   rotation: [number, number, number];
   backgroundColor: string;
+  backgroundBrightness: number;
   panoramaYaw: number;
   panoramaRadius: number;
   showLabels: boolean;
   snapToGrid: boolean;
   showGround: boolean;
+  groundColor: string;
+  groundBrightness: number;
   groundOpacity: number;
   groundHeight: number;
+  pathCollisionEnabled: boolean;
 }
 
 export interface CharacterRigState {
   rigType: CharacterRigType;
   posePresetId: string | null;
+  actionPresetId?: string | null;
   controls: Record<string, number>;
 }
 
@@ -76,6 +81,22 @@ export interface DirectorObject {
   crowdLabel?: string;
   linkedCameraId?: string | null;
   characterRig?: CharacterRigState;
+  motionPath?: DirectorObjectMotionPath;
+}
+
+export interface DirectorObjectMotionKeyframe {
+  id: string;
+  time: number;
+  transform: DirectorTransform;
+  /** Character action played from this route point until the next point. */
+  actionPresetId?: string | null;
+  /** Path-facing turns toward the next route point; manual keeps the point rotation. */
+  facingMode?: "path" | "manual";
+}
+
+export interface DirectorObjectMotionPath {
+  interpolation: CameraMotionInterpolation;
+  keyframes: DirectorObjectMotionKeyframe[];
 }
 
 export interface DirectorCameraCapture {
@@ -85,9 +106,33 @@ export interface DirectorCameraCapture {
   dataUrl: string;
 }
 
+export type CameraMotionInterpolation = "linear" | "smooth";
+export type CameraMotionEasing = "linear" | "ease-in-out";
+
+export interface DirectorCameraMotionKeyframe {
+  id: string;
+  time: number;
+  position: [number, number, number];
+  target: [number, number, number];
+  fov: number;
+  /** Each waypoint may independently aim at a moving scene subject. */
+  targetMode?: "manual" | "object";
+  targetObjectId?: string | null;
+}
+
+export interface DirectorCameraMotionPath {
+  duration: number;
+  loop: boolean;
+  interpolation: CameraMotionInterpolation;
+  easing: CameraMotionEasing;
+  keyframes: DirectorCameraMotionKeyframe[];
+}
+
 export interface DirectorCameraShot {
   id: string;
   name: string;
+  /** Internal camera created for the beginner motion workflow. It has no scene helper object. */
+  isVirtual?: boolean;
   fov: number;
   transform: DirectorTransform;
   targetMode: "manual" | "object";
@@ -95,6 +140,7 @@ export interface DirectorCameraShot {
   target: [number, number, number];
   lastCaptureUrl?: string | null;
   captures?: DirectorCameraCapture[];
+  motionPath?: DirectorCameraMotionPath;
 }
 
 export interface DirectorProject {

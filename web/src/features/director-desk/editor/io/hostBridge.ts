@@ -23,22 +23,45 @@ export interface HostCaptureBatchPayload {
   captures?: HostCaptureItemPayload[];
 }
 
+let initialized = false;
+export const DIRECTOR_DESK_SESSION_OPENED_EVENT = "storyai:director-desk-session-opened";
+let hostConnectedPanorama: HostConnectedPanorama | null = null;
+let removeUnsubscribe: (() => void) | null = null;
+let suppressNextPanoramaRemovalNotice = false;
+
 interface HostConnectedPanorama {
   edgeId: string;
   sourceNodeId: string;
 }
 
-let initialized = false;
-let hostConnectedPanorama: HostConnectedPanorama | null = null;
-let removeUnsubscribe: (() => void) | null = null;
-let suppressNextPanoramaRemovalNotice = false;
-
 function normalizeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getHostOrigin() {
-  return window.location.origin;
+const HOST_ORIGIN_QUERY_KEY = "hostOrigin";
+
+function normalizeOrigin(value: unknown) {
+  const text = normalizeString(value);
+  if (!text) return null;
+
+  try {
+    return new URL(text).origin;
+  } catch {
+    return null;
+  }
+}
+
+export function getDirectorDeskHostOrigin() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return normalizeOrigin(params.get(HOST_ORIGIN_QUERY_KEY)) ?? window.location.origin;
+  } catch {
+    return window.location.origin;
+  }
+}
+
+function isAllowedHostEvent(event: MessageEvent) {
+  return event.origin === getDirectorDeskHostOrigin();
 }
 
 function normalizeTheme(value: unknown): "dark" | "light" | null {
@@ -67,24 +90,20 @@ function getTargetCanvasId() {
 }
 
 function notifyPanoramaRemoved() {
-  if (!hostConnectedPanorama) {
-    return;
-  }
+  if (!hostConnectedPanorama) return;
 
   window.parent?.postMessage(
     {
       type: "storyai:director-desk-panorama-removed",
       payload: hostConnectedPanorama,
     },
-    getHostOrigin()
+    getDirectorDeskHostOrigin()
   );
   hostConnectedPanorama = null;
 }
 
 function subscribeToPanoramaRemoval() {
-  if (removeUnsubscribe) {
-    return;
-  }
+  if (removeUnsubscribe) return;
 
   let previousPanoramaAssetId = useDirectorStore.getState().project.panoramaAssetId;
   removeUnsubscribe = useDirectorStore.subscribe((state) => {
@@ -105,9 +124,7 @@ function subscribeToPanoramaRemoval() {
 
 function importHostPanorama(payload: HostPanoramaPayload) {
   const imageUrl = normalizeString(payload.imageUrl);
-  if (!imageUrl) {
-    return;
-  }
+  if (!imageUrl) return;
 
   const fileName = normalizeString(payload.fileName) || "画布全景图.png";
   const edgeId = normalizeString(payload.edgeId);
@@ -133,6 +150,9 @@ function openHostSession(payload: HostSessionPayload) {
   useDirectorStore.getState().openScopedScene(instanceId || null);
   suppressNextPanoramaRemovalNotice = false;
   hostConnectedPanorama = null;
+  if (instanceId) {
+    window.dispatchEvent(new CustomEvent(DIRECTOR_DESK_SESSION_OPENED_EVENT, { detail: { instanceId } }));
+  }
 }
 
 export function postDirectorDeskCapturesToHost(
@@ -166,17 +186,16 @@ export function postDirectorDeskCapturesToHost(
         captures: normalizedCaptures,
       },
     },
-    getHostOrigin()
+    getDirectorDeskHostOrigin()
   );
 
   if (window.parent === window) {
-    const canvasId = getTargetCanvasId();
-    void appendDirectorDeskCapturesToCanvasProject(canvasId, normalizedCaptures);
+    void appendDirectorDeskCapturesToCanvasProject(getTargetCanvasId(), normalizedCaptures);
   }
 }
 
 function handleHostMessage(event: MessageEvent) {
-  if (event.origin !== getHostOrigin()) {
+  if (!isAllowedHostEvent(event)) {
     return;
   }
 

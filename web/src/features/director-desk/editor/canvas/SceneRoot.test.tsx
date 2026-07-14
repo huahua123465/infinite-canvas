@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Box3, Vector3 } from "three";
 import { afterEach, beforeEach, vi } from "vitest";
 import { VIEWPORT_CAMERA_VISUAL_SCALE } from "../schema/cameraGeometry";
@@ -129,11 +129,13 @@ vi.mock("../runtime/CharacterModel", async () => {
       bodyType,
       color,
       onLabelAnchorYChange,
+      motionWalking,
       rigState,
     }: {
       bodyType?: string;
       color?: string;
       onLabelAnchorYChange?: (anchorY: number) => void;
+      motionWalking?: boolean;
       rigState?: { rigType?: string };
     }) => {
       if (mockCharacterModelShouldSuspend.current) {
@@ -147,7 +149,13 @@ vi.mock("../runtime/CharacterModel", async () => {
       }, [labelAnchorY, onLabelAnchorYChange]);
 
       return (
-        <div data-body-type={bodyType} data-color={color} data-rig-type={rigState?.rigType} data-testid="mock-character-model" />
+        <div
+          data-body-type={bodyType}
+          data-color={color}
+          data-motion-walking={motionWalking ? "true" : "false"}
+          data-rig-type={rigState?.rigType}
+          data-testid="mock-character-model"
+        />
       );
     },
   };
@@ -160,6 +168,12 @@ beforeEach(() => {
   useDirectorStore.setState({
     ...useDirectorStore.getState(),
     ...base,
+    selectedCameraKeyframeId: null,
+    cameraMotionProgress: 0,
+    cameraMotionPlaying: false,
+    cameraPilotMode: "idle",
+    cameraPilotHoveredTargetId: null,
+    cameraPilotLockedTargetId: null,
     project: {
       ...base.project,
       panoramaAssetId: "asset_panorama_1",
@@ -255,6 +269,156 @@ it("renders viewport camera labels with the same 3D label behavior as role label
   expect(label).toHaveAttribute("data-pointer-events", "none");
   expect(label).toHaveAttribute("data-distance-factor", "3");
   expect(label).toHaveAttribute("data-z-index-range", "[0,1]");
+});
+
+it("shows numbered waypoints and a moving director-view playhead during route preview", () => {
+  const state = useDirectorStore.getState();
+  useDirectorStore.setState({
+    ...state,
+    motionStudioOpen: true,
+    cameraMotionPlaying: true,
+    cameraMotionProgress: 0.35,
+    project: {
+      ...state.project,
+      cameras: state.project.cameras.map((camera) => ({
+        ...camera,
+        motionPath: {
+          duration: 4,
+          loop: false,
+          interpolation: "smooth",
+          easing: "ease-in-out",
+          keyframes: [
+            { id: "point_1", time: 0, position: [0, 2, 8], target: [0, 1, 0], fov: 50 },
+            { id: "point_2", time: 1, position: [4, 2, 3], target: [0, 1, 0], fov: 42 },
+          ],
+        },
+      })),
+    },
+  });
+
+  const { container } = render(<SceneRoot />);
+
+  expect(screen.getByText("1")).toBeInTheDocument();
+  expect(screen.getByText("2")).toBeInTheDocument();
+  expect(container.querySelector('group[name="camera-motion-playhead"]')).toBeInTheDocument();
+  expect(container.querySelector('[data-name="camera-motion-active-segment"]')).toHaveAttribute("data-color", "#FFD08A");
+});
+
+it("moves a character on the same normalized timeline as the camera", () => {
+  const state = useDirectorStore.getState();
+  useDirectorStore.setState({
+    ...state,
+    cameraMotionPlaying: true,
+    cameraMotionProgress: 0.5,
+    project: {
+      ...state.project,
+      objects: state.project.objects.map((object) => object.id === "char_default_a" ? {
+        ...object,
+        motionPath: {
+          interpolation: "linear",
+          keyframes: [
+            { id: "char_move_1", time: 0, transform: { ...object.transform, position: [0, 0, 0] } },
+            { id: "char_move_2", time: 1, transform: { ...object.transform, position: [8, 0, -2] } },
+          ],
+        },
+      } : object),
+    },
+  });
+
+  const { container } = render(<SceneRoot />);
+  const character = container.querySelector('group[name="director-object-char_default_a"]');
+
+  expect(character).toHaveAttribute("position", "4,0,-1");
+  expect(screen.getByTestId("mock-character-model")).toHaveAttribute("data-motion-walking", "true");
+});
+
+it("keeps the character frozen at the paused action time while piloting", () => {
+  const state = useDirectorStore.getState();
+  useDirectorStore.setState({
+    ...state,
+    cameraPilotMode: "pilot",
+    cameraMotionPlaying: false,
+    cameraMotionProgress: 0.5,
+    project: {
+      ...state.project,
+      objects: state.project.objects.map((object) => object.id === "char_default_a" ? {
+        ...object,
+        motionPath: {
+          interpolation: "linear",
+          keyframes: [
+            { id: "char_pause_1", time: 0, transform: { ...object.transform, position: [0, 0, 0] } },
+            { id: "char_pause_2", time: 1, transform: { ...object.transform, position: [8, 0, -2] } },
+          ],
+        },
+      } : object),
+    },
+  });
+
+  const { container } = render(<SceneRoot />);
+  const character = container.querySelector('group[name="director-object-char_default_a"]');
+
+  expect(character).toHaveAttribute("position", "4,0,-1");
+  expect(screen.getByTestId("mock-character-model")).toHaveAttribute("data-motion-walking", "false");
+});
+
+it("keeps the character at the paused action time in the normal director view", () => {
+  const state = useDirectorStore.getState();
+  useDirectorStore.setState({
+    ...state,
+    viewMode: "director",
+    cameraPilotMode: "idle",
+    cameraMotionPlaying: false,
+    cameraMotionProgress: 0.5,
+    project: {
+      ...state.project,
+      objects: state.project.objects.map((object) => object.id === "char_default_a" ? {
+        ...object,
+        motionPath: {
+          interpolation: "linear",
+          keyframes: [
+            { id: "char_director_pause_1", time: 0, transform: { ...object.transform, position: [0, 0, 0] } },
+            { id: "char_director_pause_2", time: 1, transform: { ...object.transform, position: [8, 0, -2] } },
+          ],
+        },
+      } : object),
+    },
+  });
+
+  const { container } = render(<SceneRoot />);
+  const character = container.querySelector('group[name="director-object-char_default_a"]');
+
+  expect(character).toHaveAttribute("position", "4,0,-1");
+  expect(screen.getByTestId("mock-character-model")).toHaveAttribute("data-motion-walking", "false");
+});
+
+it("shows the first object motion keyframe at exact zero instead of the object's latest transform", () => {
+  const state = useDirectorStore.getState();
+  useDirectorStore.setState({
+    ...state,
+    viewMode: "director",
+    cameraPilotMode: "idle",
+    cameraMotionPlaying: false,
+    cameraMotionProgress: 0,
+    project: {
+      ...state.project,
+      objects: state.project.objects.map((object) => object.id === "char_default_a" ? {
+        ...object,
+        transform: { ...object.transform, position: [8, 0, -2] },
+        motionPath: {
+          interpolation: "linear",
+          keyframes: [
+            { id: "char_zero_1", time: 0, transform: { ...object.transform, position: [0, 0, 0] } },
+            { id: "char_zero_2", time: 1, transform: { ...object.transform, position: [8, 0, -2] } },
+          ],
+        },
+      } : object),
+    },
+  });
+
+  const { container } = render(<SceneRoot />);
+  const character = container.querySelector('group[name="director-object-char_default_a"]');
+
+  expect(character).toHaveAttribute("position", "0,0,0");
 });
 
 it("uses the requested dark ground surface color", () => {
@@ -459,6 +623,95 @@ it("shows transform controls when a viewport camera is selected", () => {
   expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-hide-from-capture", "true");
 });
 
+it("renders an editable camera motion path for the selected viewport camera", () => {
+  useDirectorStore.getState().selectObject("cam_object_1");
+  useDirectorStore.getState().addCameraMotionKeyframe("cam_1");
+  const camera = useDirectorStore.getState().project.cameras[0];
+  useDirectorStore.getState().updateCamera("cam_1", {
+    transform: { ...camera.transform, position: [3, 2.5, -2] },
+  });
+  useDirectorStore.getState().addCameraMotionKeyframe("cam_1");
+
+  const { container } = render(<SceneRoot />);
+  const motionLine = screen.getAllByTestId("camera-line").find((line) => line.dataset.color === "#F5A65B");
+
+  expect(motionLine).toHaveAttribute("data-point-count", "80");
+  expect(screen.getByText("K1")).toBeInTheDocument();
+  expect(screen.getByText("K2")).toBeInTheDocument();
+  expect(container.querySelector('mesh[name="cam_1_motion_key_1-motion-handle"]')).toBeInTheDocument();
+  expect(container.querySelector('mesh[name="cam_1_motion_key_2-motion-handle"]')).toBeInTheDocument();
+});
+
+it("renders visible character route points and selects their character without changing the preview time", () => {
+  useDirectorStore.getState().addObjectMotionKeyframe("char_default_a", 0);
+  useDirectorStore.getState().updateObjectTransform("char_default_a", { position: [3, 0, 1] });
+  useDirectorStore.getState().addObjectMotionKeyframe("char_default_a", 1);
+
+  const { container } = render(<SceneRoot />);
+  const routeLine = screen.getAllByTestId("camera-line").find((line) => line.dataset.color === "#4ADE80");
+
+  expect(routeLine).toHaveAttribute("data-point-count", "96");
+  expect(container.querySelector('mesh[name="char_default_a_motion_key_1-character-route-handle"]')).toBeInTheDocument();
+  expect(container.querySelector('mesh[name="char_default_a_motion_key_2-character-route-handle"]')).toBeInTheDocument();
+
+  useDirectorStore.getState().setCameraMotionProgress(0.35);
+  fireEvent.click(container.querySelector('mesh[name="char_default_a_motion_key_2-character-route-handle"]')!);
+  expect(useDirectorStore.getState().selectedObjectId).toBe("char_default_a");
+  expect(useDirectorStore.getState().selectedObjectMotionKeyframeId).toBe("char_default_a_motion_key_2");
+  expect(useDirectorStore.getState().cameraMotionProgress).toBe(0.35);
+});
+
+it("keeps character routes visible after the character is deselected and honors the visibility toggle", () => {
+  useDirectorStore.getState().addObjectMotionKeyframe("char_default_a", 0);
+  useDirectorStore.getState().updateObjectTransform("char_default_a", { position: [3, 0, 1] });
+  useDirectorStore.getState().addObjectMotionKeyframe("char_default_a", 1);
+
+  render(<SceneRoot />);
+  expect(screen.getAllByTestId("camera-line").some((line) => line.dataset.color === "#4ADE80")).toBe(true);
+
+  act(() => {
+    useDirectorStore.getState().setShowCharacterRoutes(false);
+  });
+  expect(screen.queryAllByTestId("camera-line").some((line) => line.dataset.color === "#4ADE80")).toBe(false);
+});
+
+it("uses one translate gizmo for the selected motion point instead of overlapping the camera gizmo", () => {
+  useDirectorStore.getState().selectObject("cam_object_1");
+  const firstKeyframeId = useDirectorStore.getState().addCameraMotionKeyframe("cam_1");
+  useDirectorStore.getState().addCameraMotionKeyframe("cam_1");
+  useDirectorStore.getState().selectCameraMotionKeyframe(firstKeyframeId);
+
+  const { container } = render(<SceneRoot />);
+  const firstHandle = container.querySelector(`mesh[name="${firstKeyframeId}-motion-handle"]`);
+
+  expect(firstHandle).toBeInTheDocument();
+  expect(screen.getAllByTestId("transform-controls")).toHaveLength(1);
+  expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-mode", "translate");
+
+  fireEvent.click(container.querySelector('mesh[name="cam_1_motion_key_2-motion-handle"]')!);
+
+  expect(useDirectorStore.getState().selectedCameraKeyframeId).toBe("cam_1_motion_key_2");
+  expect(useDirectorStore.getState().cameraMotionProgress).toBe(1);
+});
+
+it("uses one shared translate gizmo for an arbitrary multi-selection of camera waypoints", () => {
+  useDirectorStore.getState().selectObject("cam_object_1");
+  const firstId = useDirectorStore.getState().addCameraMotionKeyframe("cam_1")!;
+  const camera = useDirectorStore.getState().project.cameras[0];
+  useDirectorStore.getState().updateCamera("cam_1", {
+    transform: { ...camera.transform, position: [3, 2.5, -2] },
+  });
+  useDirectorStore.getState().addCameraMotionKeyframe("cam_1");
+  const lastId = useDirectorStore.getState().addCameraMotionKeyframe("cam_1")!;
+  useDirectorStore.getState().setCameraMotionKeyframeSelection([firstId, lastId]);
+
+  render(<SceneRoot />);
+
+  expect(screen.getByText("已选 2 个轨迹点")).toBeInTheDocument();
+  expect(screen.getAllByTestId("transform-controls")).toHaveLength(1);
+  expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-mode", "translate");
+});
+
 it("hides role labels when the scene toggle is disabled", () => {
   useDirectorStore.setState({
     ...useDirectorStore.getState(),
@@ -489,6 +742,21 @@ it("shows transform controls around the selected character in the active tool mo
   expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-has-object", "true");
   expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-hide-from-capture", "true");
   expect(screen.getByTestId("transform-controls")).toHaveAttribute("data-translation-snap", "null");
+});
+
+it("hides editing clutter while the user is piloting the camera", () => {
+  useDirectorStore.setState({
+    ...useDirectorStore.getState(),
+    selectedObjectId: "char_default_a",
+    cameraPilotMode: "pilot",
+    cameraPilotHoveredTargetId: "char_default_a",
+  });
+
+  render(<SceneRoot />);
+
+  expect(screen.queryByTestId("transform-controls")).not.toBeInTheDocument();
+  expect(screen.queryByText("角色01")).not.toBeInTheDocument();
+  expect(screen.getByText("角色01 · F 锁定")).toBeInTheDocument();
 });
 
 it("shows transform controls around selected models while in camera view", () => {

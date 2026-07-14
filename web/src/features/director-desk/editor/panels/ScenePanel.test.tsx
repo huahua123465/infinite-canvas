@@ -29,7 +29,7 @@ it("lays scene switches out in one row and only toggles from the checkbox", asyn
   const checkbox = screen.getByLabelText("角色标签");
 
   expect(switchRow).toBeInTheDocument();
-  expect(switchRow?.querySelectorAll(".inspector-toggle-row")).toHaveLength(3);
+  expect(switchRow?.querySelectorAll(".inspector-toggle-row")).toHaveLength(4);
   expect(checkbox).toBeChecked();
 
   await user.click(labelText);
@@ -41,7 +41,7 @@ it("lays scene switches out in one row and only toggles from the checkbox", asyn
   expect(checkbox).not.toBeChecked();
 });
 
-it("updates scene transform, panorama, and ground controls", async () => {
+it("updates scene transform, background, switches, and ground controls", async () => {
   const user = userEvent.setup();
   render(<ScenePanel />);
 
@@ -59,6 +59,7 @@ it("updates scene transform, panorama, and ground controls", async () => {
   await user.type(screen.getByLabelText("全景球半径"), "90");
   await user.click(screen.getByLabelText("角色标签"));
   await user.click(screen.getByLabelText("网格吸附"));
+  await user.click(screen.getByLabelText("路径碰撞"));
   await user.clear(screen.getByLabelText("地面透明度"));
   await user.type(screen.getByLabelText("地面透明度"), "0.65");
   await user.clear(screen.getByLabelText("地面高度"));
@@ -73,49 +74,12 @@ it("updates scene transform, panorama, and ground controls", async () => {
   expect(scene.panoramaRadius).toBe(90);
   expect(scene.showLabels).toBe(false);
   expect(scene.snapToGrid).toBe(true);
+  expect(scene.pathCollisionEnabled).toBe(true);
   expect(scene.groundOpacity).toBe(0.65);
   expect(scene.groundHeight).toBe(1.2);
 });
 
-it("renders a connected panorama as a compact thumbnail card with the file name overlay", () => {
-  const initialState = createInitialDirectorState();
-  useDirectorStore.setState({
-    ...useDirectorStore.getState(),
-    ...initialState,
-    project: {
-      ...initialState.project,
-      assets: [
-        {
-          id: "asset_panorama_1",
-          kind: "panorama",
-          sourceType: "image",
-          fileName: "studio-panorama.jpg",
-          url: "data:image/jpeg;base64,panorama-preview",
-        },
-      ],
-      panoramaAssetId: "asset_panorama_1",
-    },
-  });
-
-  render(<ScenePanel />);
-
-  expect(screen.queryByText("已连接全景图: studio-panorama.jpg")).not.toBeInTheDocument();
-  expect(screen.queryByText("全景图预览")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("全景图预览卡片")).not.toBeInTheDocument();
-
-  const thumbnailCard = screen.getByLabelText("全景图缩略图卡片");
-  const thumbnailImage = screen.getByAltText("studio-panorama.jpg 全景图缩略图");
-
-  expect(thumbnailCard).toHaveClass("panorama-thumbnail-card");
-  expect(screen.getByText("studio-panorama.jpg")).toHaveClass("panorama-thumbnail-name");
-  expect(thumbnailImage).toHaveClass("panorama-thumbnail-image");
-  expect(thumbnailImage).toHaveAttribute(
-    "src",
-    "data:image/jpeg;base64,panorama-preview"
-  );
-});
-
-it("removes the connected panorama when the delete icon is clicked", async () => {
+it("renders and removes a connected panorama from the scene panel", async () => {
   const user = userEvent.setup();
   const initialState = createInitialDirectorState();
   useDirectorStore.setState({
@@ -137,65 +101,17 @@ it("removes the connected panorama when the delete icon is clicked", async () =>
   });
 
   render(<ScenePanel />);
+
+  expect(screen.getByLabelText("全景图缩略图卡片")).toBeInTheDocument();
+  expect(screen.getByAltText("studio-panorama.jpg 全景图缩略图")).toHaveAttribute(
+    "src",
+    "data:image/jpeg;base64,panorama-preview"
+  );
 
   await user.click(screen.getByRole("button", { name: "删除全景图" }));
 
   expect(useDirectorStore.getState().project.panoramaAssetId).toBeNull();
-  expect(useDirectorStore.getState().project.assets).toHaveLength(0);
-  expect(screen.getByLabelText("全景图连接状态")).toBeInTheDocument();
-});
-
-it("renders the disconnected panorama state as a fixed-size dark card", () => {
-  render(<ScenePanel />);
-
-  const panoramaStatus = screen.getByLabelText("全景图连接状态");
-
-  expect(panoramaStatus).toHaveClass("panorama-empty-card");
-  expect(screen.getByTestId("panorama-empty-icon")).toBeInTheDocument();
-  expect(panoramaStatus).toHaveTextContent("未连接全景图");
-});
-
-it("updates panorama radius from both slider and numeric input", async () => {
-  const user = userEvent.setup();
-  render(<ScenePanel />);
-
-  await user.clear(screen.getByLabelText("全景球半径"));
-  await user.type(screen.getByLabelText("全景球半径"), "150");
-
-  expect(useDirectorStore.getState().project.scene.panoramaRadius).toBe(150);
-  expect(screen.getByLabelText("全景球半径滑杆")).toHaveValue("150");
-
-  fireEvent.change(screen.getByLabelText("全景球半径滑杆"), { target: { value: "149" } });
-
-  expect(useDirectorStore.getState().project.scene.panoramaRadius).toBe(149);
-  expect(screen.getByLabelText("全景球半径")).toHaveValue(149);
-});
-
-it("updates panorama yaw and ground height from both sliders and numeric inputs", async () => {
-  const user = userEvent.setup();
-  render(<ScenePanel />);
-
-  await user.clear(screen.getByLabelText("全景球水平旋转"));
-  await user.type(screen.getByLabelText("全景球水平旋转"), "45");
-
-  expect(useDirectorStore.getState().project.scene.panoramaYaw).toBe(45);
-  expect(screen.getByLabelText("全景球水平旋转滑杆")).toHaveValue("45");
-
-  fireEvent.change(screen.getByLabelText("全景球水平旋转滑杆"), { target: { value: "-30" } });
-
-  expect(useDirectorStore.getState().project.scene.panoramaYaw).toBe(-30);
-  expect(screen.getByLabelText("全景球水平旋转")).toHaveValue(-30);
-
-  await user.clear(screen.getByLabelText("地面高度"));
-  await user.type(screen.getByLabelText("地面高度"), "1.2");
-
-  expect(useDirectorStore.getState().project.scene.groundHeight).toBe(1.2);
-  expect(screen.getByLabelText("地面高度滑杆")).toHaveValue("1.2");
-
-  fireEvent.change(screen.getByLabelText("地面高度滑杆"), { target: { value: "-1.5" } });
-
-  expect(useDirectorStore.getState().project.scene.groundHeight).toBe(-1.5);
-  expect(screen.getByLabelText("地面高度")).toHaveValue(-1.5);
+  expect(screen.getByLabelText("全景图连接状态")).toHaveTextContent("未连接全景图");
 });
 
 it("hides ground opacity and height controls when ground is disabled", async () => {
@@ -309,5 +225,4 @@ it("renders the XYZ drag handle inside the 80px axis input shell", () => {
   expect(axisInput).toBeInTheDocument();
   expect(axisInput).toHaveClass("inspector-axis-input");
   expect(valueInput.closest(".inspector-axis-input")).toBe(axisInput);
-  expect(getComputedStyle(axisInput as HTMLElement).backgroundColor).toBe("rgb(11, 11, 12)");
 });

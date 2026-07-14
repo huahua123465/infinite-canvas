@@ -9,7 +9,7 @@ export function AssetImportPanel() {
   const panoramaAssetId = useDirectorStore((state) => state.project.panoramaAssetId);
   const [importError, setImportError] = useState<string | null>(null);
 
-  const latestLocalModel = [...assets].reverse().find((item) => item.kind !== "panorama");
+  const latestLocalModel = [...assets].reverse().find((item) => item.sourceType === "model");
   const panoramaAsset = assets.find((item) => item.id === panoramaAssetId);
 
   async function handleLocalModel(file: File) {

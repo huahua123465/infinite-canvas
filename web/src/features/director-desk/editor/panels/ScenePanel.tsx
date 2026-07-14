@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { ImageOff } from "lucide-react";
-import { Trash2 } from "lucide-react";
+import { ImageOff, Trash2 } from "lucide-react";
 import {
   InspectorAxisGroup,
   InspectorColorField,
@@ -10,14 +9,16 @@ import {
 } from "./InspectorControls";
 import { useDirectorStore } from "../store/directorStore";
 
+const SCENE_SCALE_MIN = 0.1;
+const SCENE_SCALE_MAX = 3;
 const PANORAMA_RADIUS_MIN = 10;
 const PANORAMA_RADIUS_MAX = 300;
 const PANORAMA_YAW_MIN = -180;
 const PANORAMA_YAW_MAX = 180;
-const SCENE_SCALE_MIN = 0.1;
-const SCENE_SCALE_MAX = 3;
 const GROUND_HEIGHT_MIN = -5;
 const GROUND_HEIGHT_MAX = 5;
+const SCENE_BRIGHTNESS_MIN = 0;
+const SCENE_BRIGHTNESS_MAX = 3;
 
 function replaceAxis(tuple: [number, number, number], axis: 0 | 1 | 2, value: number): [number, number, number] {
   return tuple.map((item, index) => (index === axis ? value : item)) as [number, number, number];
@@ -38,7 +39,6 @@ export function ScenePanel() {
   const [panoramaRadiusDraft, setPanoramaRadiusDraft] = useState(String(scene.panoramaRadius));
   const [groundHeightDraft, setGroundHeightDraft] = useState(String(scene.groundHeight));
   const panoramaAsset = assets.find((item) => item.id === panoramaAssetId);
-  const clampedPanoramaRadius = clampNumber(scene.panoramaRadius, PANORAMA_RADIUS_MIN, PANORAMA_RADIUS_MAX);
 
   useEffect(() => {
     setSceneScaleDraft(String(scene.scale));
@@ -191,6 +191,16 @@ export function ScenePanel() {
           onColorChange={(value) => updateScene({ backgroundColor: value })}
           onHexChange={(value) => updateScene({ backgroundColor: value })}
         />
+        <InspectorRangeNumberField
+          label="天空亮度"
+          rangeAriaLabel="天空亮度滑杆"
+          numberAriaLabel="天空亮度"
+          max={SCENE_BRIGHTNESS_MAX}
+          min={SCENE_BRIGHTNESS_MIN}
+          step="0.05"
+          value={scene.backgroundBrightness}
+          onValueChange={(value) => updateScene({ backgroundBrightness: Number(value) })}
+        />
       </InspectorSection>
       <InspectorSection title="全景球">
         <InspectorRangeNumberField
@@ -265,10 +275,37 @@ export function ScenePanel() {
             />
             <span>地面</span>
           </div>
+          <div className="inspector-toggle-row">
+            <input
+              aria-label="路径碰撞"
+              checked={scene.pathCollisionEnabled}
+              type="checkbox"
+              onChange={(event) => updateScene({ pathCollisionEnabled: event.target.checked })}
+            />
+            <span>路径碰撞</span>
+          </div>
         </div>
       </InspectorSection>
       {scene.showGround ? (
         <InspectorSection title="地面">
+          <InspectorColorField
+            label="地面颜色"
+            colorAriaLabel="地面颜色"
+            hexAriaLabel="地面颜色 HEX"
+            value={scene.groundColor}
+            onColorChange={(value) => updateScene({ groundColor: value })}
+            onHexChange={(value) => updateScene({ groundColor: value })}
+          />
+          <InspectorRangeNumberField
+            label="地面亮度"
+            rangeAriaLabel="地面亮度滑杆"
+            numberAriaLabel="地面亮度"
+            max={SCENE_BRIGHTNESS_MAX}
+            min={SCENE_BRIGHTNESS_MIN}
+            step="0.05"
+            value={scene.groundBrightness}
+            onValueChange={(value) => updateScene({ groundBrightness: Number(value) })}
+          />
           <InspectorRangeNumberField
             label="透明度"
             rangeAriaLabel="地面透明度滑杆"

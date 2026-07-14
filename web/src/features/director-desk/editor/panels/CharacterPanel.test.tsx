@@ -157,3 +157,64 @@ it("applies pose presets to every member in a selected crowd group", async () =>
   expect(new Set(crowdMembers.map((item) => item.characterRig?.posePresetId))).toEqual(new Set(["t-pose"]));
   expect(new Set(crowdMembers.map((item) => item.characterRig?.controls["leftShoulder.spread"]))).toEqual(new Set([-70]));
 });
+
+it("selects and starts a character action preset", async () => {
+  const user = userEvent.setup();
+  render(<CharacterPanel />);
+
+  await user.click(screen.getByRole("button", { name: "动作" }));
+  await user.click(screen.getByRole("button", { name: "播放动作 正常行走" }));
+
+  const state = useDirectorStore.getState();
+  const role = state.project.objects.find((item) => item.id === "char_default_a");
+  expect(role?.characterRig?.actionPresetId).toBe("walk-cycle");
+  expect(state.cameraMotionPlaying).toBe(true);
+  expect(state.cameraMotionProgress).toBe(0);
+});
+
+it("adds and edits a route point from the character route tab", async () => {
+  const user = userEvent.setup();
+  render(<CharacterPanel />);
+
+  await user.click(screen.getByRole("button", { name: "路线" }));
+  await user.click(screen.getByRole("button", { name: "添加点" }));
+
+  expect(screen.getByRole("button", { name: "选择路线点 1" })).toHaveAttribute("aria-pressed", "true");
+  await user.selectOptions(screen.getByLabelText("路线点本段动作"), "run-cycle");
+  await user.selectOptions(screen.getByLabelText("路线点朝向方式"), "path");
+
+  const point = useDirectorStore.getState().project.objects.find((item) => item.id === "char_default_a")?.motionPath?.keyframes[0];
+  expect(point?.actionPresetId).toBe("run-cycle");
+  expect(point?.facingMode).toBe("path");
+});
+
+it("selects a route point without moving the scene preview until explicitly requested", async () => {
+  const user = userEvent.setup();
+  useDirectorStore.getState().addCharacterRoutePoint("char_default_a");
+  useDirectorStore.getState().addCharacterRoutePoint("char_default_a");
+  useDirectorStore.getState().setCameraMotionProgress(0.25);
+  render(<CharacterPanel />);
+
+  await user.click(screen.getByRole("button", { name: "路线" }));
+  await user.click(screen.getByRole("button", { name: "选择路线点 2" }));
+  expect(useDirectorStore.getState().cameraMotionProgress).toBe(0.25);
+
+  await user.click(screen.getByRole("button", { name: "预览当前路线点" }));
+  expect(useDirectorStore.getState().cameraMotionProgress).toBe(1);
+});
+
+it("switches the character route between smooth curve and straight line", async () => {
+  const user = userEvent.setup();
+  render(<CharacterPanel />);
+
+  await user.click(screen.getByRole("button", { name: "路线" }));
+  await user.click(screen.getByRole("button", { name: "直线" }));
+
+  let role = useDirectorStore.getState().project.objects.find((item) => item.id === "char_default_a");
+  expect(role?.motionPath?.interpolation).toBe("linear");
+  expect(screen.getByRole("button", { name: "直线" })).toHaveAttribute("aria-pressed", "true");
+
+  await user.click(screen.getByRole("button", { name: "平滑曲线" }));
+  role = useDirectorStore.getState().project.objects.find((item) => item.id === "char_default_a");
+  expect(role?.motionPath?.interpolation).toBe("smooth");
+});
