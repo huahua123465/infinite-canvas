@@ -85,6 +85,7 @@ const VIDEO_ACTIVE_WAIT_MS = 5 * 60 * 1000;
 const VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
 const VIDEO_BACKGROUND_POLL_MS = 30 * 1000;
 const VIDEO_BUSY_RETRY_MS = 30 * 1000;
+const VIDEO_POLL_RETRY_LIMIT = 3;
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -120,9 +121,21 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
     options?.onProgress?.({ percent: 16, text: `视频任务已创建：${modelOptionName(task.model)} · ${task.id}`, stage: "submitted" });
     const delayMs = task.provider === "seedance" ? 30000 : task.provider === "cangyuan" ? 5000 : 2500;
     const startedAt = Date.now();
+    let pollRetryCount = 0;
     for (let attempt = 0; Date.now() - startedAt < VIDEO_MAX_WAIT_MS; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const state = await pollVideoGenerationTask(config, task, options);
+        let state: VideoGenerationTaskState;
+        try {
+            state = await pollVideoGenerationTask(config, task, options);
+            pollRetryCount = 0;
+        } catch (error) {
+            if (options?.signal?.aborted || !isRetryableVideoPollError(error) || pollRetryCount >= VIDEO_POLL_RETRY_LIMIT) throw error;
+            pollRetryCount += 1;
+            const message = error instanceof Error ? error.message : "视频任务查询失败";
+            options?.onProgress?.({ percent: 18, text: `任务查询暂时中断，正在重试（${pollRetryCount}/${VIDEO_POLL_RETRY_LIMIT}）：${message}`, stage: "queued", providerStatus: "poll_retry" });
+            await delay(delayMs, options?.signal);
+            continue;
+        }
         if (state.status === "completed") {
             options?.onProgress?.({ percent: 96, text: "视频已生成，正在保存到画布", stage: "saving", providerStatus: state.providerStatus });
             return state.result;
@@ -303,11 +316,12 @@ async function pollCangyuanVideoTask(config: AiConfig, task: VideoGenerationTask
         const progress = cangyuanVideoProgress(video);
         if (isCangyuanVideoCompleted(providerStatus)) {
             const url = cangyuanVideoUrl(video);
-            if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus, progress };
-            if (task.cangyuanEndpoint === "video-generations") return { status: "failed", error: "Grok 视频任务完成但没有返回视频 URL", providerStatus, progress };
-            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
-            await assertVideoBlob(content.data);
-            return { status: "completed", result: { blob: content.data }, providerStatus, progress };
+            if (task.cangyuanEndpoint === "video-generations") {
+                if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus, progress };
+                return { status: "failed", error: "Grok 视频任务完成但没有返回视频 URL", providerStatus, progress };
+            }
+            const result = await cangyuanVideoResult(config, task, url, options);
+            return { status: "completed", result, providerStatus, progress };
         }
         if (isCangyuanVideoFailed(providerStatus)) return { status: "failed", error: cangyuanVideoError(video), providerStatus, progress };
         return { status: "pending", providerStatus: providerStatus || "in_progress", progress };
@@ -530,10 +544,23 @@ function cangyuanVideoTaskPath(task: VideoGenerationTask) {
 }
 
 function cangyuanVideoTaskId(video: VideoResponse) {
-    if (video.id) return video.id;
-    if (video.task_id) return video.task_id;
-    if (!Array.isArray(video.data)) return video.data?.id || video.data?.task_id || "";
-    return video.data.find((item) => item.id || item.task_id)?.id || video.data.find((item) => item.id || item.task_id)?.task_id || "";
+    const nested = Array.isArray(video.data) ? video.data : video.data ? [video.data] : [];
+    // Admin-shaped responses may include a numeric record ID before the public task ID.
+    const candidates: unknown[] = [video.id, video.task_id, ...nested.flatMap((item) => [item.id, item.task_id])];
+    const ids = candidates.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim());
+    return ids.find((value) => /^task_/i.test(value)) || ids[0] || "";
+}
+
+async function cangyuanVideoResult(config: AiConfig, task: VideoGenerationTask, resultUrl: string | undefined, options?: RequestOptions): Promise<VideoGenerationResult> {
+    try {
+        const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
+        await assertVideoBlob(content.data);
+        return { blob: content.data };
+    } catch (error) {
+        if (axios.isCancel(error) || options?.signal?.aborted) throw error;
+        if (resultUrl) return videoResultFromUrl(resultUrl, options);
+        throw error;
+    }
 }
 
 function cangyuanVideoStatus(video: VideoResponse) {
@@ -668,6 +695,11 @@ function normalizeVideoErrorMessage(message: string) {
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;
     }
     return message;
+}
+
+function isRetryableVideoPollError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    return /network error|failed to fetch|cors|timeout|查询失败（(?:404|408|425|429|5\d\d)）|请求被限流|额度不足|connection|econn/i.test(message);
 }
 
 function statusMessage(status: number | undefined, fallback: string) {

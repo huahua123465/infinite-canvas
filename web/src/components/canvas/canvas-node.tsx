@@ -1210,6 +1210,7 @@ function videoGenerationStatusText(progress?: CanvasNodeMetadata["videoGeneratio
 
 function videoProviderStatusLabel(status: string) {
     if (status === "retry_wait") return "等待自动重试";
+    if (status === "poll_retry") return "查询中断，正在重试";
     if (status === "queued") return "排队中";
     if (status === "running" || status === "in_progress" || status === "processing") return "生成中";
     if (status === "succeeded" || status === "completed") return "已完成";
