@@ -21,9 +21,14 @@ from voxcpm import VoxCPM
 
 MODEL_ID = os.environ.get("VOXCPM_MODEL_ID", "openbmb/VoxCPM2")
 DEVICE = os.environ.get("VOXCPM_DEVICE", "cuda")
+RUNTIME_DIR = Path(os.environ.get("VOXCPM_RUNTIME_DIR", Path(__file__).parent / ".runtime")).resolve()
+TEMP_DIR = RUNTIME_DIR / "temp"
+OUTPUT_DIR = RUNTIME_DIR / "outputs"
 MAX_REFERENCE_BYTES = 30 * 1024 * 1024
 model = None
 model_lock = threading.Lock()
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class SpeechRequest(BaseModel):
@@ -68,7 +73,7 @@ def create_reference_file(value: str | None):
     if not data or len(data) > MAX_REFERENCE_BYTES:
         raise ValueError("reference_audio must be between 1 byte and 30 MB")
     suffix = {"mpeg": ".mp3", "mp3": ".mp3", "wav": ".wav", "x-wav": ".wav", "ogg": ".ogg", "mp4": ".m4a", "aac": ".aac", "webm": ".webm"}.get(audio_type, ".audio")
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=TEMP_DIR)
     try:
         handle.write(data)
         return Path(handle.name)
@@ -86,7 +91,7 @@ def build_text(request: SpeechRequest):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "model": MODEL_ID, "device": DEVICE, "loaded": model is not None}
+    return {"ok": True, "model": MODEL_ID, "device": DEVICE, "loaded": model is not None, "runtime_dir": str(RUNTIME_DIR), "hf_hub_cache": os.environ.get("HF_HUB_CACHE", "")}
 
 
 @app.get("/v1/models")
