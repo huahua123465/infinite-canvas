@@ -142,11 +142,11 @@ describe("CameraPilotController", () => {
     expect(onToggleActionPlayback).toHaveBeenCalledTimes(1);
   });
 
-  it("records the current camera snapshot when Enter is pressed", () => {
+  it.each(["Enter", "KeyR"])("records the current camera snapshot when %s is pressed", (code) => {
     const onRecord = vi.fn();
     renderController({ onRecord });
 
-    fireEvent.keyDown(window, { code: "Enter" });
+    fireEvent.keyDown(window, { code });
 
     expect(onRecord).toHaveBeenCalledTimes(1);
     expect(onRecord).toHaveBeenCalledWith(snapshotRef.current);

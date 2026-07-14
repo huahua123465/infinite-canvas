@@ -28,7 +28,7 @@ type AppScreen = "home" | "editor";
 const HOME_QUICK_START_STEPS = [
   ["选择导演台", "打开已有导演台，或点击“新建导演台”创建一个空场景。"],
   ["摆人物和道具", "从工具栏添加模型，选中后使用 XYZ 三轴移动、旋转和缩放。"],
-  ["记录镜头", "点击“运镜 → 开始掌镜”，用 WASD 移动，每到一个镜头按 Enter。"],
+  ["记录镜头", "点击“运镜 → 开始掌镜”，用 WASD 移动，每到一个镜头按 R 或 Enter。"],
   ["预演并导出", "先“看路线”检查轨迹，再“看成片”，满意后导出 WebM 参考视频。"],
 ] as const;
 
@@ -60,7 +60,7 @@ const HOME_CONTROL_GROUPS = [
       ["W / A / S / D", "前进、左移、后退、右移"],
       ["E / Q", "镜头上升 / 下降"],
       ["移动鼠标", "转动镜头方向"],
-      ["Enter", "保存或更新当前轨迹点"],
+      ["R / Enter", "保存或更新当前轨迹点"],
       ["Space", "播放 / 暂停人物和物体运动"],
       ["F", "锁定或取消准星所指目标"],
       ["滚轮", "调整镜头 FOV"],
@@ -356,7 +356,7 @@ export default function App({ onClose }: DirectorDeskAppProps) {
             <strong>掌镜快捷键</strong>
             <kbd>WASD</kbd>移动
             <kbd>Q / E</kbd>下降 / 上升
-            <kbd>Enter</kbd>保存镜头
+            <kbd>R / Enter</kbd>保存镜头
             <kbd>Space</kbd>播放 / 暂停
             <kbd>Esc</kbd>退出掌镜
           </p>

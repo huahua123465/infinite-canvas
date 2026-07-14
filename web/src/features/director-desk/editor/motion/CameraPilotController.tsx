@@ -190,7 +190,7 @@ export function CameraPilotController({
         return;
       }
 
-      if (event.code === "Enter") {
+      if (event.code === "Enter" || event.code === "KeyR") {
         event.preventDefault();
         onRecordRef.current(snapshotRef.current);
         return;

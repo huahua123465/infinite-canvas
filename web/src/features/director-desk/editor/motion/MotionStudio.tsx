@@ -315,7 +315,7 @@ export function MotionStudio({
         <div className="motion-studio-primary-actions">
           <div className="motion-block-heading">
             <strong>制作镜头</strong>
-            <small>移动镜头，按 Enter 添加轨迹点</small>
+            <small>移动镜头，按 R 或 Enter 添加轨迹点</small>
           </div>
           <button
             type="button"
@@ -339,7 +339,7 @@ export function MotionStudio({
           <span><kbd>空格</kbd><small>播放 / 暂停人物</small></span>
           <span><kbd>鼠标</kbd><small>看向</small></span>
           <span><kbd>F</kbd><small>锁定</small></span>
-          <span><kbd>Enter</kbd><small>记录</small></span>
+          <span><kbd>R / Enter</kbd><small>记录</small></span>
         </div>
 
         <div className="motion-route-column">
@@ -380,7 +380,7 @@ export function MotionStudio({
             <div className="motion-route-empty" role="status">
               <Route aria-hidden="true" size={20} />
               <span>还没有轨迹点</span>
-              <small>点“开始掌镜”，走到合适的位置按 Enter。</small>
+              <small>点“开始掌镜”，走到合适的位置按 R 或 Enter。</small>
             </div>
           ) : (
             <div className="motion-waypoint-strip" role="list" aria-label="可编辑轨迹点">

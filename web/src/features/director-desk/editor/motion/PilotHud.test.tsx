@@ -20,7 +20,7 @@ it("shows Q/E lift controls, action playback shortcut, and an accessible crossha
   expect(screen.getByLabelText("掌镜快捷键")).not.toHaveTextContent("Shift");
   expect(screen.queryByRole("button", { name: "播放人物" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("掌镜快捷键")).toHaveTextContent("F 锁定主体");
-  expect(screen.getByRole("button", { name: "记录当前轨迹点" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "记录当前轨迹点" })).toHaveTextContent("R / Enter 记录轨迹点");
   expect(screen.getByRole("button", { name: "退出掌镜模式" })).toBeInTheDocument();
 });
 

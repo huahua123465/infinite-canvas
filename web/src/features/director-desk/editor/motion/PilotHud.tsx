@@ -56,7 +56,7 @@ export function PilotHud({
         </button>
         <button type="button" className="pilot-hud-primary" onClick={onRecord} aria-label="记录当前轨迹点">
           <CornerDownLeft aria-hidden="true" size={15} />
-          Enter 记录轨迹点
+          R / Enter 记录轨迹点
         </button>
       </div>
     </div>
