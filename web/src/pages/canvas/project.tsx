@@ -2935,9 +2935,16 @@ function InfiniteCanvasPage() {
             let failed = 0;
             try {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
+                let conservativeFallback = false;
                 for (const index of indexes) {
+                    if (conservativeFallback) {
+                        updateStoryboardPromptDetail(scriptNode.id, index, buildStoryboardConservativePromptDetail(scriptNode, rows, index));
+                        completed += 1;
+                        continue;
+                    }
                     let detail: StoryboardPromptDetail | null = null;
                     let lastError = "合成提示词失败";
+                    let safetyRejects = 0;
                     for (let attempt = 0; attempt < 3 && !detail; attempt += 1) {
                         let answer = "";
                         try {
@@ -2946,6 +2953,14 @@ function InfiniteCanvasPage() {
                             detail = parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []);
                         } catch (error) {
                             if (isGenerationCanceled(error)) throw error;
+                            if (isSafetyGenerationError(error)) {
+                                safetyRejects += 1;
+                                if (safetyRejects >= 2 || attempt === 2) {
+                                    conservativeFallback = true;
+                                    detail = buildStoryboardConservativePromptDetail(scriptNode, rows, index);
+                                    continue;
+                                }
+                            }
                             lastError = friendlyGenerationError(error, "模型返回的提示词 JSON 无法解析");
                             if (answer) {
                                 try {
@@ -6352,18 +6367,24 @@ function storyboardSafetyComposeText(text: string, strict = false) {
               .replace(/丧母|丧父|丧偶|孤儿/g, "经历家庭关系变化")
               .replace(/受伤|生病|高烧|手术|急救/g, "经历生活变化")
               .replace(/住院|诊所|医院|病床|病房/g, "室内照护空间")
-              .replace(/挨打|殴打|打骂|欺凌/g, "家庭关系紧张")
-              .replace(/怀孕|孕妇/g, "家庭成员")
-              .replace(/身体不适|健康困境|行动不便/g, "生活状态发生变化")
+              .replace(/挨打|殴打|打骂|欺凌|推倒|踢打|家暴/g, "家庭关系紧张")
+              .replace(/怀孕|孕妇|襁褓|摇篮|婴儿衣物|幼年|年幼|孩童|童年/g, "家庭生活阶段")
+              .replace(/身体不适|健康困境|行动不便|左腿不便|瘫痪|脑瘤|肿瘤|癌症/g, "生活状态发生变化")
+              .replace(/不想活(?:了)?|轻生|自杀|寻死/g, "情绪陷入低谷")
               .replace(/痛苦|悲痛|绝望|苦难|受害/g, "克制情绪")
         : neutral;
 }
 
 function friendlyGenerationError(error: unknown, fallback: string) {
     const raw = error instanceof Error ? error.message : fallback;
-    if (!/safety system|rejected by the safety|safety/i.test(raw)) return raw;
+    if (!isSafetyGenerationError(error)) return raw;
     const requestId = raw.match(/request id[:：]\s*([^)。；;\s]+)/i)?.[1];
     return `请求被安全系统拦截，请检查提示词或参考图是否包含未成年人、伤残、血腥、受害或极端困境等敏感描述${requestId ? `（request id: ${requestId}）` : ""}`;
+}
+
+function isSafetyGenerationError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error || "");
+    return /safety system|rejected by the safety|content policy|content review|moderation|内容审查|内容安全|安全系统/i.test(raw);
 }
 
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
@@ -7047,6 +7068,35 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
     ]
         .filter(Boolean)
         .join("\n\n");
+}
+
+function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: string[][], rowIndex: number): StoryboardPromptDetail {
+    const row = rows[rowIndex] || [];
+    const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+    const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
+    const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
+    const episodeAssets = (node.metadata?.storyboardAssets || []).filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const assets = storyboardRelevantPromptAssets(episodeAssets, sourceBeats, row, shotPlan)
+        .filter((asset) => !storyboardAssetHasSafetyRisk(asset))
+        .slice(0, 3);
+    const assetMentions = assets.map((asset) => `@${asset.name}`);
+    const assetBinding = assetMentions.length ? `参考资产 ${assetMentions.join("、")}，各自只控制对应主体、场景或道具` : "不绑定人物参考资产，以环境和物件完成叙事";
+    const scene = storyboardSafetyComposeText(sourceBeats.map((beat) => beat.location).filter(Boolean).join("、") || row[2] || "生活环境", true);
+    const visibleBeat = storyboardSafetyComposeText(sourceBeats.map((beat) => beat.event).filter(Boolean).join("；") || row[2] || "环境与人物状态发生变化", true);
+    const timeStage = storyboardSafetyComposeText(shotPlan?.timeStage || "", true);
+    const startState = storyboardSafetyComposeText(shotPlan?.startState || "环境保持安静，人物动作克制", true);
+    const endState = storyboardSafetyComposeText(shotPlan?.endState || "镜头停在能够承接下一片段的环境细节", true);
+    const framing = storyboardSafetyComposeText(row[3] || "中景", true);
+    const lighting = storyboardSafetyComposeText(row[4] || "自然柔和光线，层次清楚", true);
+    const camera = storyboardSafetyComposeText(row[7] || "固定机位缓慢推进，最终停在关键环境细节", true);
+    const sound = storyboardSafetyComposeText(row[6] || "低声环境底噪与轻微生活声", true);
+    const style = storyboardSafetyComposeText(node.metadata?.storyboardAssetStyle || "", true);
+    const duration = row[1] || `${node.metadata?.seconds || 12}s`;
+    return {
+        storyboardPrompt: [assetBinding, [timeStage, scene, framing].filter(Boolean).join("，"), `以环境变化、遗留物件和家庭成员的克制反应表现：${visibleBeat}`, lighting, style, "静态构图，主体身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
+        videoMotionPrompt: [`${duration} 连续片段`, assetBinding, `起始状态：${startState}`, `动作节拍：先建立环境，再通过物件变化与克制反应推进，表达${visibleBeat}`, `主运镜：${camera}`, `结束状态：${endState}`, `声音：${sound}`, "保持一个主动作和一个主运镜，人物身份、场景结构、光线方向与前后片段一致，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
+        assetMentions,
+    };
 }
 
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
