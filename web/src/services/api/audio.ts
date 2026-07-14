@@ -7,7 +7,7 @@ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } fro
 import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceAudio } from "@/types/media";
 
-type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string; seed?: number };
+type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string; seed?: number; candidateCount?: number };
 export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
 type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
 type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
@@ -119,7 +119,7 @@ async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string
                 ...(reference ? { reference_audio: await referenceAudioDataUrl(reference, options?.signal) } : {}),
                 ...(reference && options?.promptText?.trim() ? { prompt_text: options.promptText.trim() } : {}),
                 ...(options?.seed ? { seed: options.seed } : {}),
-                ...(targetPitchHz ? { candidate_count: 3, target_pitch_hz: targetPitchHz } : {}),
+                ...(targetPitchHz ? { candidate_count: options?.candidateCount || 3, target_pitch_hz: targetPitchHz } : {}),
             },
             { headers: aiHeaders(config), responseType: "blob", signal: options?.signal },
         );
@@ -373,6 +373,7 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string, options
         referenceAudios: (options?.referenceAudios || []).map((audio) => ({ id: audio.id, storageKey: audio.storageKey, url: audio.url, durationMs: audio.durationMs })),
         promptText: options?.promptText?.trim() || "",
         seed: options?.seed || null,
+        candidateCount: options?.candidateCount || null,
         targetPitchHz: provider.kind === "voxcpm" ? voxCpmTargetPitchHz(requestConfig.audioInstructions) : null,
     });
     return `audio-preview:${await sha256(payload)}`;

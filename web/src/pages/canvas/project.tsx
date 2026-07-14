@@ -75,6 +75,7 @@ import {
     type StoryboardShotPlan,
     type StoryboardSourceBeat,
     type StoryboardVideoReference,
+    type StoryboardVoiceCandidate,
     type ConnectionHandle,
     type ContextMenuState,
     type Position,
@@ -2654,6 +2655,22 @@ function InfiniteCanvasPage() {
         [message, stopGenerationByRunningId],
     );
 
+    const syncStoryboardAssetVoiceReference = useCallback((scriptNode: CanvasNodeData, asset: StoryboardAsset, audio: { url?: string; storageKey?: string; durationMs?: number }) => {
+        const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
+        if (!voiceReference) return;
+        setNodes((prev) =>
+            prev.map((item) =>
+                item.type === CanvasNodeType.Video && item.metadata?.storyboardSourceNodeId === scriptNode.id && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId && storyboardPromptDetailUsesAsset(scriptNode, item.metadata.storyboardRowIndex, asset)
+                    ? (() => {
+                          const audioReferences = mergeStoryboardAudioReferences(item.metadata.storyboardVideoAudioReferences || [], voiceReference);
+                          const visualPrompt = item.metadata.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(item.metadata.prompt || "", item.metadata.storyboardVideoReferences || []);
+                          return { ...item, metadata: { ...item.metadata, storyboardVideoAudioReferences: audioReferences, storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(visualPrompt, audioReferences) } };
+                      })()
+                    : item,
+            ),
+        );
+    }, [setNodes]);
+
     const generateStoryboardAssetVoice = useCallback(
         async (node: CanvasNodeData, assetId: string) => {
             const scriptNode = withStoryboardVideoSettings(node);
@@ -2677,28 +2694,28 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheHit: undefined, voiceSampleText: sampleText });
+            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
                 const audioConfig = { ...generationConfig, audioSpeed: voiceProfile.speed, audioInstructions: voicePrompt };
-                const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal, seed: Math.floor(Math.random() * 2_147_483_646) + 1 });
-                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: audio.url, voiceAudioStorageKey: audio.storageKey, voiceAudioDurationMs: audio.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: audio.cacheKey, voiceAudioCacheHit: audio.cacheHit, voiceSampleText: sampleText });
-                const voiceReference = storyboardAssetVoiceAudioReference(asset, audio);
-                if (voiceReference) {
-                    setNodes((prev) =>
-                        prev.map((item) =>
-                            item.type === CanvasNodeType.Video && item.metadata?.storyboardSourceNodeId === scriptNode.id && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId && storyboardPromptDetailUsesAsset(scriptNode, item.metadata.storyboardRowIndex, asset)
-                                  ? (() => {
-                                      const audioReferences = mergeStoryboardAudioReferences(item.metadata.storyboardVideoAudioReferences || [], voiceReference);
-                                      const visualPrompt = item.metadata.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(item.metadata.prompt || "", item.metadata.storyboardVideoReferences || []);
-                                      return { ...item, metadata: { ...item.metadata, storyboardVideoAudioReferences: audioReferences, storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(visualPrompt, audioReferences) } };
-                                  })()
-                                : item,
-                        ),
-                    );
+                const candidates: StoryboardVoiceCandidate[] = [];
+                const failures: Error[] = [];
+                for (let index = 0; index < 3; index += 1) {
+                    try {
+                        const audio = await requestStoredAudioGeneration(audioConfig, sampleText, { signal: controller.signal, seed: Math.floor(Math.random() * 2_147_483_646) + 1, candidateCount: 1 });
+                        candidates.push({ id: nanoid(), url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs, cacheKey: audio.cacheKey, cacheHit: audio.cacheHit });
+                    } catch (error) {
+                        if (isGenerationCanceled(error)) throw error;
+                        failures.push(error instanceof Error ? error : new Error("声音候选生成失败"));
+                    }
                 }
-                message.success(audio.cacheHit ? "已使用缓存声音，可以试听" : "角色声音已生成，可以试听");
+                if (!candidates.length) throw failures[0] || new Error("声音候选生成失败");
+                const selected = candidates[0];
+                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: selected.url, voiceAudioStorageKey: selected.storageKey, voiceAudioDurationMs: selected.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: selected.cacheKey, voiceAudioCacheHit: selected.cacheHit, voiceAudioCandidates: candidates, voiceAudioSelectedCandidateId: selected.id, voiceSampleText: sampleText });
+                syncStoryboardAssetVoiceReference(scriptNode, asset, selected);
+                if (failures.length) message.warning(`已生成 ${candidates.length} 个声音候选，另有 ${failures.length} 个失败，可重新生成补齐`);
+                else message.success("已生成 3 个声音候选，可以试听选择");
             } catch (error) {
                 if (isGenerationCanceled(error)) {
                     updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioStatus: NODE_STATUS_IDLE, voiceAudioError: undefined });
@@ -2712,7 +2729,20 @@ function InfiniteCanvasPage() {
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardAsset],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, syncStoryboardAssetVoiceReference, updateStoryboardAsset],
+    );
+
+    const selectStoryboardAssetVoice = useCallback(
+        (node: CanvasNodeData, assetId: string, candidateId: string) => {
+            const scriptNode = withStoryboardVideoSettings(node);
+            const asset = scriptNode.metadata?.storyboardAssets?.find((item) => item.id === assetId);
+            const candidate = asset?.voiceAudioCandidates?.find((item) => item.id === candidateId);
+            if (!asset || !candidate) return;
+            updateStoryboardAsset(scriptNode.id, assetId, { voiceAudioUrl: candidate.url, voiceAudioStorageKey: candidate.storageKey, voiceAudioDurationMs: candidate.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioCacheKey: candidate.cacheKey, voiceAudioCacheHit: candidate.cacheHit, voiceAudioSelectedCandidateId: candidate.id });
+            syncStoryboardAssetVoiceReference(scriptNode, asset, candidate);
+            message.success(`已选择 ${asset.name || "角色"} 的声音候选`);
+        },
+        [message, syncStoryboardAssetVoiceReference, updateStoryboardAsset],
     );
 
     const batchGenerateStoryboardAssets = useCallback(
@@ -5056,6 +5086,7 @@ function InfiniteCanvasPage() {
                     onBatchGenerateSceneSheets={(node) => void batchGenerateStoryboardSceneSheets(node)}
                     onStopSceneSheets={stopStoryboardSceneSheetGenerationBatch}
                     onGenerateAssetVoice={(node, assetId) => void generateStoryboardAssetVoice(node, assetId)}
+                    onSelectAssetVoice={selectStoryboardAssetVoice}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
@@ -5614,6 +5645,10 @@ async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
                       node.metadata.storyboardAssets.map(async (asset) => ({
                           ...asset,
                           imageUrl: await resolveImageUrl(asset.storageKey, asset.imageUrl),
+                          voiceAudioUrl: await resolveMediaUrl(asset.voiceAudioStorageKey, asset.voiceAudioUrl),
+                          voiceAudioCandidates: asset.voiceAudioCandidates?.length
+                              ? await Promise.all(asset.voiceAudioCandidates.map(async (candidate) => ({ ...candidate, url: await resolveMediaUrl(candidate.storageKey, candidate.url) })))
+                              : asset.voiceAudioCandidates,
                       })),
                   )
                 : undefined;
@@ -6170,7 +6205,7 @@ function storyboardSceneSheetVideoReference(asset: StoryboardAsset, image?: Pick
     };
 }
 
-function storyboardAssetVoiceAudioReference(asset: StoryboardAsset, audio?: Pick<UploadedFile, "url" | "storageKey" | "durationMs" | "mimeType">): StoryboardAudioReference | null {
+function storyboardAssetVoiceAudioReference(asset: StoryboardAsset, audio?: { url?: string; storageKey?: string; durationMs?: number }): StoryboardAudioReference | null {
     const url = audio?.url || asset.voiceAudioUrl || "";
     const storageKey = audio?.storageKey || asset.voiceAudioStorageKey;
     if (!url && !storageKey) return null;

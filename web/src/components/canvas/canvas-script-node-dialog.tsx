@@ -50,6 +50,7 @@ type CanvasScriptNodeDialogProps = {
     onBatchGenerateSceneSheets: (node: CanvasNodeData) => void;
     onStopSceneSheets: (node: CanvasNodeData) => void;
     onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void;
+    onSelectAssetVoice: (node: CanvasNodeData, assetId: string, candidateId: string) => void;
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
     onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
@@ -65,7 +66,7 @@ type CanvasScriptNodeDialogProps = {
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, config }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -280,6 +281,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 onBatchGenerateSceneSheets={onBatchGenerateSceneSheets}
                                 onStopSceneSheets={onStopSceneSheets}
                                 onGenerateAssetVoice={onGenerateAssetVoice}
+                                onSelectAssetVoice={onSelectAssetVoice}
                                 onPreviewSceneSheet={setPreviewSceneSheetAssetId}
                             />
                             {!editingAsset ? (
@@ -918,7 +920,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onDeleteAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; detailOpen: boolean; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onDeleteAsset: (asset: StoryboardAsset) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
+function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onDeleteAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; detailOpen: boolean; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onDeleteAsset: (asset: StoryboardAsset) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onSelectAssetVoice: (node: CanvasNodeData, assetId: string, candidateId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
     const progress = node.metadata?.storyboardAssetProgress;
     return (
@@ -939,7 +941,7 @@ function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, sty
                         </div>
                         <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
                             {groupedAssets[kind].map((asset) => (
-                                <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onDelete={() => onDeleteAsset(asset)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
+                                <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onDelete={() => onDeleteAsset(asset)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onSelectAssetVoice={(candidateId) => onSelectAssetVoice(node, asset.id, candidateId)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
                             ))}
                             <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
                                 <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
@@ -1043,13 +1045,14 @@ function AssetBatchProgressBar({ progress }: { progress: StoryboardAssetBatchPro
     );
 }
 
-function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerateSceneSheet, onStopSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onDelete: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onStopSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
+function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerateSceneSheet, onStopSceneSheet, onGenerateAssetVoice, onSelectAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onDelete: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onStopSceneSheet: () => void; onGenerateAssetVoice: () => void; onSelectAssetVoice: (candidateId: string) => void; onPreviewSceneSheet: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
     const hasImage = Boolean(asset.imageUrl || asset.storageKey);
     const sheetLoading = actionKey === `asset-sheet:${asset.id}` || asset.sceneSheetStatus === "loading";
     const hasSceneSheet = Boolean(asset.sceneSheetUrl || asset.sceneSheetStorageKey);
     const voiceLoading = actionKey === `asset-voice:${asset.id}` || asset.voiceAudioStatus === "loading";
     const hasVoice = Boolean(asset.voiceAudioUrl || asset.voiceAudioStorageKey);
+    const voiceCandidates = asset.voiceAudioCandidates || [];
     const characterState = characterAssetStateText(asset);
     return (
         <div
@@ -1116,7 +1119,24 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                 <div className="mb-2 overflow-hidden rounded-lg border border-cyan-500/20 bg-cyan-500/5">
                     <div className="px-2.5 py-2">
                         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-cyan-100"><Volume2 className="size-3.5" />角色声音</div>
-                        {hasVoice ? (
+                        {voiceCandidates.length ? (
+                            <div className="space-y-2">
+                                {voiceCandidates.map((candidate, index) => {
+                                    const active = candidate.id === asset.voiceAudioSelectedCandidateId;
+                                    return (
+                                        <div key={candidate.id} className={`rounded-md border p-2 ${active ? "border-cyan-300/50 bg-cyan-300/10" : "border-cyan-500/15 bg-black/15"}`}>
+                                            <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px]">
+                                                <span className="font-semibold text-cyan-100">候选 {index + 1}</span>
+                                                <button type="button" className={`rounded px-2 py-0.5 font-semibold ${active ? "bg-cyan-300 text-[#102426]" : "bg-white/10 text-cyan-100 hover:bg-white/15"}`} disabled={active} onClick={(event) => { event.stopPropagation(); onSelectAssetVoice(candidate.id); }}>
+                                                    {active ? "当前" : "使用"}
+                                                </button>
+                                            </div>
+                                            <audio src={candidate.url || candidate.storageKey} controls className="h-8 w-full" onClick={(event) => event.stopPropagation()} />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : hasVoice ? (
                             <audio src={asset.voiceAudioUrl || asset.voiceAudioStorageKey} controls className="h-8 w-full" onClick={(event) => event.stopPropagation()} />
                         ) : (
                             <div className="text-[11px] leading-5 text-cyan-100/75">本地 VoxCPM 自动理解人物年龄、性格和经历并生成试听</div>
@@ -1125,14 +1145,14 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                     <button
                         type="button"
                         className="flex h-8 w-full items-center justify-center gap-1.5 border-t border-cyan-500/15 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-60"
-                        disabled={Boolean(actionKey && actionKey !== `asset-voice:${asset.id}`)}
+                        disabled={voiceLoading || Boolean(actionKey && actionKey !== `asset-voice:${asset.id}`)}
                         onClick={(event) => {
                             event.stopPropagation();
                             onGenerateAssetVoice();
                         }}
                     >
                         {voiceLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <Volume2 className="size-3.5" />}
-                        {hasVoice ? "一键重做角色声音" : "一键生成角色声音"}
+                        {hasVoice ? "重新生成 3 个候选" : "生成 3 个声音候选"}
                     </button>
                     {asset.voiceAudioError ? <div className="border-t border-red-500/20 px-2 py-1.5 text-[11px] leading-4 text-red-200">{asset.voiceAudioError}</div> : null}
                 </div>

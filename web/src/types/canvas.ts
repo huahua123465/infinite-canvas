@@ -30,6 +30,15 @@ export type StoryboardProductionScope = "single" | "series";
 export type StoryboardShotRenderMode = "video" | "still";
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 
+export type StoryboardVoiceCandidate = {
+    id: string;
+    url?: string;
+    storageKey?: string;
+    durationMs?: number;
+    cacheKey?: string;
+    cacheHit?: "local" | "shared";
+};
+
 export type StoryboardAsset = {
     id: string;
     kind: StoryboardAssetKind;
@@ -58,6 +67,8 @@ export type StoryboardAsset = {
     voiceAudioInstructions?: string;
     voiceAudioCacheKey?: string;
     voiceAudioCacheHit?: "local" | "shared";
+    voiceAudioCandidates?: StoryboardVoiceCandidate[];
+    voiceAudioSelectedCandidateId?: string;
     voiceSampleText?: string;
     chapterIds?: string[];
 };
