@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Button, Dropdown, Input, Modal, Select } from "antd";
-import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Upload, Video, Volume2, X } from "lucide-react";
+import { App, Button, Dropdown, Input, InputNumber, Modal, Select } from "antd";
+import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, Sparkles, Square, Trash2, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
@@ -8,7 +8,7 @@ import { audioVoiceOptions, suggestVolcengineSpeakerForText, volcengineVoiceOpti
 import { normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { modelOptionLabel, useConfigStore, type AiConfig } from "@/stores/use-config-store";
-import type { CanvasNodeData, StoryboardAsset, StoryboardAssetBatchProgress, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardPromptDetail } from "@/types/canvas";
+import type { CanvasNodeData, StoryboardAsset, StoryboardAssetBatchProgress, StoryboardAssetKind, StoryboardAssetMentionLink, StoryboardAssetProgress, StoryboardProductionMode, StoryboardPromptDetail } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
@@ -22,6 +22,12 @@ const ASSET_SECTIONS: Array<{ kind: StoryboardAssetKind; title: string }> = [
     { kind: "scene", title: "场景" },
     { kind: "prop", title: "道具" },
 ];
+const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
+    { value: "economy", label: "节省成本" },
+    { value: "documentary", label: "标准漫剧" },
+    { value: "detailed", label: "细拍漫剧" },
+    { value: "custom", label: "自定义" },
+];
 function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storageKey">) {
     return Boolean(asset.imageUrl || asset.storageKey);
 }
@@ -34,6 +40,7 @@ type CanvasScriptNodeDialogProps = {
     onRowsChange: (nodeId: string, rows: StoryboardRowsUpdater) => void;
     onPrepareAssets: (node: CanvasNodeData) => void;
     onUpdateAsset: (nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => void;
+    onDeleteAsset: (nodeId: string, assetId: string) => void;
     onUploadAssetImage: (nodeId: string, assetId: string, file: File) => void;
     onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void;
     onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void;
@@ -52,10 +59,12 @@ type CanvasScriptNodeDialogProps = {
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
     onBatchGenerateVideos: (node: CanvasNodeData) => void;
     onActiveEpisodeChange: (nodeId: string, episodeId: string) => void;
+    onProductionConfigChange: (nodeId: string, patch: { storyboardProductionMode?: StoryboardProductionMode; storyboardEpisodeDurationSeconds?: number; storyboardCustomVideoBudget?: number }) => void;
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, config }: CanvasScriptNodeDialogProps) {
+    const { modal } = App.useApp();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -68,6 +77,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const shotPlans = node?.metadata?.storyboardShotPlans || {};
     const episodes = node?.metadata?.storyboardChapters || [];
     const activeEpisodeId = episodes.some((episode) => episode.id === node?.metadata?.storyboardActiveChapterId) ? node?.metadata?.storyboardActiveChapterId || "" : episodes[0]?.id || "";
+    const productionMode = node?.metadata?.storyboardProductionMode || "documentary";
     const allAssets = node?.metadata?.storyboardAssets || [];
     const assets = allAssets.filter((asset) => !asset.chapterIds?.length || !activeEpisodeId || asset.chapterIds.includes(activeEpisodeId));
     const activeEpisodePrepared = activeEpisodeId ? Boolean(node?.metadata?.storyboardPreparedChapterIds?.includes(activeEpisodeId)) : assets.length > 0;
@@ -170,6 +180,22 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         onUpdateAsset(node.id, editingAsset.id, { imageUrl: undefined, storageKey: undefined, status: "idle", errorDetails: undefined });
     };
 
+    const confirmDeleteAsset = (asset: StoryboardAsset) => {
+        if (!node) return;
+        modal.confirm({
+            title: `删除资产“${asset.name || `未命名${ASSET_KIND_LABEL[asset.kind]}`}”？`,
+            content: "只从当前 Script 资产清单移除，不会删除画布上已经生成的独立图片节点。",
+            okText: "删除",
+            okButtonProps: { danger: true },
+            cancelText: "取消",
+            onOk: () => {
+                onDeleteAsset(node.id, asset.id);
+                setEditingAssetId((current) => (current === asset.id ? null : current));
+                setPreviewSceneSheetAssetId((current) => (current === asset.id ? null : current));
+            },
+        });
+    };
+
     return (
         <Modal
             className="canvas-script-node-dialog"
@@ -193,6 +219,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             <Step index="2" title="准备资产" detail={`${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
                             <Step index="3" title="合成提示词" detail={`${dynamicPromptCount}/${dynamicIndexes.length} 个视频片段已合成${failedPromptCount ? `，失败 ${failedPromptCount}` : ""}`} active={view === "prompts"} done={dynamicIndexes.length > 0 && dynamicPromptCount === dynamicIndexes.length} onClick={openPrompts} />
                         </div>
+                        {view === "shots" ? (
+                            <div className="flex shrink-0 items-center gap-2">
+                                <Select value={productionMode} className="!min-w-28" options={STORYBOARD_PRODUCTION_MODE_OPTIONS} onChange={(value: StoryboardProductionMode) => onProductionConfigChange(node.id, { storyboardProductionMode: value })} />
+                                <InputNumber min={60} max={300} step={30} value={node.metadata?.storyboardEpisodeDurationSeconds || 90} className="!w-32" addonAfter="秒/集" onChange={(value) => onProductionConfigChange(node.id, { storyboardEpisodeDurationSeconds: Number(value) || 90 })} />
+                                {productionMode === "custom" ? <InputNumber min={2} max={30} value={node.metadata?.storyboardCustomVideoBudget || 8} className="!w-36" addonAfter="片段/集" onChange={(value) => onProductionConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 8 })} /> : null}
+                            </div>
+                        ) : null}
                         {episodes.length ? <Select value={activeEpisodeId} className="!min-w-56" options={episodes.map((episode) => ({ value: episode.id, label: `${episode.title}（${episode.shotIndexes.length}片段 / ${Math.round(episode.durationSeconds || 0)}秒）` }))} onChange={(episodeId) => onActiveEpisodeChange(node.id, episodeId)} /> : null}
                         {view === "assets" ? (
                             <AssetPrepToolbar
@@ -228,6 +261,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 batchProgress={batchProgress}
                                 onPrepareAssets={onPrepareAssets}
                                 onSelectAsset={setEditingAssetId}
+                                onDeleteAsset={confirmDeleteAsset}
                                 onGenerateAssetImage={onGenerateAssetImage}
                                 onGenerateSceneSheet={onGenerateSceneSheet}
                                 onStopSceneSheet={onStopSceneSheet}
@@ -317,7 +351,10 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                             </Button>
                                         )}
                                     </div>
-                                    <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
+                                    <div className="flex items-center gap-1">
+                                        <Button danger type="text" className="!size-9 !rounded-md" title="删除资产" disabled={actionKey !== null} icon={<Trash2 className="size-4" />} onClick={() => confirmDeleteAsset(editingAsset)} />
+                                        <Button type="text" className="!size-9 !rounded-md !text-[#e8e8e8]" title="关闭编辑面板" icon={<X className="size-4" />} onClick={() => setEditingAssetId(null)} />
+                                    </div>
                                 </div>
                                 <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
                                     <div className="mb-4 text-xs font-semibold text-[#f0f0f0]">{ASSET_KIND_LABEL[editingAsset.kind]}形象</div>
@@ -893,7 +930,7 @@ function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback:
     return [`分镜提示词：\n${detail.storyboardPrompt || fallback}`, detail.videoMotionPrompt ? `视频运动提示词：\n${detail.videoMotionPrompt}` : "", detail.assetMentions?.length ? `资产引用：${detail.assetMentions.join("、")}` : ""].filter(Boolean).join("\n\n");
 }
 
-function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
+function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, batchProgress, onPrepareAssets, onSelectAsset, onDeleteAsset, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onPreviewSceneSheet }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; style: string; error: string; batchProgress?: StoryboardAssetBatchProgress; onPrepareAssets: (node: CanvasNodeData) => void; onSelectAsset: (assetId: string) => void; onDeleteAsset: (asset: StoryboardAsset) => void; onGenerateAssetImage: (node: CanvasNodeData, assetId: string) => void; onGenerateSceneSheet: (node: CanvasNodeData, assetId: string) => void; onStopSceneSheet: (node: CanvasNodeData, assetId: string) => void; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void; onGenerateAssetVoice: (node: CanvasNodeData, assetId: string) => void; onPreviewSceneSheet: (assetId: string) => void }) {
     const preparing = actionKey === "asset:prepare";
     const progress = node.metadata?.storyboardAssetProgress;
     return (
@@ -913,7 +950,7 @@ function AssetPrepView({ node, actionKey, assets, groupedAssets, style, error, b
                     </div>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
                         {groupedAssets[kind].map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
+                            <AssetCard key={asset.id} asset={asset} actionKey={actionKey} onSelect={() => onSelectAsset(asset.id)} onDelete={() => onDeleteAsset(asset)} onGenerate={() => onGenerateAssetImage(node, asset.id)} onGenerateSceneSheet={() => onGenerateSceneSheet(node, asset.id)} onStopSceneSheet={() => onStopSceneSheet(node, asset.id)} onGenerateAssetVoice={() => onGenerateAssetVoice(node, asset.id)} onPreviewSceneSheet={() => onPreviewSceneSheet(asset.id)} />
                         ))}
                         <button className="grid min-h-[178px] place-items-center rounded-lg border border-dashed border-[#3d3d3d] bg-[#151515] text-[#7f7f7f]" disabled={preparing} onClick={() => onPrepareAssets(node)}>
                             <span className="flex flex-col items-center gap-2 text-xs">{preparing ? <LoaderCircle className="size-6 animate-spin" /> : <Plus className="size-6" />}{assets.length ? "重新识别资产" : "开始识别资产"}</span>
@@ -1016,7 +1053,7 @@ function AssetBatchProgressBar({ progress }: { progress: StoryboardAssetBatchPro
     );
 }
 
-function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneSheet, onStopSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onStopSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
+function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerateSceneSheet, onStopSceneSheet, onGenerateAssetVoice, onPreviewSceneSheet }: { asset: StoryboardAsset; actionKey?: string | null; onSelect: () => void; onDelete: () => void; onGenerate: () => void; onGenerateSceneSheet: () => void; onStopSceneSheet: () => void; onGenerateAssetVoice: () => void; onPreviewSceneSheet: () => void }) {
     const loading = actionKey === `asset:${asset.id}` || asset.status === "loading";
     const hasImage = Boolean(asset.imageUrl || asset.storageKey);
     const sheetLoading = actionKey === `asset-sheet:${asset.id}` || asset.sceneSheetStatus === "loading";
@@ -1039,15 +1076,13 @@ function AssetCard({ asset, actionKey, onSelect, onGenerate, onGenerateSceneShee
         >
             <div className="relative mb-2 grid aspect-[16/9] place-items-center overflow-hidden rounded-lg border border-dashed border-[#3f3f3f] bg-[#111] text-xs text-[#818181] transition group-hover:border-[#6a6a6a]">
                 {asset.imageUrl ? <img src={asset.imageUrl} alt={asset.name} className="size-full object-cover" /> : loading ? <LoaderCircle className="size-6 animate-spin" /> : `生成或上传${ASSET_KIND_LABEL[asset.kind]}图`}
-                <span
-                    className="absolute right-2 top-2 grid size-7 place-items-center rounded bg-[#050505]/85 text-[#f1f1f1] opacity-0 transition group-hover:opacity-100"
-                    title={hasImage ? "重新生成" : "生成图片"}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onGenerate();
-                    }}
-                >
-                    <Sparkles className="size-3.5" />
+                <span className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                    <button type="button" className="grid size-7 place-items-center rounded bg-[#050505]/85 text-[#f1f1f1]" title={hasImage ? "重新生成" : "生成图片"} disabled={actionKey !== null} onClick={(event) => { event.stopPropagation(); onGenerate(); }}>
+                        <Sparkles className="size-3.5" />
+                    </button>
+                    <button type="button" className="grid size-7 place-items-center rounded bg-red-950/90 text-red-200 hover:bg-red-900 disabled:opacity-50" title="删除资产" disabled={actionKey !== null} onClick={(event) => { event.stopPropagation(); onDelete(); }}>
+                        <Trash2 className="size-3.5" />
+                    </button>
                 </span>
             </div>
             {asset.kind === "scene" ? (

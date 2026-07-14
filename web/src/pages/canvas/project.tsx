@@ -2064,6 +2064,14 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)) } } : node)));
     }, []);
 
+    const deleteStoryboardAsset = useCallback((nodeId: string, assetId: string) => {
+        setNodes((prev) => prev.map((node) => {
+            if (node.id !== nodeId) return node;
+            const assetNodeIds = Object.fromEntries(Object.entries(node.metadata?.storyboardAssetNodeIds || {}).filter(([id]) => id !== assetId));
+            return { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).filter((asset) => asset.id !== assetId), storyboardAssetNodeIds: assetNodeIds } };
+        }));
+    }, []);
+
     const updateStoryboardPromptDetail = useCallback((nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => {
         setNodes((prev) =>
             prev.map((node) => {
@@ -4954,6 +4962,7 @@ function InfiniteCanvasPage() {
                     onRowsChange={updateStoryboardRows}
                     onPrepareAssets={(node) => void prepareStoryboardAssets(node)}
                     onUpdateAsset={updateStoryboardAsset}
+                    onDeleteAsset={deleteStoryboardAsset}
                     onUploadAssetImage={(nodeId, assetId, file) => void uploadStoryboardAssetImage(nodeId, assetId, file)}
                     onGenerateAssetImage={(node, assetId) => void generateStoryboardAssetImage(node, assetId)}
                     onGenerateSceneSheet={(node, assetId) => void generateStoryboardSceneSheet(node, assetId)}
@@ -4972,6 +4981,7 @@ function InfiniteCanvasPage() {
                     onGenerateVideo={(node, rowIndex) => void generateStoryboardVideo(node, rowIndex)}
                     onBatchGenerateVideos={(node) => void batchGenerateStoryboardVideos(node)}
                     onActiveEpisodeChange={(nodeId, episodeId) => handleConfigNodeChange(nodeId, { storyboardActiveChapterId: episodeId })}
+                    onProductionConfigChange={handleConfigNodeChange}
                     config={effectiveConfig}
                 />
 
