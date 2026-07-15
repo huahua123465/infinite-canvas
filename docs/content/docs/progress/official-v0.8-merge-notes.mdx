@@ -14,6 +14,7 @@ description: 记录官方 v0.8 与当前定制项目的分阶段合并范围、�
 - 2.5 阶段已经完成并由用户确认测试通过：官方左侧画布/素材导航已按当前 Script、Workspace、插件节点和本地素材结构增量接入，并支持折叠。
 - 第三阶段代码已经完成，等待人工回归：模型脚本编辑器、OpenAI/Gemini 模板以及图片、文本、视频、音频执行入口已按独立提交接入。
 - 根目录 `VERSION` 已切换为 `v0.8.0`，Vite 会把它注入画布右上角和版本弹窗；这只是当前融合分支的可见版本标识，不代表第三阶段已经通过测试或正式 tag 已发布。
+- `@ant-design/pro-components` 在项目中只提供全局 `ProConfigProvider` 包裹，没有实际 Pro 组件消费者；现已移除该包裹及其 PrismJS 风险依赖链，保留现有 Ant Design `ConfigProvider`、主题 token 和根节点深色 class，依赖审计归零。
 - 当前实现不会覆盖原有画布主文件，也没有把 Script、Workspace、Group 或生成链路迁入官方统一渲染器。
 - 插件安装记录、缓存源码、启用状态和插件私有数据保存在当前浏览器的 IndexedDB/localforage，不会随 Git 提交同步给其他电脑或浏览器。
 - 同事拉取代码后无需联网下载内置插件；管理器只读取仓库静态清单，第一次仍需在“内置可选”中点击“安装”，此时才执行对应插件代码。
@@ -234,6 +235,8 @@ description: 记录官方 v0.8 与当前定制项目的分阶段合并范围、�
 - `d9d0ce2 feat(models): route audio call scripts`
 
 明确保留：当前 `ModelChannel.models`、Provider 配置、模型选择器和各原生请求服务；没有整体替换渠道结构，也没有改写 Script、Workspace 或画布主文件。
+
+依赖收口：模型脚本编辑器新增的 CodeMirror JavaScript 语言包已经进入依赖清单、npm 锁文件和 Bun 锁文件；同事拉取后运行根目录 `start-web.bat` 会先执行 `npm install`，无需手工逐个安装。更新前已经运行的 Vite 进程必须重启，才能重新读取依赖和根目录 `VERSION`。
 
 ### 第四阶段：文档和版本收口
 
