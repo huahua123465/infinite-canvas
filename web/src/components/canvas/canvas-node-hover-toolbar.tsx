@@ -3,6 +3,7 @@ import { App, Button, Modal, Segmented, Tooltip } from "antd";
 import { AudioLines, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LoaderCircle, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, SkipBack, SkipForward, Sparkles, Trash2, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -10,10 +11,12 @@ import { CanvasNodeType, type CanvasNodeData, type CanvasVideoFrameRole, type Vi
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 import { canvasImagePresetOptions, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
+import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
     viewport: ViewportTransform;
+    extraTools?: CanvasNodeToolbarItem[];
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
     onInfo: (node: CanvasNodeData) => void;
@@ -59,6 +62,7 @@ type ToolbarTool = {
 export function CanvasNodeHoverToolbar({
     node,
     viewport,
+    extraTools = [],
     onKeep,
     onLeave,
     onInfo,
@@ -125,7 +129,7 @@ export function CanvasNodeHoverToolbar({
         const resizeObserver = new ResizeObserver(updateToolbarSize);
         resizeObserver.observe(toolbar);
         return () => resizeObserver.disconnect();
-    }, [node?.id, viewport.k, showImageToolLabels, quickImageToolIds, imageToolSettingsOpen]);
+    }, [imageToolSettingsOpen, node?.id, quickImageToolIds, showImageToolLabels, viewport.k]);
 
     useEffect(() => {
         try {
@@ -222,6 +226,7 @@ export function CanvasNodeHoverToolbar({
         ...(isVideo ? [{ id: "uploadVideo", title: hasVideo ? "替换视频" : "上传视频", label: hasVideo ? "替换视频" : "上传视频", icon: <Video className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(isAudio ? [{ id: "uploadAudio", title: hasAudio ? "替换音频" : "上传音频", label: hasAudio ? "替换音频" : "上传音频", icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
+        ...extraTools.map((tool) => ({ ...tool, id: `plugin:${tool.id}` })),
     ];
     const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
@@ -353,7 +358,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                     {view === "info" ? (
                         <div className="thin-scrollbar h-full space-y-3 overflow-auto pr-1">
                             <InfoRow label="ID" value={node.id} />
-                            <InfoRow label="类型" value={node.type === CanvasNodeType.Text ? "文本" : node.type === CanvasNodeType.Script ? "脚本节点" : node.type === CanvasNodeType.Image ? "图片" : node.type === CanvasNodeType.Video ? "视频" : node.type === CanvasNodeType.Audio ? "音频" : "生成配置"} />
+                            <InfoRow label="类型" value={canvasNodeTypeLabel(node)} />
                             <InfoRow label="尺寸" value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
                             <InfoRow label="位置" value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label="状态" value={node.metadata?.status || "idle"} />
@@ -403,4 +408,18 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
             <span className="min-w-0 whitespace-pre-wrap break-words">{value}</span>
         </div>
     );
+}
+
+function canvasNodeTypeLabel(node: CanvasNodeData) {
+    const pluginTitle = getNodeDefinition(node.type)?.title;
+    if (pluginTitle) return pluginTitle;
+    if (node.type === CanvasNodeType.Text) return "文本";
+    if (node.type === CanvasNodeType.Script) return "脚本节点";
+    if (node.type === CanvasNodeType.Image) return "图片";
+    if (node.type === CanvasNodeType.Video) return "视频";
+    if (node.type === CanvasNodeType.Audio) return "音频";
+    if (node.type === CanvasNodeType.Config) return "生成配置";
+    if (node.type === CanvasNodeType.Group) return "组";
+    if (node.type === CanvasNodeType.Workspace) return "工作区";
+    return node.type;
 }

@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Empty, Input, Modal } from "antd";
-import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, FileText, Group, Image as ImageIcon, Music2, Pencil, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, FileText, Group, Image as ImageIcon, Music2, Pencil, Puzzle, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getNodeDefinition, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
+import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
@@ -19,9 +21,12 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, STORYBOARD_PROMPT_SOURCE_TEXT, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasNodeData, type CanvasNodeMetadata, type Position, type StoryboardAssetMentionLink, type StoryboardAudioReference, type StoryboardVideoReference, type StoryboardVideoReferenceRole } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
+import { CanvasPluginErrorBoundary } from "./canvas-plugin-error-boundary";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
+const PLUGIN_INTERACTIVE_SELECTOR = "button, input, textarea, select, a, iframe, canvas, [contenteditable], [role=button], [data-canvas-no-drag]";
 const STORYBOARD_VIDEO_REFERENCE_ROLE_TEXT: Record<StoryboardVideoReferenceRole, string> = { firstFrame: "首帧", sceneLock: "场景锁定", reference: "参考", lastFrame: "尾帧" };
 const STORYBOARD_VIDEO_REFERENCE_ROLE_ORDER: Record<StoryboardVideoReferenceRole, number> = { firstFrame: 0, sceneLock: 1, reference: 2, lastFrame: 3 };
 export type StoryboardImportPreview = { rows: string[][]; raw: string; model: string };
@@ -42,6 +47,7 @@ type CanvasNodeProps = {
     storyboardReferenceAssets?: StoryboardVideoReference[];
     storyboardVideoResults?: CanvasNodeData[];
     storyboardDurationSeconds?: string;
+    pluginHost?: CanvasPluginHost;
     renderPanel?: (node: CanvasNodeData) => ReactNode;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     batchCount?: number;
@@ -90,6 +96,8 @@ type NodeContentRendererProps = {
     storyboardReferenceAssets: StoryboardVideoReference[];
     storyboardVideoResults: CanvasNodeData[];
     storyboardDurationSeconds?: string;
+    pluginContext?: CanvasNodeContext | null;
+    pluginResetKey?: string;
     onRetry?: (node: CanvasNodeData, patch?: Partial<CanvasNodeMetadata>) => void;
     onEditPrompt?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
@@ -115,6 +123,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     storyboardReferenceAssets = [],
     storyboardVideoResults = [],
     storyboardDurationSeconds,
+    pluginHost,
     renderPanel,
     renderNodeContent,
     batchCount = 0,
@@ -144,6 +153,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const registryVersion = useNodeRegistryVersion((state) => state.version);
+    const definition = getNodeDefinition(data.type);
+    const pluginContext = useMemo(() => (definition && pluginHost ? buildNodeContext(pluginHost, data, theme, scale) : null), [data, definition, pluginHost, registryVersion, scale, theme]);
     const [hovered, setHovered] = useState(false);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -296,7 +308,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             startTop: data.position.y,
             startWidth: data.width,
             startHeight: data.height,
-            keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
+            keepRatio: pluginKeepAspectRatio(definition, data) ?? ((data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
         window.addEventListener("mousemove", handleResizeMove);
@@ -380,6 +392,22 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onToggleBatch?.(data.id);
                         return;
                     }
+                    if (definition?.onDoubleClick && pluginContext) {
+                        try {
+                            if (definition.onDoubleClick(pluginContext)) event.stopPropagation();
+                        } catch (error) {
+                            console.error(`[plugin] 双击处理失败: ${data.type}`, error);
+                        }
+                        return;
+                    }
+                    if (definition && !isPluginInteractiveTarget(event.target)) {
+                        const editButton = event.currentTarget.querySelector<HTMLButtonElement>('button[title="编辑"], button[title="编辑源码"]');
+                        if (editButton) {
+                            event.stopPropagation();
+                            editButton.click();
+                            return;
+                        }
+                    }
                     if (data.type === CanvasNodeType.Image && hasImageContent) {
                         event.stopPropagation();
                         onViewImage?.(data);
@@ -397,6 +425,11 @@ export const CanvasNode = React.memo(function CanvasNode({
             >
                 <div
                     className={`relative flex h-full w-full items-center justify-center rounded-[inherit] ${isBatchRoot ? "overflow-visible" : "overflow-hidden"}`}
+                    onMouseDownCapture={(event) => {
+                        if (!definition || event.button !== 0 || isPluginInteractiveTarget(event.target)) return;
+                        event.stopPropagation();
+                        onMouseDown(event, data.id);
+                    }}
                     style={
                         {
                             background: isWorkspace || isGroup ? "transparent" : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
@@ -423,6 +456,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                         storyboardReferenceAssets={storyboardReferenceAssets}
                         storyboardVideoResults={storyboardVideoResults}
                         storyboardDurationSeconds={storyboardDurationSeconds}
+                        pluginContext={pluginContext}
+                        pluginResetKey={`${data.id}:${registryVersion}`}
                         onContentChange={onContentChange}
                         onMetadataChange={onMetadataChange}
                         onStoryboardScreenshotImport={onStoryboardScreenshotImport}
@@ -449,7 +484,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             </div>
 
             {!isWorkspace && !isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
-            {!isWorkspace && !isGroup ? <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
+            {!isWorkspace && !isGroup ? <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[500px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
@@ -465,8 +500,18 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onEditPrompt={props.onEditPrompt} />;
 
-    const Renderer = nodeContentRenderers[props.node.type];
-    return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
+    const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
+    if (Renderer) return <Renderer {...props} />;
+    const definition = getNodeDefinition(props.node.type);
+    if (definition?.Content && props.pluginContext) {
+        const PluginContent = definition.Content;
+        return (
+            <CanvasPluginErrorBoundary resetKey={props.pluginResetKey || props.node.id} theme={props.theme}>
+                <PluginContent ctx={props.pluginContext} />
+            </CanvasPluginErrorBoundary>
+        );
+    }
+    return <MissingPluginContent theme={props.theme} type={props.node.type} />;
 }
 
 const nodeContentRenderers = {
@@ -555,12 +600,28 @@ function ErrorContent({ node, theme, onRetry, onEditPrompt }: Pick<NodeContentRe
     );
 }
 
-function UnknownNodeContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function MissingPluginContent({ theme, type }: Pick<NodeContentRendererProps, "theme"> & { type: string }) {
     return (
-        <div className="flex h-full w-full items-center justify-center text-sm" style={{ color: theme.node.placeholder }}>
-            未知节点
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center" style={{ color: theme.node.placeholder }}>
+            <Puzzle className="size-7 opacity-40" />
+            <span className="text-sm">缺少插件</span>
+            <span className="text-[11px] opacity-70">节点类型“{type}”的插件未安装或未启用</span>
         </div>
     );
+}
+
+function pluginKeepAspectRatio(definition: ReturnType<typeof getNodeDefinition>, node: CanvasNodeData) {
+    if (!definition?.keepAspectRatio) return undefined;
+    try {
+        return definition.keepAspectRatio(node);
+    } catch (error) {
+        console.error(`[plugin] 节点比例规则失败: ${node.type}`, error);
+        return undefined;
+    }
+}
+
+function isPluginInteractiveTarget(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest(PLUGIN_INTERACTIVE_SELECTOR));
 }
 
 function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, onGenerateImage }: NodeContentRendererProps) {

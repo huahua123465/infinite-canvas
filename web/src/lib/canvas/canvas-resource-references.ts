@@ -1,5 +1,6 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
+import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
@@ -59,7 +60,8 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {
-        const kind = resourceKind(node);
+        const pluginResource = readPluginResource(node);
+        const kind = pluginResource?.kind || resourceKind(node);
         if (!kind) return [];
         const index = counts[kind]++;
         const label = node.type === CanvasNodeType.Script ? `脚本${index + 1}` : labelForKind(kind, index);
@@ -70,8 +72,8 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: node.metadata?.content,
-                text: node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? node.metadata?.content || node.metadata?.prompt : undefined,
+                previewUrl: pluginResource?.url || node.metadata?.content,
+                text: pluginResource?.text || (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? node.metadata?.content || node.metadata?.prompt : undefined),
                 active,
             },
         ];
@@ -90,9 +92,20 @@ function isResourceNode(node: CanvasNodeData) {
 }
 
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
+    const pluginResource = readPluginResource(node);
+    if (pluginResource) return pluginResource.kind;
     if (node.type === CanvasNodeType.Image && node.metadata?.content) return "image";
     if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
     if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";
     if ((node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) && (node.metadata?.content || node.metadata?.prompt)) return "text";
     return null;
+}
+
+function readPluginResource(node: CanvasNodeData) {
+    try {
+        return getNodeDefinition(node.type)?.resource?.(node) || null;
+    } catch (error) {
+        console.error(`[plugin] 读取节点资源失败: ${node.type}`, error);
+        return null;
+    }
 }

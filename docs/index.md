@@ -36,6 +36,7 @@
 
 - [更新日志](/docs/progress/changelog)
 - [custom/jt-vite-merge 融合记录](/docs/progress/jt-vite-merge-notes)
+- [官方 v0.8 合并记录](/docs/progress/official-v0.8-merge-notes)
 - [画布修改护栏](/docs/progress/infinite-canvas-change-guardrail)
 - [2026-07-08 工作交接](/docs/progress/2026-07-08-handoff)
 - [2026-07-10 分镜视频设置交接](/docs/progress/2026-07-10-storyboard-video-settings)

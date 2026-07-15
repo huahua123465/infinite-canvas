@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { BookOpen, Bot, Clapperboard, FileInput, FileText, FolderOpen, Grid2x2, Group, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
+import { BookOpen, Bot, Clapperboard, FileInput, FileText, FolderOpen, Grid2x2, Group, Home, ImageIcon, Images, List, Menu, Music2, Plus, Puzzle, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
@@ -43,6 +43,8 @@ import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
+import { CanvasPluginErrorBoundary } from "@/components/canvas/canvas-plugin-error-boundary";
+import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasPromptAssistantDialog, mergePromptForNode, promptPatchForNode, readNodePrompt } from "@/components/canvas/canvas-prompt-assistant-dialog";
 import { CanvasScriptNodeDialog } from "@/components/canvas/canvas-script-node-dialog";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
@@ -56,6 +58,9 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
+import { getNodeDefinition, getPluginNodeSpec, isBuiltinNodeType, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
+import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
+import { ensurePluginsLoaded } from "@/lib/canvas/plugin-loader";
 import {
     CanvasNodeType,
     STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT,
@@ -65,6 +70,7 @@ import {
     type CanvasImageGenerationType,
     type CanvasNodeData,
     type CanvasNodeMetadata,
+    type CanvasNodeTypeId,
     type CanvasVideoFrameRole,
     type StoryboardAsset,
     type StoryboardAssetKind,
@@ -81,6 +87,7 @@ import {
     type SelectionBox,
     type ViewportTransform,
 } from "@/types/canvas";
+import type { CanvasNodeToolbarItem, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
 
@@ -96,7 +103,7 @@ type PendingConnectionCreate = {
     position: Position;
 };
 
-type ConnectionCreateKind = CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Script;
+type ConnectionCreateKind = CanvasNodeTypeId;
 
 type ConnectionDropTarget = {
     nodeId: string | null;
@@ -435,8 +442,9 @@ async function loadSeedance20SkillContext(): Promise<Seedance20SkillContext | nu
     }
 }
 
-function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
-    const spec = getNodeSpec(type);
+function createCanvasNode(type: CanvasNodeTypeId, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
+    const spec = isBuiltinNodeType(type) ? getNodeSpec(type) : getPluginNodeSpec(type);
+    if (!spec) throw new Error(`节点类型 ${type} 未注册`);
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     return {
@@ -502,6 +510,8 @@ function CanvasRefreshShell() {
 
 function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: ConnectionCreateKind) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    useNodeRegistryVersion((state) => state.version);
+    const extensionDefinitions = listNodeDefinitions().filter((definition) => definition.showInCreateMenu !== false);
     return (
         <div
             className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur"
@@ -518,7 +528,8 @@ function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: Pending
                     ×
                 </button>
             </div>
-            <div className="grid gap-1">
+            <div className="thin-scrollbar grid max-h-[70vh] gap-1 overflow-y-auto">
+                {extensionDefinitions.map((definition) => <ConnectionCreateOption key={definition.type} theme={theme} icon={definition.icon || <Puzzle className="size-5" />} title={definition.title} description={definition.description} onClick={() => onCreate(definition.type)} />)}
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
@@ -543,15 +554,18 @@ function ConnectionCreateOption({ theme, icon, title, description, onClick }: { 
     );
 }
 
-function NodeCreateMenu({ position, onCreate, onClose }: { position: Position; onCreate: (type: CanvasNodeType) => void; onClose: () => void }) {
+function NodeCreateMenu({ position, onCreate, onClose }: { position: Position; onCreate: (type: CanvasNodeTypeId) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    useNodeRegistryVersion((state) => state.version);
+    const extensionDefinitions = listNodeDefinitions().filter((definition) => definition.showInCreateMenu !== false);
     return (
         <div className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur" data-canvas-no-zoom style={{ left: position.x, top: position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between px-1">
                 <span className="text-sm font-medium" style={{ color: theme.node.muted }}>选择节点</span>
                 <button type="button" className="grid size-7 place-items-center rounded-lg opacity-55 transition hover:opacity-100" onClick={onClose} aria-label="关闭"><X className="size-4" /></button>
             </div>
-            <div className="grid gap-1">
+            <div className="thin-scrollbar grid max-h-[70vh] gap-1 overflow-y-auto">
+                {extensionDefinitions.map((definition) => <ConnectionCreateOption key={definition.type} theme={theme} icon={definition.icon || <Puzzle className="size-5" />} title={definition.title} description={definition.description} onClick={() => onCreate(definition.type)} />)}
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片" onClick={() => onCreate(CanvasNodeType.Image)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频" onClick={() => onCreate(CanvasNodeType.Video)} />
@@ -568,6 +582,9 @@ function InfiniteCanvasPage() {
     const confirmVideoGeneration = useVideoGenerationPreflight();
     const params = useParams<{ id: string }>();
     const navigate = useNavigate();
+    useEffect(() => {
+        void ensurePluginsLoaded().catch((error) => console.error("[plugin] 初始化失败", error));
+    }, []);
     const [searchParams] = useSearchParams();
     const projectId = params.id || "";
     const localAgentConnected = useAgentStore((state) => state.connected);
@@ -1274,7 +1291,7 @@ function InfiniteCanvasPage() {
         return () => setAgentCanvasContext(null);
     }, [agentSnapshot, applyAgentOps, agentUndoSnapshot, setAgentCanvasContext, undoAgentOps]);
     const createNode = useCallback(
-        (type: CanvasNodeType, position?: Position) => {
+        (type: CanvasNodeTypeId, position?: Position) => {
             const targetPosition = position || getCanvasCenter();
             const configMetadata: CanvasNodeMetadata | undefined =
                 type === CanvasNodeType.Config
@@ -1291,7 +1308,8 @@ function InfiniteCanvasPage() {
             setNodes((prev) => [...prev, newNode]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            const definition = getNodeDefinition(type);
+            if (definition?.Panel || (!definition && type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio)) setDialogNodeId(newNode.id);
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, effectiveConfig.textModel, getCanvasCenter],
     );
@@ -4978,6 +4996,65 @@ function InfiniteCanvasPage() {
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );
 
+    const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
+    const pluginHost = useMemo<CanvasPluginHost>(
+        () => ({
+            getNode: (id) => nodesRef.current.find((node) => node.id === id) || null,
+            getNodes: () => [...nodesRef.current],
+            getConnections: () => [...connectionsRef.current],
+            getUpstream: (nodeId) => connectionsRef.current.filter((connection) => connection.toNodeId === nodeId).flatMap((connection) => nodesRef.current.filter((node) => node.id === connection.fromNodeId)),
+            getDownstream: (nodeId) => connectionsRef.current.filter((connection) => connection.fromNodeId === nodeId).flatMap((connection) => nodesRef.current.filter((node) => node.id === connection.toNodeId)),
+            updateNode: (nodeId, patch) =>
+                setNodes((current) => {
+                    const next = current.map((node) => (node.id === nodeId ? { ...node, ...patch } : node));
+                    nodesRef.current = next;
+                    return next;
+                }),
+            updateMetadata: (nodeId, patch) =>
+                setNodes((current) => {
+                    const next = current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node));
+                    nodesRef.current = next;
+                    return next;
+                }),
+            applyOps: (ops) => void applyAgentOps(ops),
+        }),
+        [applyAgentOps],
+    );
+    const pluginToolbarTools = useMemo<CanvasNodeToolbarItem[]>(() => {
+        if (!toolbarNode) return [];
+        const definition = getNodeDefinition(toolbarNode.type);
+        if (!definition?.toolbar) return [];
+        try {
+            return definition.toolbar(buildNodeContext(pluginHost, toolbarNode, theme, viewport.k)).map((item) => ({
+                ...item,
+                onClick: () => {
+                    try {
+                        item.onClick();
+                    } catch (error) {
+                        console.error(`[plugin] 工具栏操作失败: ${toolbarNode.type}`, error);
+                    }
+                },
+            }));
+        } catch (error) {
+            console.error(`[plugin] 工具栏创建失败: ${toolbarNode.type}`, error);
+            return [];
+        }
+    }, [nodeRegistryVersion, pluginHost, theme, toolbarNode, viewport.k]);
+
+    const renderPluginPanel = useCallback(
+        (node: CanvasNodeData) => {
+            const definition = getNodeDefinition(node.type);
+            if (!definition?.Panel) return null;
+            const PluginPanel = definition.Panel;
+            return (
+                <CanvasPluginErrorBoundary resetKey={`${node.id}:${nodeRegistryVersion}:panel`} theme={theme}>
+                    <PluginPanel ctx={buildNodeContext(pluginHost, node, theme, viewportRef.current.k)} onClose={() => setDialogNodeId(null)} />
+                </CanvasPluginErrorBoundary>
+            );
+        },
+        [nodeRegistryVersion, pluginHost, theme],
+    );
+
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
@@ -5083,8 +5160,9 @@ function InfiniteCanvasPage() {
                             storyboardReferenceAssets={storyboardReferenceAssetsForNode(node, nodes, connections)}
                             storyboardVideoResults={storyboardVideoResultsByDraftId.get(node.id) || []}
                             storyboardDurationSeconds={storyboardVideoRowSeconds(node, nodes)}
+                            pluginHost={pluginHost}
                             renderPanel={(panelNode) =>
-                                panelNode.type === CanvasNodeType.Config ? (
+                                renderPluginPanel(panelNode) || (isBuiltinNodeType(panelNode.type) ? (panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
                                         value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
                                         inputs={configInputsById.get(panelNode.id) || []}
@@ -5115,7 +5193,7 @@ function InfiniteCanvasPage() {
                                             if (open) setToolbarNodeId(null);
                                         }}
                                     />
-                                )
+                                )) : null)
                             }
                             renderNodeContent={(contentNode) => (
                                 <CanvasConfigNodePanel
@@ -5189,6 +5267,7 @@ function InfiniteCanvasPage() {
                 <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
+                    extraTools={pluginToolbarTools}
                     onKeep={keepNodeToolbar}
                     onLeave={hideNodeToolbar}
                     onInfo={(node) => setInfoNodeId(node.id)}
@@ -5246,6 +5325,7 @@ function InfiniteCanvasPage() {
                     onAddScript={() => createNode(CanvasNodeType.Script)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
+                    onAddExtensionNode={(type) => createNode(type)}
                     onImportMangaCard={handleMangaCardImportRequest}
                     onImportMangaStoryboard={handleMangaStoryboardImportRequest}
                     onImportScene360={handleScene360ImportRequest}
@@ -5430,6 +5510,7 @@ function CanvasTopBar({
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
+    const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -5498,6 +5579,9 @@ function CanvasTopBar({
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
                     {compactAgentStatus ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
+                    <button type="button" className="grid size-7 place-items-center transition hover:opacity-70" style={{ color: theme.node.text }} onClick={() => setPluginManagerOpen(true)} aria-label="节点插件" title="节点插件">
+                        <Puzzle className="size-4" />
+                    </button>
                     <UserStatusActions
                         variant="canvas"
                         onOpenShortcuts={() => setShortcutsOpen(true)}
@@ -5531,6 +5615,7 @@ function CanvasTopBar({
                     <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" />
                 </div>
             </Modal>
+            <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
         </>
     );
 }

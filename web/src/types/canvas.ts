@@ -20,6 +20,8 @@ export enum CanvasNodeType {
     Workspace = "workspace",
 }
 
+export type CanvasNodeTypeId = CanvasNodeType | (string & {});
+
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
@@ -352,11 +354,12 @@ export type CanvasNodeMetadata = {
     sceneViewRole?: SceneViewRole;
     sceneGroupId?: string;
     requiredSceneViewRoles?: Array<"front" | "top">;
+    [key: string]: unknown;
 };
 
 export type CanvasNodeData = {
     id: string;
-    type: CanvasNodeType;
+    type: CanvasNodeTypeId;
     title: string;
     position: Position;
     width: number;
@@ -372,7 +375,7 @@ export type CanvasConnection = {
 
 export type CanvasAssistantReference = {
     id: string;
-    type: CanvasNodeType;
+    type: CanvasNodeTypeId;
     title: string;
     dataUrl?: string;
     storageKey?: string;

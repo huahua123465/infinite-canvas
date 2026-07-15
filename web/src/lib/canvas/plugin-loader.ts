@@ -1,0 +1,183 @@
+import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/node-registry";
+import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
+import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
+import type { CanvasPlugin, CanvasPluginFactory } from "@/types/canvas-plugin";
+
+const cleanups = new Map<string, () => void>();
+
+function normalizePluginUrl(value: string) {
+    const url = new URL(value, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("插件地址只支持 HTTP 或 HTTPS");
+    return url.href;
+}
+
+async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
+    const runtime = getPluginRuntime();
+    const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    try {
+        const module = (await import(/* @vite-ignore */ blobUrl)) as { default?: unknown; plugin?: unknown };
+        const exported = module.default ?? module.plugin;
+        const plugin = typeof exported === "function" ? (exported as CanvasPluginFactory)(runtime) : exported;
+        assertPlugin(plugin);
+        return plugin;
+    } finally {
+        URL.revokeObjectURL(blobUrl);
+    }
+}
+
+function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
+    const value = plugin as Partial<CanvasPlugin> | null;
+    if (!value || typeof value !== "object") throw new Error("插件未导出有效对象");
+    if (!value.id || !/^[a-z0-9][a-z0-9._-]*$/i.test(value.id)) throw new Error("插件缺少有效 id");
+    if (!Array.isArray(value.nodes) || !value.nodes.length) throw new Error("插件至少需要声明一个节点");
+    if (value.nodes.some((node) => !node?.type || !node.defaultSize?.width || !node.defaultSize?.height)) throw new Error("插件包含无效节点定义");
+}
+
+export function activatePlugin(plugin: CanvasPlugin) {
+    const runtime = getPluginRuntime();
+    const disposers: Array<() => void> = [];
+    try {
+        registerNodeDefinitions(plugin.nodes, plugin.id);
+        if (plugin.css) disposers.push(runtime.injectCSS(plugin.css, plugin.id));
+        const cleanup = plugin.setup?.(runtime);
+        if (typeof cleanup === "function") disposers.push(cleanup);
+        cleanups.set(plugin.id, () =>
+            disposers.splice(0).reverse().forEach((dispose) => {
+                try {
+                    dispose();
+                } catch (error) {
+                    console.error(`[plugin] 清理失败: ${plugin.id}`, error);
+                }
+            }),
+        );
+    } catch (error) {
+        disposers.splice(0).reverse().forEach((dispose) => dispose());
+        unregisterPluginNodes(plugin.id);
+        throw error;
+    }
+}
+
+export function deactivatePlugin(pluginId: string) {
+    try {
+        cleanups.get(pluginId)?.();
+    } finally {
+        cleanups.delete(pluginId);
+        unregisterPluginNodes(pluginId);
+    }
+}
+
+async function fetchPluginSource(url: string) {
+    const response = await fetch(normalizePluginUrl(url), { cache: "no-store" });
+    if (!response.ok) throw new Error(`插件下载失败（HTTP ${response.status}）`);
+    return response.text();
+}
+
+async function restorePlugin(record?: InstalledPlugin) {
+    if (!record?.enabled) return;
+    try {
+        activatePlugin(await evaluatePluginSource(record.source));
+    } catch (error) {
+        console.error(`[plugin] 恢复旧版本失败: ${record.id}`, error);
+    }
+}
+
+export async function installPluginFromUrl(inputUrl: string, options?: { official?: boolean; expectedId?: string }) {
+    const url = normalizePluginUrl(inputUrl);
+    const source = await fetchPluginSource(url);
+    const plugin = await evaluatePluginSource(source);
+    if (options?.expectedId && plugin.id !== options.expectedId) throw new Error(`插件更新后的 id 必须保持为 ${options.expectedId}`);
+    const previous = usePluginStore.getState().plugins.find((item) => item.id === plugin.id);
+    deactivatePlugin(plugin.id);
+    try {
+        activatePlugin(plugin);
+    } catch (error) {
+        await restorePlugin(previous);
+        throw error;
+    }
+    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: options?.official });
+    return plugin;
+}
+
+export async function updatePlugin(record: InstalledPlugin) {
+    return installPluginFromUrl(record.url, { official: record.official, expectedId: record.id });
+}
+
+export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
+    if (!enabled) {
+        deactivatePlugin(record.id);
+        usePluginStore.getState().setEnabled(record.id, false);
+        return;
+    }
+    const source = record.local ? await fetchPluginSource(record.url) : record.source;
+    const plugin = await evaluatePluginSource(source);
+    if (plugin.id !== record.id) throw new Error(`插件 id 已变化，预期 ${record.id}，实际 ${plugin.id}`);
+    deactivatePlugin(record.id);
+    activatePlugin(plugin);
+    usePluginStore.getState().setEnabled(record.id, true);
+}
+
+export function uninstallPlugin(id: string) {
+    deactivatePlugin(id);
+    usePluginStore.getState().remove(id);
+}
+
+let loaded = false;
+
+export async function ensurePluginsLoaded() {
+    if (loaded) return;
+    loaded = true;
+    try {
+        getPluginRuntime();
+        await usePluginStore.persist.rehydrate();
+        await discoverLocalPlugins();
+        for (const record of usePluginStore.getState().plugins.filter((item) => item.enabled)) {
+            try {
+                const source = record.local ? await fetchPluginSource(record.url) : record.source;
+                activatePlugin(await evaluatePluginSource(source));
+            } catch (error) {
+                console.error(`[plugin] 加载失败: ${record.id}`, error);
+            }
+        }
+        await loadDevelopmentPlugins();
+    } catch (error) {
+        loaded = false;
+        throw error;
+    }
+}
+
+async function discoverLocalPlugins() {
+    try {
+        const response = await fetch("/plugins/index.json", { cache: "no-store" });
+        if (!response.ok) return;
+        const urls = (await response.json()) as unknown;
+        if (!Array.isArray(urls)) return;
+        for (const value of urls) {
+            if (typeof value !== "string") continue;
+            try {
+                const url = normalizePluginUrl(value);
+                const source = await fetchPluginSource(url);
+                const plugin = await evaluatePluginSource(source);
+                if (usePluginStore.getState().plugins.some((item) => item.id === plugin.id)) continue;
+                usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: false, local: true });
+            } catch (error) {
+                console.error(`[plugin] 本地插件发现失败: ${String(value)}`, error);
+            }
+        }
+    } catch {
+        return;
+    }
+}
+
+async function loadDevelopmentPlugins() {
+    const urls = String(import.meta.env.VITE_DEV_PLUGINS || "").split(",").map((item) => item.trim()).filter(Boolean);
+    for (const value of urls) {
+        try {
+            const source = await fetchPluginSource(value);
+            const plugin = await evaluatePluginSource(source);
+            deactivatePlugin(plugin.id);
+            activatePlugin(plugin);
+        } catch (error) {
+            console.error(`[plugin] 开发插件加载失败: ${value}`, error);
+        }
+    }
+}

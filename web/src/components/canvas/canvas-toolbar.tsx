@@ -1,11 +1,13 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Clapperboard, Eraser, FileInput, FileText, FolderOpen, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Clapperboard, Eraser, FileInput, FileText, FolderOpen, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
+import { getNodeDefinition, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
+import type { CanvasNodeTypeId } from "@/types/canvas";
 
 export function CanvasToolbar({
     selectedCount,
@@ -20,6 +22,7 @@ export function CanvasToolbar({
     onAddScript,
     onAddConfig,
     onAddGroup,
+    onAddExtensionNode,
     onImportMangaCard,
     onImportMangaStoryboard,
     onImportScene360,
@@ -46,6 +49,7 @@ export function CanvasToolbar({
     onAddScript: () => void;
     onAddConfig: () => void;
     onAddGroup: () => void;
+    onAddExtensionNode: (type: CanvasNodeTypeId) => void;
     onImportMangaCard: () => void;
     onImportMangaStoryboard: () => void;
     onImportScene360: () => void;
@@ -64,6 +68,8 @@ export function CanvasToolbar({
     const colorTheme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const theme = canvasThemes[colorTheme];
+    useNodeRegistryVersion((state) => state.version);
+    const extensionDefinitions = listNodeDefinitions().filter((definition) => definition.showInCreateMenu !== false);
     const [hovered, setHovered] = useState<string | null>(null);
     const [tipX, setTipX] = useState(0);
     const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -108,6 +114,11 @@ export function CanvasToolbar({
                 <ToolbarButton id="tool-group" label="组" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddGroup}>
                     <Group className="size-4.5" />
                 </ToolbarButton>
+                {extensionDefinitions.map((definition) => (
+                    <ToolbarButton key={definition.type} id={`tool-plugin:${definition.type}`} label={definition.title} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onAddExtensionNode(definition.type)}>
+                        {definition.icon || <Puzzle className="size-4.5" />}
+                    </ToolbarButton>
+                ))}
                 <ToolbarButton id="tool-manga-card" label="导入角色卡" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onImportMangaCard}>
                     <FileInput className="size-4.5" />
                 </ToolbarButton>
@@ -303,6 +314,7 @@ function DockTip({ label, x, theme }: { label: string; x: number; theme: CanvasT
 }
 
 function toolLabel(id: string) {
+    if (id.startsWith("tool-plugin:")) return getNodeDefinition(id.slice("tool-plugin:".length))?.title || "插件节点";
     if (id === "tool-hand") return "移动/选择";
     if (id === "tool-undo") return "撤销";
     if (id === "tool-redo") return "重做";
