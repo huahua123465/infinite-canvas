@@ -70,7 +70,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (!mention) return;
         const textarea = textareaRef.current;
         const end = textarea?.selectionStart ?? value.length;
-        const insertText = `${reference.label} `;
+        const insertText = `${reference.kind === "image" ? "@" : ""}${reference.label} `;
         const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);

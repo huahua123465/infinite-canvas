@@ -77,7 +77,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
                 if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
                 else selectedInputs.push(input);
             }
-            nextPrompt += input.type === "text" ? `【${label}】` : label;
+            nextPrompt += input.type === "text" ? `【${label}】` : input.type === "image" ? `@${label}` : label;
         }
         lastIndex = match.index + match[0].length;
     }

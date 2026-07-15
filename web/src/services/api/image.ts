@@ -647,8 +647,8 @@ function isCangyuanConfig(config: Pick<AiConfig, "apiFormat">) {
     return config.apiFormat === "cangyuan";
 }
 
-function cangyuanImageOptions(config: AiConfig, quality: string | undefined) {
-    const aspectRatio = cangyuanAspectRatio(config.size);
+function cangyuanImageOptions(config: AiConfig, quality: string | undefined, prompt?: string) {
+    const aspectRatio = cangyuanPromptAspectRatio(prompt) || cangyuanAspectRatio(config.size);
     const fixedResolution = config.model.match(/-(1k|2k|4k)$/i)?.[1]?.toUpperCase();
     const outputResolution = fixedResolution || (quality ? GEMINI_IMAGE_SIZE_BY_QUALITY[quality] : undefined);
     const isFixedGptImage = Boolean(fixedResolution && config.model.toLowerCase().includes("gpt-image"));
@@ -657,6 +657,16 @@ function cangyuanImageOptions(config: AiConfig, quality: string | undefined) {
         ...(outputResolution ? { image_size: outputResolution } : {}),
         ...(!isFixedGptImage && outputResolution ? { output_resolution: outputResolution } : {}),
     };
+}
+
+function cangyuanPromptAspectRatio(prompt?: string) {
+    const match = prompt?.match(/(?:图片|画面)?宽高比(?:改成|设为|设置为|为|[:：])\s*(\d+)\s*[:：]\s*(\d+)/);
+    return match ? cangyuanAspectRatio(`${match[1]}:${match[2]}`) : undefined;
+}
+
+function cangyuanEditPrompt(prompt: string, referenceCount: number) {
+    const referenceRule = referenceCount === 1 ? "必须以已上传的唯一参考图片作为原始画面" : "必须按 @图片N 与 multipart image 文件的上传顺序使用全部参考图片";
+    return `图像编辑硬约束：${referenceRule}；保留用户未明确要求修改的主体身份、人物数量、姿态、服装、场景、构图和画风，只修改用户明确提出的内容，禁止忽略参考图重新创作无关画面。\n\n${prompt}`;
 }
 
 function cangyuanAspectRatio(size: string) {
@@ -711,9 +721,7 @@ async function requestCangyuanImages(config: AiConfig, prompt: string, reference
 
 async function requestCangyuanImageOnce(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
-    if (mask) return requestCangyuanImageEdit(config, prompt, references, mask, quality, options);
-    if (references.length > 9) throw new Error("沧元算力 JSON 图生图最多支持 9 张参考图");
-    const referenceUrls = await Promise.all(references.map(imageReferenceUrl));
+    if (references.length || mask) return requestCangyuanImageEdit(config, prompt, references, mask, quality, options);
     const requestAsync = shouldUseCangyuanImageAsync(config, references);
     const response = await axios.post<ImageApiResponse>(
         aiApiUrl(config, "/images/generations"),
@@ -721,9 +729,7 @@ async function requestCangyuanImageOnce(config: AiConfig, prompt: string, refere
             model: config.model,
             prompt: withSystemPrompt(config, prompt),
             stream: false,
-            ...cangyuanImageOptions(config, quality),
-            ...(referenceUrls.length === 1 ? { image: referenceUrls[0] } : {}),
-            ...(referenceUrls.length > 1 ? { images: referenceUrls } : {}),
+            ...cangyuanImageOptions(config, quality, prompt),
             ...(requestAsync ? { async: true } : {}),
         },
         { headers: aiHeaders(config, "application/json"), signal: options?.signal },
@@ -731,16 +737,16 @@ async function requestCangyuanImageOnce(config: AiConfig, prompt: string, refere
     return parseCangyuanImageResult(config, response.data, "generations", options);
 }
 
-async function requestCangyuanImageEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage, quality: string | undefined, options?: RequestOptions) {
-    if (!references.length) throw new Error("沧元算力蒙版编辑至少需要 1 张原图");
-    if (references.length > 6) throw new Error("沧元算力 multipart 图生图最多支持 6 张参考图");
+async function requestCangyuanImageEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, quality: string | undefined, options?: RequestOptions) {
+    if (!references.length) throw new Error("沧元算力图生图至少需要 1 张参考图");
+    if (references.length > 9) throw new Error("沧元算力 multipart 图生图最多支持 9 张参考图");
     const formData = new FormData();
     formData.set("model", config.model);
-    formData.set("prompt", withSystemPrompt(config, prompt));
-    Object.entries(cangyuanImageOptions(config, quality)).forEach(([key, value]) => formData.set(key, value));
+    formData.set("prompt", withSystemPrompt(config, cangyuanEditPrompt(prompt, references.length)));
+    Object.entries(cangyuanImageOptions(config, quality, prompt)).forEach(([key, value]) => formData.set(key, value));
     const files = await Promise.all(references.map(cangyuanImageFile));
     files.forEach((file) => formData.append("image", file));
-    formData.set("mask", await cangyuanImageFile(mask));
+    if (mask) formData.set("mask", await cangyuanImageFile(mask));
     const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config), signal: options?.signal });
     return parseCangyuanImageResult(config, response.data, "edits", options);
 }
@@ -771,13 +777,6 @@ async function pollCangyuanImageTask(config: AiConfig, taskId: string, taskPath:
         }
     }
     throw new Error("图片生成超时，请稍后重试");
-}
-
-async function imageReferenceUrl(image: ReferenceImage) {
-    const inlineData = image.dataUrl.trim();
-    const remoteUrl = image.url?.trim() || "";
-    if (!inlineData.startsWith("data:") && /^https?:\/\//i.test(remoteUrl)) return remoteUrl;
-    return (await resolveCangyuanImage(image)).dataUrl;
 }
 
 async function cangyuanImageFile(image: ReferenceImage) {

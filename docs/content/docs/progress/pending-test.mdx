@@ -84,9 +84,9 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 - 沧元算力模型价格显示：模型选择器应自动读取 `https://ai.cangyuansuanli.cn/api/pricing`，在沧元算力渠道的模型名后显示价格；按次/按条计费显示单价，按秒计费的视频模型在视频工作台、画布视频节点和最终提示词弹窗中应按当前视频秒数显示估算金额，价格接口读取失败时不应影响正常选择和生成。
 
-- 沧元算力模型渠道接入：配置里应支持新增“沧元算力”调用格式，默认 Base URL 为 `https://ai.cangyuansuanli.cn`；填写 API Key 后可通过“拉取模型”读取 `/v1/models`，并能把 `omni` 归类到视频模型、`gemini-banana-*` 归类到图像模型。图像生成/图生图应走 `/v1/images/generations`，同步取 `data[].url`、异步轮询 `/v1/images/generations/{task_id}`；视频生成应走 `/v1/videos` 和 `/v1/videos/{task_id}`，完成后优先取 `video_url`，并避免误走方舟 Ark 的 `/contents/generations/tasks`。
+- 沧元算力模型渠道接入：配置里应支持新增“沧元算力”调用格式，默认 Base URL 为 `https://ai.cangyuansuanli.cn`；填写 API Key 后可通过“拉取模型”读取 `/v1/models`，并能把 `omni` 归类到视频模型、`gemini-banana-*` 归类到图像模型。文生图应走 `/v1/images/generations`，图生图应同步走 multipart `/v1/images/edits` 并直接读取 `data[].url`；视频生成应走 `/v1/videos` 和 `/v1/videos/{task_id}`，完成后优先取 `video_url`，并避免误走方舟 Ark 的 `/contents/generations/tasks`。
 
-- 沧元算力图片模型新接口：画布生成配置节点展开模型下拉后，应能直接选择 `gpt-image-2-*`、`nano-banana-*` 等沧元图片模型，点击浮层不得触发画布平移或取消选择；图片请求应使用 `aspect_ratio` 与模型匹配的 `image_size` / `output_resolution`，固定 1K/2K/4K 模型不得再发送像素 `size` 或冲突 `quality`；JSON 图生图最多允许 9 张参考图，蒙版编辑应通过 multipart `/v1/images/edits` 提交并在异步时轮询对应 edits 任务。本地 `blob:` / IndexedDB 参考图必须转成标准 JPEG、PNG 或 WebP data URI 后再发送，已有 data URI 优先于本地 URL，公网 HTTP(S) URL 仍可直传；无效 Base64、空图片和单张超过 10MB 应在前端直接显示中文错误。
+- 沧元算力图片模型新接口：画布生成配置节点展开模型下拉后，应能直接选择 `gpt-image-2-*`、`nano-banana-*` 等沧元图片模型，点击浮层不得触发画布平移或取消选择；图片请求应使用 `aspect_ratio` 与模型匹配的 `image_size` / `output_resolution`，固定 1K/2K/4K 模型不得再发送像素 `size` 或冲突 `quality`；提示词明确写出“宽高比改成/设为 W:H”时，该比例应覆盖节点中的旧比例，避免结构化参数与编辑要求冲突。存在参考图时应统一通过同步 multipart `POST /v1/images/edits` 重复提交同名 `image` 文件字段，最多允许 9 张参考图，不得附带 `async=true`，服务端意外返回任务 ID 时仍按 edits 路径轮询兜底；纯文生图仍走 `/v1/images/generations`。通过 `@` 菜单选择图片后，输入框、配置节点转换和最终请求应全程保留 `@图片N`；旧提示词中的裸 `图片N` 引用应在请求前自动补全 `@`，multipart 顺序应写进编号说明，单图编辑还应明确要求基于原图且保留未指定修改的主体、人物数量、姿态、服装、场景、构图与画风。本地 `blob:` / IndexedDB 参考图必须转成标准 JPEG、PNG 或 WebP 文件后再发送；无效 Base64、空图片和单张超过 10MB 应在前端直接显示中文错误。
 
 - 沧元算力视频进度显示：视频生成轮询 `/v1/videos/{task_id}` 时应读取平台返回的 `progress`，节点进度文案显示真实百分比；任务完成仍优先取 `video_url`，失败时应尽量展示 `error.message` 和 `error_code`，便于判断是排队、生成中、素材不合规还是内容策略拦截。
 
