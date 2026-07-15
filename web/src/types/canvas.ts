@@ -157,6 +157,8 @@ export type StoryboardDramaturgyPlan = {
 
 export type StoryboardShotPlan = {
     sourceBeatIds: string[];
+    visualBeatIds?: string[];
+    voiceoverBeatIds?: string[];
     continuityGroupId: string;
     timeStage: string;
     startState: string;
@@ -170,6 +172,11 @@ export type StoryboardShotPlan = {
     dramaticFunction?: StoryboardDramaturgyPhase["phase"];
     goal?: string;
     obstacle?: string;
+    stakes?: string;
+    tactic?: string;
+    actionBeats?: string[];
+    obstacleReaction?: string;
+    turningAction?: string;
     result?: string;
     plotRhythm?: StoryboardDramaturgyPhase["plotRhythm"];
     emotionRhythm?: StoryboardDramaturgyPhase["emotionRhythm"];

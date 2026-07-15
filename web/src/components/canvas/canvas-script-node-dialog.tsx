@@ -554,6 +554,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                         </span>
                                         {plans[String(rowIndex)]?.chapterTitle ? <div className="mt-1 truncate text-[#858585]" title={plans[String(rowIndex)]?.chapterTitle}>{plans[String(rowIndex)]?.chapterTitle}</div> : null}
                                         {plans[String(rowIndex)]?.dramaticFunction ? <div className="mt-1 truncate font-semibold text-amber-200/80" title={storyboardShotDramaturgyTitle(plans[String(rowIndex)])}>{dramaticFunctionLabel(plans[String(rowIndex)]?.dramaticFunction)}</div> : null}
+                                        {plans[String(rowIndex)]?.visualBeatIds?.length ? <div className="mt-1 truncate text-[10px] text-emerald-200/70" title={storyboardShotFactRoleTitle(plans[String(rowIndex)])}>1 个主要画面 · {plans[String(rowIndex)]?.voiceoverBeatIds?.length || 0} 个旁白事实</div> : null}
                                     </div>
                                     <div className="flex items-center justify-center gap-1.5">
                                         <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="打开合成提示词" onClick={() => onOpenPrompt(rowIndex)} />
@@ -608,7 +609,12 @@ function dramaticFunctionLabel(value?: string) {
 
 function storyboardShotDramaturgyTitle(plan?: StoryboardShotPlan) {
     if (!plan) return "";
-    return [`功能：${dramaticFunctionLabel(plan.dramaticFunction)}`, plan.goal ? `目标：${plan.goal}` : "", plan.obstacle ? `阻碍：${plan.obstacle}` : "", plan.result ? `结果：${plan.result}` : "", plan.valueShift ? `变化：${plan.valueShift}` : "", `节奏：${plan.plotRhythm || "medium"} / ${plan.emotionRhythm || "medium"}`].filter(Boolean).join("\n");
+    return [`功能：${dramaticFunctionLabel(plan.dramaticFunction)}`, plan.goal ? `目标：${plan.goal}` : "", plan.obstacle ? `阻碍：${plan.obstacle}` : "", plan.stakes ? `代价：${plan.stakes}` : "", plan.tactic ? `策略：${plan.tactic}` : "", plan.actionBeats?.length ? `动作：${plan.actionBeats.join(" → ")}` : "", plan.obstacleReaction ? `反作用：${plan.obstacleReaction}` : "", plan.turningAction ? `动作转折：${plan.turningAction}` : "", plan.result ? `结果：${plan.result}` : "", plan.valueShift ? `变化：${plan.valueShift}` : "", `节奏：${plan.plotRhythm || "medium"} / ${plan.emotionRhythm || "medium"}`].filter(Boolean).join("\n");
+}
+
+function storyboardShotFactRoleTitle(plan?: StoryboardShotPlan) {
+    if (!plan) return "";
+    return [`主要可见事实：${plan.visualBeatIds?.join("、") || "未指定"}`, `旁白承载事实：${plan.voiceoverBeatIds?.join("、") || "无"}`].join("\n");
 }
 
 function productionModeLabel(mode?: string) {

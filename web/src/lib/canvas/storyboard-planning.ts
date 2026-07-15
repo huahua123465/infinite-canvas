@@ -82,6 +82,28 @@ export function parseStoryboardDramaturgyPlan(content: string, beats: Storyboard
     };
 }
 
+export function storyboardDramaturgyQualityIssues(plan: StoryboardDramaturgyPlan, beats: StoryboardSourceBeat[]) {
+    const beatOrder = new Map(beats.map((beat, index) => [beat.id, index]));
+    const structuralGroups = [plan.incitingBeatIds, plan.turningBeatIds, plan.climaxBeatIds, plan.endingBeatIds].filter((ids) => ids.length);
+    const causalOrderBroken = structuralGroups.some((ids, index) => {
+        if (!index) return false;
+        const previous = structuralGroups[index - 1].map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER);
+        const current = ids.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER);
+        return Math.max(...previous) > Math.min(...current);
+    });
+    return [
+        !plan.want ? "缺少主角可见的外在目标" : "",
+        !plan.need ? "缺少有事实边界的内在变化" : "",
+        !plan.turningBeatIds.length ? "缺少关键转折事实" : "",
+        !plan.climaxBeatIds.length ? "缺少高潮事实" : "",
+        !plan.endingBeatIds.length ? "缺少结局事实" : "",
+        !plan.arcSummary ? "缺少起点到终点的人物变化" : "",
+        plan.rhythmPlan.length < 3 ? "双轨节奏阶段少于3个" : "",
+        !plan.dialoguePrinciples.length ? "缺少对白旁白原则" : "",
+        causalOrderBroken ? "激励、转折、高潮或结局的事实顺序倒置" : "",
+    ].filter(Boolean);
+}
+
 export function parsePlannedStoryboardShots(content: string): PlannedStoryboardShot[] {
     const data = parseJson(content) as { shots?: unknown[] } | unknown[];
     const records = Array.isArray(data) ? data : data.shots;
@@ -96,6 +118,8 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
             row,
             plan: {
                 sourceBeatIds: stringList(item.sourceBeatIds),
+                visualBeatIds: stringList(item.visualBeatIds),
+                voiceoverBeatIds: stringList(item.voiceoverBeatIds),
                 continuityGroupId: text(item.continuityGroupId),
                 timeStage: text(item.timeStage),
                 startState: text(item.startState),
@@ -106,12 +130,39 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
                 dramaticFunction: normalizeDramaturgyPhase(item.dramaticFunction),
                 goal: text(item.goal),
                 obstacle: text(item.obstacle),
+                stakes: text(item.stakes),
+                tactic: text(item.tactic),
+                actionBeats: stringList(item.actionBeats).slice(0, 4),
+                obstacleReaction: text(item.obstacleReaction),
+                turningAction: text(item.turningAction),
                 result: text(item.result),
                 plotRhythm: normalizePlotRhythm(item.plotRhythm),
                 emotionRhythm: normalizeEmotionRhythm(item.emotionRhythm),
                 valueShift: text(item.valueShift),
             },
         }];
+    });
+}
+
+export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
+    return shots.flatMap((shot, index) => {
+        const plan = shot.plan;
+        const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
+        const issues = [
+            plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
+            !plan.goal ? "缺少当前可见目标" : "",
+            !plan.obstacle ? "缺少可见阻力或压力" : "",
+            !plan.stakes ? "缺少失败代价" : "",
+            !plan.tactic ? "缺少人物采取的具体策略" : "",
+            (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
+            !plan.obstacleReaction ? "缺少阻力反作用" : "",
+            !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
+            !plan.result ? "缺少可见结果" : "",
+            !plan.valueShift ? "缺少价值变化" : "",
+            !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
+            abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
+        ].filter(Boolean);
+        return issues.length ? [`片段${index + 1}：${issues.join("、")}`] : [];
     });
 }
 
@@ -163,8 +214,7 @@ export function storyboardEpisodeClipTarget(mode: StoryboardProductionMode, epis
 
 export function storyboardEpisodeClipRange(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
     const target = storyboardEpisodeClipTarget(mode, episodeDurationSeconds, customBudget);
-    if (mode === "custom") return { min: target, max: target };
-    return { min: Math.max(2, target - 2), max: mode === "economy" ? target : target + (mode === "detailed" ? 2 : 1) };
+    return { min: target, max: target };
 }
 
 export function storyboardSingleEpisodeBeatTarget(mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
@@ -173,15 +223,15 @@ export function storyboardSingleEpisodeBeatTarget(mode: StoryboardProductionMode
 }
 
 export function storyboardPlanningConfigKey(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
-    return `${scope}/${mode}/${Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90))}/${mode === "custom" ? Number(customBudget) || 8 : "auto"}`;
+    return `scene-contract-v2/${scope}/${mode}/${Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90))}/${mode === "custom" ? Number(customBudget) || 8 : "auto"}`;
 }
 
 export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
     const seconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
     const target = storyboardEpisodeClipTarget(mode, seconds, customBudget);
     const clipSeconds = Math.max(8, Math.min(15, Math.round(seconds / target)));
-    if (scope === "single") return `这是整篇故事的单集浓缩生产：只生成 1 集，总时长约 ${seconds} 秒，必须输出约 ${target} 个视频片段，每个片段约 ${clipSeconds} 秒。当前输入已经浓缩为核心事实，每个片段合并覆盖 2-4 个相邻核心事实，用旁白、蒙太奇和直接动作形成完整起承转合；跨度较长时允许在一个片段内用蒙太奇表现时间推进，但首帧只锁定开场时空，转折必须清楚。不得重新扩写成多集，不得为一句旁白或一个微小动作单独拆片段。`;
-    return `按漫剧单集生产规划：每集约 ${seconds} 秒，目标约 ${target} 个视频片段，每个片段约 ${clipSeconds} 秒。一个片段必须合并覆盖 2-4 个时间、地点和人物状态相容的相邻事实；旁白、背景交代和情绪停留可与同场景动作合并，不得再按一事实一片段拆分。`;
+    if (scope === "single") return `这是整篇故事的单集浓缩生产：只生成 1 集，总时长约 ${seconds} 秒，动态视频预算固定为 ${target} 个片段，每个片段约 ${clipSeconds} 秒。不得因为跨地点或事实较多而增加片段数；每个片段只选择 1 个同地点、同人物时期的主要可见事实，其余相邻背景事实只能由旁白承载且不得要求画面切换。无法放入预算的次要细节继续浓缩，不得重新扩写成多集或把多个地点塞进同一视频。`;
+    return `按漫剧单集生产规划：每集约 ${seconds} 秒，动态视频预算固定为约 ${target} 个片段，每个片段约 ${clipSeconds} 秒。每个片段只选择 1 个同地点、同人物时期的主要可见事实；相邻背景事实可由旁白承载，但不得要求画面切换到另一地点或人物时期，也不得按一事实一片段无限拆分。`;
 }
 
 function storyboardClipDuration(value?: string) {
@@ -216,7 +266,11 @@ export function plannedShotsForBeats(shots: PlannedStoryboardShot[], beats: Stor
     const allowedIds = new Set(beats.map((beat) => beat.id));
     return shots.flatMap((shot) => {
         const sourceBeatIds = shot.plan.sourceBeatIds.filter((id) => allowedIds.has(id));
-        return sourceBeatIds.length ? [{ ...shot, plan: { ...shot.plan, sourceBeatIds } }] : [];
+        if (!sourceBeatIds.length) return [];
+        const visualBeatIds = (shot.plan.visualBeatIds || []).filter((id) => sourceBeatIds.includes(id)).slice(0, 1);
+        const resolvedVisualBeatIds = visualBeatIds.length ? visualBeatIds : sourceBeatIds.slice(0, 1);
+        const voiceoverBeatIds = (shot.plan.voiceoverBeatIds || []).filter((id) => sourceBeatIds.includes(id) && !resolvedVisualBeatIds.includes(id));
+        return [{ ...shot, plan: { ...shot.plan, sourceBeatIds, visualBeatIds: resolvedVisualBeatIds, voiceoverBeatIds: voiceoverBeatIds.length ? voiceoverBeatIds : sourceBeatIds.filter((id) => !resolvedVisualBeatIds.includes(id)) } }];
     });
 }
 
