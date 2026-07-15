@@ -150,7 +150,7 @@ export const MODEL_SCRIPT_VARIABLES: ModelScriptVariable[] = [
     { name: "prompt", type: "string", desc: "本次生成提示词", capabilities: ["image", "video", "audio"] },
     { name: "images", type: "string[]", desc: "参考图 dataURL 数组", capabilities: ["image", "video"] },
     { name: "messages", type: "{ role, content }[]", desc: "文本对话消息数组", capabilities: ["text"] },
-    { name: "params", type: "object", desc: "当前媒体类型的尺寸、数量、时长、音色等参数" },
+    { name: "params", type: "object", desc: "当前媒体类型的尺寸、数量、蒙版、时长、音色等参数" },
     { name: "model", type: "string", desc: "当前请求模型名，不含渠道前缀" },
     { name: "baseUrl", type: "string", desc: "当前渠道 Base URL" },
     { name: "apiKey", type: "string", desc: "当前渠道 API Key" },
@@ -193,6 +193,9 @@ form.set("n", String(params.count));
 form.set("response_format", "b64_json");
 for (const dataUrl of images) {
   form.append("image", await (await fetch(dataUrl)).blob(), "ref.png");
+}
+if (params.mask) {
+  form.set("mask", await (await fetch(params.mask)).blob(), "mask.png");
 }
 const edited = await http.post("/images/edits", form);
 return (edited.data || []).map((item) => item.b64_json
