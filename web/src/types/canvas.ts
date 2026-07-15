@@ -290,7 +290,7 @@ export type CanvasNodeMetadata = {
     storyboardVideoConfigCustomized?: boolean;
     videoGenerationProgress?: VideoGenerationProgress;
     videoTaskId?: string;
-    videoTaskProvider?: "openai" | "seedance" | "cangyuan";
+    videoTaskProvider?: "openai" | "seedance" | "cangyuan" | "script";
     videoTaskModel?: string;
     videoTaskEndpoint?: "videos" | "video-generations";
     videoTaskSubmittedAt?: string;
