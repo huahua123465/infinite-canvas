@@ -346,7 +346,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         />
                     ) : null}
                     {previewSceneSheetAsset?.sceneSheetUrl ? (
-                        <Modal open centered footer={null} width="90vw" closeIcon={<X className="size-5" />} onCancel={() => setPreviewSceneSheetAssetId(null)} styles={{ content: { background: "#151515", padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
+                        <Modal open centered footer={null} width="90vw" closeIcon={<X className="size-5" />} onCancel={() => setPreviewSceneSheetAssetId(null)} styles={{ container: { background: "#151515", padding: 0, overflow: "hidden" }, body: { padding: 0 } }}>
                             <div className="flex h-[85vh] flex-col bg-[#151515]">
                                 <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[#2e2e2e] px-5 pr-12">
                                     <div className="min-w-0">

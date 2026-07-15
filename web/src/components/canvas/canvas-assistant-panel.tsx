@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import copyToClipboard from "copy-to-clipboard";
 import { Bot, Copy, Cpu, History, PanelRightClose, Plus, Settings2, Trash2, X } from "lucide-react";
-import { Button, Modal, Segmented, Select, Switch, Tooltip } from "antd";
+import { Button, Modal, Segmented, Select, Switch, Tooltip, type SelectProps } from "antd";
 import { motion } from "motion/react";
 
 import { modelOptionName, normalizeModelOptionValue, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -652,14 +652,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
                     </div>
                 </header>
                 {agentMode === "local" ? (
-                    <CanvasLocalAgentPanel
-                        embedded
-                        snapshot={snapshot}
-                        canUndoOps={canUndoOps}
-                        onApplyOps={onApplyOps}
-                        onUndoOps={onUndoOps}
-                        autoConnect={autoConnectLocal}
-                    />
+                    <CanvasLocalAgentPanel embedded autoConnect={autoConnectLocal} />
                 ) : (
                     onlineContent
                 )}
@@ -671,7 +664,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
 function AgentTextModelPicker({ config, value, onChange }: { config: AiConfig; value: string; onChange: (model: string) => void }) {
     const options = useMemo(() => Array.from(new Set([value, ...selectableModelsByCapability(config, "text")].filter(Boolean))), [config, value]);
     const current = value || "";
-    const selectOptions = useMemo(
+    const selectOptions = useMemo<NonNullable<SelectProps<string>["options"]>>(
         () => options.map((model) => ({ value: model, label: <AgentModelLabel config={config} model={model} /> })),
         [config, options],
     );
@@ -686,7 +679,6 @@ function AgentTextModelPicker({ config, value, onChange }: { config: AiConfig; v
             placeholder="选择文本模型"
             options={selectOptions.length ? selectOptions : [{ value: "__empty_text_model__", label: "暂无文本模型", disabled: true }]}
             onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
             onChange={onChange}
         />
     );

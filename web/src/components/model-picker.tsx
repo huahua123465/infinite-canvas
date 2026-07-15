@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Select } from "antd";
+import { Select, type SelectProps } from "antd";
 import { Cpu } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -34,7 +34,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             ),
         [config, options],
     );
-    const selectOptions = useMemo(
+    const selectOptions = useMemo<NonNullable<SelectProps<string>["options"]>>(
         () =>
             options.map((model) => {
                 const channel = resolveModelChannel(config, model);
@@ -73,7 +73,6 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 if (open && !options.length && config.channelMode === "local") onMissingConfig?.();
             }}
             onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
             onChange={onChange}
         />
     );

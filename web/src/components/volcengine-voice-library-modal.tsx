@@ -78,7 +78,7 @@ export function VolcengineVoiceLibraryModal({ open, config, modelValue, currentS
             closeIcon={<X className="size-5" />}
             onCancel={onClose}
             modalRender={(modal) => <div style={draggable.style}>{modal}</div>}
-            styles={{ mask: { background: "rgba(0,0,0,.68)" }, content: { padding: 0, overflow: "hidden", borderRadius: 12, background: "#172325" }, body: { padding: 0 } }}
+            styles={{ mask: { background: "rgba(0,0,0,.68)" }, container: { padding: 0, overflow: "hidden", borderRadius: 12, background: "#172325" }, body: { padding: 0 } }}
         >
             <div className={`flex max-h-[82vh] flex-col border border-cyan-500/20 bg-[#172325] text-cyan-50 ${draggable.handleProps.className}`} onPointerDown={draggable.handleProps.onPointerDown}>
                 <div {...draggable.handleProps} className={`border-b border-cyan-500/15 px-5 py-4 pr-12 ${draggable.handleProps.className}`}>

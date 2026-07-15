@@ -943,7 +943,7 @@ function InfiniteCanvasPage() {
             tailFrameBackfillRef.current.add(node.id);
             void extractVideoLastFrame({
                 url: node.metadata?.content || "",
-                storageKey: node.metadata?.storageKey,
+                storageKey: node.metadata?.storageKey || "",
                 width: node.metadata?.naturalWidth || node.width,
                 height: node.metadata?.naturalHeight || node.height,
                 bytes: node.metadata?.bytes || 0,
@@ -1062,7 +1062,7 @@ function InfiniteCanvasPage() {
             setConnections(nextConnections);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== CanvasNodeType.Group) setDialogNodeId(newNode.id);
+            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
         },
@@ -1276,7 +1276,7 @@ function InfiniteCanvasPage() {
     const createNode = useCallback(
         (type: CanvasNodeType, position?: Position) => {
             const targetPosition = position || getCanvasCenter();
-            const configMetadata =
+            const configMetadata: CanvasNodeMetadata | undefined =
                 type === CanvasNodeType.Config
                     ? {
                           model: effectiveConfig.imageModel || effectiveConfig.model,
@@ -1293,7 +1293,7 @@ function InfiniteCanvasPage() {
             setSelectedConnectionId(null);
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, effectiveConfig.textModel, getCanvasCenter],
     );
 
     const createCharacterReferenceCardNode = useCallback(
@@ -3472,7 +3472,7 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt } } : node)));
     }, []);
 
-    const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => {
+    const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeMetadata>) => {
         setNodes((prev) => {
             const sourceNode = prev.find((node) => node.id === nodeId);
             if (!sourceNode) return prev;
@@ -4294,15 +4294,16 @@ function InfiniteCanvasPage() {
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const shouldUseCurrentImageAsReference = Boolean(options?.useCurrentImageAsReference || (isImageNode && sourceNode?.metadata?.content && !sourceNode.metadata?.generationType));
-                    let restoredReferenceImages: ReferenceImage[] | null | undefined;
+                    let restoredReferenceImages: ReferenceImage[] | undefined;
                     if (isImageNode && sourceNode?.metadata?.generationType && !options?.useCurrentImageAsReference) {
-                        restoredReferenceImages = await resolveMetadataReferences(sourceNode.metadata);
-                        if (restoredReferenceImages === null) {
+                        const restored = await resolveMetadataReferences(sourceNode.metadata);
+                        if (restored === null) {
                             message.error("原始参考图已丢失，无法重新生成；可以点“续修”改为基于当前图继续修改");
                             finishGenerationRequest(nodeId, runController);
                             setRunningNodeId(null);
                             return;
                         }
+                        restoredReferenceImages = restored;
                     }
                     const sourceReference =
                         shouldUseCurrentImageAsReference && sourceNode?.metadata?.content
@@ -5282,7 +5283,7 @@ function InfiniteCanvasPage() {
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 deleteNodes(new Set([contextMenu.nodeId]));
-                            } else {
+                            } else if (contextMenu.type === "connection") {
                                 deleteConnection(contextMenu.connectionId);
                             }
                             setContextMenu(null);
@@ -6160,14 +6161,14 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
     };
 }
 
-function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
+function resetInterruptedGeneration(nodes: CanvasNodeData[]): CanvasNodeData[] {
     return nodes.map((node) => {
         const hasInterruptedAssets = node.type === CanvasNodeType.Script && (node.metadata?.storyboardAssets || []).some((asset) => asset.status === NODE_STATUS_LOADING);
-        if (node.type === CanvasNodeType.Script && (node.metadata?.storyboardAssetBatchProgress?.status === "running" || hasInterruptedAssets)) {
+        if (node.type === CanvasNodeType.Script && node.metadata && (node.metadata.storyboardAssetBatchProgress?.status === "running" || hasInterruptedAssets)) {
             const assets = (node.metadata.storyboardAssets || []).map((asset) => asset.status === NODE_STATUS_LOADING ? { ...asset, status: NODE_STATUS_IDLE, errorDetails: undefined } : asset);
             const completed = assets.filter(storyboardAssetReady).length;
             const failed = assets.filter((asset) => asset.status === NODE_STATUS_ERROR).length;
-            return { ...node, metadata: { ...node.metadata, storyboardAssets: assets, storyboardAssetBatchProgress: { status: "interrupted", total: assets.length, completed, failed } } };
+            return { ...node, metadata: { ...node.metadata, storyboardAssets: assets, storyboardAssetBatchProgress: { status: "interrupted" as const, total: assets.length, completed, failed } } };
         }
         if (node.metadata?.status !== NODE_STATUS_LOADING) return node;
         if (node.type === CanvasNodeType.Video && node.metadata.videoTaskId && !node.metadata.content) {
@@ -6805,6 +6806,8 @@ function isSafetyGenerationError(error: unknown) {
     return /safety system|rejected by the safety|content policy|content review|moderation|内容审查|内容安全|安全系统/i.test(raw);
 }
 
+type ResolvedStoryboardReference = { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] };
+
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
     const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
     const promptText = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
@@ -6813,7 +6816,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
     const mentionNodeIds = scriptNode.metadata?.storyboardAssetMentionNodeIds || {};
     const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
     const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
-    const resolved = new Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] }>();
+    const resolved = new Map<string, ResolvedStoryboardReference>();
     const linkByMention = new Map(storyboardPromptAssetLinks(detail).map((link) => [link.mention, link]));
     for (const mention of mentions) {
         const asset = assetByName.get(mention);
@@ -6924,13 +6927,13 @@ function storyboardCompletedPromptDetailForRow(scriptNode: CanvasNodeData, rowIn
     return completeStoryboardPromptDetailAssets(scriptNode, parseStoryboardRows(scriptNode.metadata?.storyboardRows), rowIndex, detail);
 }
 
-function storyboardSceneContinuityAssetReferences(scriptNode: CanvasNodeData, current: Map<string, { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] }>, nodes: CanvasNodeData[]) {
+function storyboardSceneContinuityAssetReferences(scriptNode: CanvasNodeData, current: Map<string, ResolvedStoryboardReference>, nodes: CanvasNodeData[]): ResolvedStoryboardReference[] {
     const sceneGroups = new Set(Array.from(current.values()).filter((item) => item.kind === "scene" && item.sceneGroupId).map((item) => item.sceneGroupId || ""));
     if (!sceneGroups.size) return [];
     const currentNodeIds = new Set(Array.from(current.values()).map((item) => item.node?.id).filter(Boolean));
     return nodes
         .filter((node) => node.type === CanvasNodeType.Image && node.metadata?.sceneGroupId && sceneGroups.has(node.metadata.sceneGroupId) && !currentNodeIds.has(node.id) && (node.metadata.content || node.metadata.storageKey))
-        .map((node) => {
+        .map((node): ResolvedStoryboardReference | null => {
             const reference = referenceImageFromCanvasNode(node);
             if (!reference) return null;
             return {
@@ -6943,7 +6946,7 @@ function storyboardSceneContinuityAssetReferences(scriptNode: CanvasNodeData, cu
                 sceneViewRole: node.metadata?.sceneViewRole,
             };
         })
-        .filter((item): item is { mention: string; node: CanvasNodeData; reference: ReferenceImage; source: StoryboardVideoReference["source"]; kind: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] } => Boolean(item))
+        .filter((item): item is ResolvedStoryboardReference => item !== null)
         .sort((a, b) => sceneViewSortWeight(a.sceneViewRole) - sceneViewSortWeight(b.sceneViewRole));
 }
 
@@ -7983,7 +7986,7 @@ function normalizeStoryboardAsset(item: unknown, index: number, fallbackKind?: S
     const prompt = safetyNeutralStoryboardPrompt(readStringField(record, ["prompt", "提示词", "生成提示词", "imagePrompt", "生图提示词"]).trim() || description);
     const baseName = kind === "character" ? readStringField(record, ["baseName", "本名", "角色本名", "人物本名"]).trim() : "";
     const lifeStage = kind === "character" ? readStringField(record, ["lifeStage", "年龄状态", "时期", "阶段", "state", "ageStage"]).trim() : "";
-    const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, baseName: baseName || undefined, lifeStage: lifeStage || inferStoryboardCharacterLifeStage({ id: "", kind, name, description, prompt }), description, prompt, status: NODE_STATUS_IDLE };
+    const base = { id: `asset-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`, kind, name, baseName: baseName || undefined, lifeStage: lifeStage || inferStoryboardCharacterLifeStage({ name, description, prompt }), description, prompt, status: NODE_STATUS_IDLE };
     return base;
 }
 

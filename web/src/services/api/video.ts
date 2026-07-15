@@ -40,7 +40,8 @@ type VideoResponse = {
     raw_data?: { video_url?: string; url?: string };
     data?: VideoResponseData[] | VideoResponseData;
 };
-type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
+type ApiVideoEnvelope = { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
+type ApiVideoResponse = VideoResponse | ApiVideoEnvelope;
 type SeedanceTask = {
     id: string;
     status?: "queued" | "running" | "succeeded" | "completed" | "failed" | "cancelled" | "expired";
@@ -613,8 +614,18 @@ function normalizeProgress(value: unknown) {
     return Number.isFinite(numberValue) ? Math.max(0, Math.min(100, numberValue)) : undefined;
 }
 
-function unwrapVideoResponse(payload: ApiVideoResponse) {
-    return unwrapEnvelope(payload, "接口没有返回视频任务");
+function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
+    if (!payload) throw new Error("接口没有返回视频任务");
+    if (isApiVideoEnvelope(payload)) {
+        if (payload.code !== 0 && payload.code !== "0") throw new Error(payload.msg || payload.message || payload.error?.message || "请求失败");
+        if (!payload.data) throw new Error("接口没有返回视频任务");
+        return payload.data;
+    }
+    return payload;
+}
+
+function isApiVideoEnvelope(payload: ApiVideoResponse): payload is ApiVideoEnvelope {
+    return "code" in payload && payload.code !== undefined;
 }
 
 function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {

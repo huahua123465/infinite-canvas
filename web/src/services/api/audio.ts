@@ -649,12 +649,12 @@ function volcengineSpeechRate(value: string) {
 async function normalizeVolcengineAudioBlob(blob: Blob, format: string) {
     const mimeType = audioMimeType(format);
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    if (looksLikeAudioFile(bytes)) return new Blob([bytes], { type: blob.type.startsWith("audio/") ? blob.type : mimeType });
+    if (looksLikeAudioFile(bytes)) return new Blob([Uint8Array.from(bytes)], { type: blob.type.startsWith("audio/") ? blob.type : mimeType });
     const chunks = extractVolcengineAudioChunks(bytes);
-    if (chunks.length) return new Blob(chunks, { type: mimeType });
+    if (chunks.length) return new Blob(chunks.map((chunk) => Uint8Array.from(chunk)), { type: mimeType });
     const jsonChunks = extractVolcengineJsonAudioChunks(bytes);
-    if (jsonChunks.length) return new Blob(jsonChunks, { type: mimeType });
-    return blob.type.startsWith("audio/") ? blob : new Blob([bytes], { type: mimeType });
+    if (jsonChunks.length) return new Blob(jsonChunks.map((chunk) => Uint8Array.from(chunk)), { type: mimeType });
+    return blob.type.startsWith("audio/") ? blob : new Blob([Uint8Array.from(bytes)], { type: mimeType });
 }
 
 function looksLikeAudioFile(bytes: Uint8Array) {
