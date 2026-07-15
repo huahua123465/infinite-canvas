@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
-import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CircleAlert, Cloud, Code2, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
@@ -11,6 +11,9 @@ import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webd
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
 import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { createModelChannel, defaultBaseUrlForApiFormat, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, suggestModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { readModelScript, useModelScriptStore } from "@/stores/use-model-script-store";
+
+const ModelScriptEditor = lazy(() => import("./model-script-editor").then((module) => ({ default: module.ModelScriptEditor })));
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -50,6 +53,8 @@ const webdavDomainLabels: Record<AppSyncDomainKey, string> = {
     "video-workbench": "视频创作台",
 };
 
+type ScriptTarget = { capability: ModelCapability; model: string; label: string; value: string };
+
 function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProgress> {
     return webdavDomainKeys.reduce(
         (progress, key) => ({
@@ -72,6 +77,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
+    const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
@@ -81,6 +87,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
+    const modelScripts = useModelScriptStore((state) => state.scripts);
+    const setModelScript = useModelScriptStore((state) => state.setScript);
     const modelOptions = config.models.map((model) => ({ label: modelOptionLabel(config, model), value: model }));
     const webdavReady = Boolean(webdav.url.trim());
     const audioProvider = resolveAudioProvider(config, config.audioModel || config.model);
@@ -333,6 +341,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </Form.Item>
                                     ))}
                                 </div>
+                                <ModelScriptSettings config={config} scripts={modelScripts} onEdit={setScriptTarget} />
                             </Form>
                         ),
                     },
@@ -438,6 +447,18 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                 ]}
             />
             <VolcengineVoiceLibraryModal open={voiceLibraryOpen} config={config} currentSpeaker={volcengineSpeaker} onClose={() => setVoiceLibraryOpen(false)} onSelect={(value) => updateConfig("audioVoice", value)} />
+            {scriptTarget ? (
+                <Suspense fallback={null}>
+                    <ModelScriptEditor
+                        open
+                        capability={scriptTarget.capability}
+                        modelName={scriptTarget.label}
+                        value={scriptTarget.value}
+                        onSave={(script) => setModelScript(scriptTarget.capability, scriptTarget.model, script)}
+                        onClose={() => setScriptTarget(null)}
+                    />
+                </Suspense>
+            ) : null}
             {showDoneButton ? (
                 <div className="mt-4 flex justify-end">
                     <Button type="primary" onClick={finishConfig}>
@@ -471,6 +492,42 @@ export function AppConfigModal() {
         >
             <AppConfigPanel showDoneButton initialTab={configTab} />
         </Modal>
+    );
+}
+
+function ModelScriptSettings({ config, scripts, onEdit }: { config: AiConfig; scripts: Record<string, string>; onEdit: (target: ScriptTarget) => void }) {
+    return (
+        <section className="mt-5 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+            <div className="mb-3 flex items-start gap-2">
+                <Code2 className="mt-0.5 size-4 shrink-0" />
+                <div>
+                    <div className="text-sm font-semibold">模型调用脚本</div>
+                    <div className="mt-1 text-xs leading-5 text-stone-500">按媒体类型为模型设置自定义请求；留空继续使用当前 OpenAI、Gemini、Ark、沧元、Seedance、火山或本地原生渠道。脚本可以读取当前渠道 API Key，只应使用可信代码。</div>
+                </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+                {modelGroups.map((group) => (
+                    <div key={group.capability} className="rounded-md border border-stone-200 p-2 dark:border-stone-800">
+                        <div className="mb-2 text-xs font-semibold">{group.optionsLabel}</div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {config[group.modelsKey].length ? (
+                                config[group.modelsKey].map((model) => {
+                                    const script = readModelScript(scripts, group.capability, model);
+                                    const label = modelOptionLabel(config, model);
+                                    return (
+                                        <Button key={model} size="small" type={script ? "primary" : "default"} ghost={Boolean(script)} onClick={() => onEdit({ capability: group.capability, model, label, value: script })}>
+                                            {label}{script ? " · 已设" : ""}
+                                        </Button>
+                                    );
+                                })
+                            ) : (
+                                <span className="px-1 text-xs text-stone-500">尚未选择模型</span>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
     );
 }
 
