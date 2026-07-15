@@ -17,6 +17,7 @@ import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { classifyVideoFailure, createVideoGenerationTask, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
@@ -96,6 +97,10 @@ export default function VideoPage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [autoRunToken, setAutoRunToken] = useState(0);
+    const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
+    const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
+    const processedCommandRef = useRef(0);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
@@ -202,6 +207,20 @@ export default function VideoPage() {
             setRunning(false);
         }
     };
+
+    useEffect(() => {
+        if (!videoCommand || videoCommand.nonce === processedCommandRef.current) return;
+        processedCommandRef.current = videoCommand.nonce;
+        clearVideoCommand();
+        if (typeof videoCommand.prompt === "string") setPrompt(videoCommand.prompt);
+        if (videoCommand.run && !running) setAutoRunToken((value) => value + 1);
+    }, [videoCommand, clearVideoCommand, running]);
+
+    useEffect(() => {
+        if (!autoRunToken) return;
+        void generate();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoRunToken]);
 
     const buildRequestSnapshot = () => {
         const text = prompt.trim();

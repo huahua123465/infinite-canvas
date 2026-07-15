@@ -5,7 +5,7 @@ import { assertVideoGenerationParameters } from "@/lib/video-generation-prefligh
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
+import { useAgentStore } from "@/stores/use-agent-store";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -470,7 +470,7 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
 }
 
 async function downloadVideoViaAgent(url: string, options?: RequestOptions) {
-    const agent = useCanvasAgentStore.getState();
+    const agent = useAgentStore.getState();
     const endpoint = agent.url.trim().replace(/\/$/, "");
     const token = agent.token.trim();
     if (!endpoint || !token || !isPublicMediaUrl(url)) return null;

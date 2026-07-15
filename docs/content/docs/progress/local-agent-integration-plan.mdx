@@ -1,17 +1,17 @@
 ---
 title: 本地 Agent 接入规划
-description: 规划通过本地 Canvas Agent、MCP 和侧边栏助手连接 Codex / Claude Code 操作画布
+description: 规划通过本地 Canvas Agent、MCP 和全站侧边栏助手连接 Codex / Claude Code 操作网站与画布
 ---
 
 # 本地 Agent 接入规划
 
-本文档规划个人用户在访问线上画布网页时，如何连接自己电脑上的 Codex / Claude Code，并让 Agent 通过对话和工具调用操作当前画布。
+本文档规划个人用户在访问 Infinite Canvas 网站时，如何连接自己电脑上的 Codex / Claude Code，并让 Agent 通过对话和工具调用操作网站与当前画布。
 
 ## 目标
 
-- 用户打开线上画布后，可以启动本机服务连接当前画布。
+- 用户打开网站后，可以启动本机服务连接全站 Agent；进入画布页时再注册当前画布上下文。
 - 用户可以在 Codex 终端里通过 MCP 操作画布。
-- 用户也可以在网页侧边栏里和本地 Codex / Claude Code 对话。
+- 用户也可以在全站常驻右侧栏里和本地 Codex / Claude Code 对话，跨页面与跨画布续用同一站点级线程。
 - 侧边栏需要展示普通消息、流式输出、工具调用、工具结果和错误提示。
 - 线上服务不保存用户本地 Codex / Claude Code 登录态、API Key 或本地文件权限。
 
@@ -80,7 +80,7 @@ Local URL: http://127.0.0.1:17371
 Connect token: xxxxxx
 ```
 
-网页侧边栏填写或自动发现 `http://127.0.0.1:17371` 和 token 后连接本机服务。
+全站 Agent 侧边栏填写或自动发现 `http://127.0.0.1:17371` 和 token 后连接本机服务；旧配置页 Codex 标签不再承担连接入口。
 
 ## 前端需要增加的能力
 
@@ -144,7 +144,7 @@ codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent mcp
 codex mcp add infinite-canvas -- node /path/to/infinite-canvas/canvas-agent/dist/index.js mcp
 ```
 
-网页侧边栏助手另走 Canvas Agent 的对话通道。Canvas Agent 使用官方 `@openai/codex` CLI 的 `codex app-server --stdio` 启动并续用同一个 thread，启动时会注入 `infinite-canvas` MCP 配置并把 `default_tools_approval_mode` 设为 `approve`，避免 Codex 自己的 MCP 审批卡住侧边栏；真正修改画布前由网页侧边栏做二次确认。
+网页全站侧边栏助手另走 Canvas Agent 的对话通道。Canvas Agent 使用官方 `@openai/codex` CLI 的 `codex app-server --stdio` 启动并续用同一个站点级 thread；页面跳转、画布列表、生图/视频工作台、提示词库和素材通过站点工具执行，画布工具只在画布页注册上下文后可用。真正修改画布前仍由网页侧边栏做二次确认。
 
 侧边栏图片附件通过 HTTP 发送到本机 Canvas Agent，Canvas Agent 临时写入本机文件后作为 app-server `localImage` 输入传给 Codex；MVP 会在输入区提示附件体积，单次请求体限制为 30MB。
 

@@ -3,7 +3,7 @@ import localforage from "localforage";
 
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
-import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
+import { useAgentStore } from "@/stores/use-agent-store";
 
 export type UploadedImage = {
     url: string;
@@ -56,7 +56,7 @@ async function downloadImage(url: string) {
 }
 
 async function downloadImageViaAgent(url: string) {
-    const agent = useCanvasAgentStore.getState();
+    const agent = useAgentStore.getState();
     const endpoint = agent.url.trim().replace(/\/$/, "");
     const token = agent.token.trim();
     if (!endpoint || !token) return null;

@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Clapperboard, Eraser, FileInput, FileText, FolderOpen, Grid2x2, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Clapperboard, Eraser, FileInput, FileText, FolderOpen, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -19,6 +19,7 @@ export function CanvasToolbar({
     onAddText,
     onAddScript,
     onAddConfig,
+    onAddGroup,
     onImportMangaCard,
     onImportMangaStoryboard,
     onImportScene360,
@@ -44,6 +45,7 @@ export function CanvasToolbar({
     onAddText: () => void;
     onAddScript: () => void;
     onAddConfig: () => void;
+    onAddGroup: () => void;
     onImportMangaCard: () => void;
     onImportMangaStoryboard: () => void;
     onImportScene360: () => void;
@@ -102,6 +104,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-config" label="生成配置" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddConfig}>
                     <Settings2 className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-group" label="组" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddGroup}>
+                    <Group className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-manga-card" label="导入角色卡" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onImportMangaCard}>
                     <FileInput className="size-4.5" />
@@ -307,6 +312,7 @@ function toolLabel(id: string) {
     if (id === "tool-video") return "视频";
     if (id === "tool-audio") return "音频";
     if (id === "tool-config") return "生成配置";
+    if (id === "tool-group") return "组";
     if (id === "tool-manga-card") return "导入角色卡";
     if (id === "tool-manga-storyboard") return "导入分镜";
     if (id === "tool-scene-360") return "导入360场景";

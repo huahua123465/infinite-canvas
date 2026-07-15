@@ -53,6 +53,7 @@
 - 样式优先由组件自己管理；组件私有样式优先使用 Tailwind className 或少量内联 style，不要为单个组件新增大量全局 CSS。
 - 全局 CSS 只放基础变量、全局重置、跨页面通用样式和少量第三方组件必要覆盖；不要在 `globals.css` 堆页面私有样式。
 - 代码尽量短小直接，少拆不必要组件，少做多层 props 传递，避免为了抽象堆出更多代码。
+- 修改组件 props 或函数签名时，必须同步清理组件体、effect 依赖和调用处中的旧参数引用，避免通过类型之外的自由变量在运行时触发 `ReferenceError`。
 - 前端业务数据需要浏览器本地持久化时，默认使用 `localforage`；`localStorage` 只用于极小的简单配置，不要用来保存业务列表、生成记录、图片、base64 或大 JSON。
 
 ## 画布 UI 规范
@@ -78,6 +79,14 @@
 - 接口响应规则写到 `docs/content/docs/backend/api-response.mdx`。
 - 数据库结构写到 `docs/content/docs/backend/backend-database.mdx`。
 - 文档不要写过期日期；除非用户明确要求记录具体时间。
+
+### 完成代码后的知识沉淀与收口
+
+- 按实际变更检查并更新 `docs/content/docs/progress/todo.mdx` 和 `docs/content/docs/progress/pending-test.mdx`。
+- 检查本次是否产生新的架构决策、模型实验结论、可复用踩坑、用户需求证据或阶段判断。
+- 存在可复用结论时，使用 `project-notes/90-模板/` 中对应模板更新知识库及其索引；不要把 TODO、待测试清单、功能说明或 CHANGELOG 复制进知识库。
+- 没有知识库更新时，在交付结果中明确说明原因。
+- 交付结果必须说明已完成的更新、仍需验证的部分以及相对上一版本最突出的功能差异。
 
 ## 发版本流程
 
