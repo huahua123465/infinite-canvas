@@ -11,18 +11,35 @@ function normalizePluginUrl(value: string) {
     return url.href;
 }
 
+function normalizeBundledPluginUrl(value: string) {
+    const url = new URL(value, window.location.href);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/plugins/")) throw new Error("内置插件只能从当前站点的 /plugins/ 目录加载");
+    return url.href;
+}
+
 async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
     const runtime = getPluginRuntime();
     const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     try {
-        const module = (await import(/* @vite-ignore */ blobUrl)) as { default?: unknown; plugin?: unknown };
-        const exported = module.default ?? module.plugin;
-        const plugin = typeof exported === "function" ? (exported as CanvasPluginFactory)(runtime) : exported;
-        assertPlugin(plugin);
-        return plugin;
+        return readPluginModule(await import(/* @vite-ignore */ blobUrl), runtime);
     } finally {
         URL.revokeObjectURL(blobUrl);
     }
+}
+
+async function evaluatePluginUrl(inputUrl: string): Promise<CanvasPlugin> {
+    const runtime = getPluginRuntime();
+    const url = new URL(normalizeBundledPluginUrl(inputUrl));
+    url.searchParams.set("plugin_t", String(Date.now()));
+    return readPluginModule(await import(/* @vite-ignore */ url.href), runtime);
+}
+
+function readPluginModule(module: unknown, runtime = getPluginRuntime()) {
+    const value = module as { default?: unknown; plugin?: unknown };
+    const exported = value.default ?? value.plugin;
+    const plugin = typeof exported === "function" ? (exported as CanvasPluginFactory)(runtime) : exported;
+    assertPlugin(plugin);
+    return plugin;
 }
 
 function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
@@ -75,16 +92,16 @@ async function fetchPluginSource(url: string) {
 async function restorePlugin(record?: InstalledPlugin) {
     if (!record?.enabled) return;
     try {
-        activatePlugin(await evaluatePluginSource(record.source));
+        activatePlugin(await loadInstalledPlugin(record));
     } catch (error) {
         console.error(`[plugin] 恢复旧版本失败: ${record.id}`, error);
     }
 }
 
-export async function installPluginFromUrl(inputUrl: string, options?: { official?: boolean; expectedId?: string }) {
+export async function installPluginFromUrl(inputUrl: string, options?: { official?: boolean; bundled?: boolean; expectedId?: string }) {
     const url = normalizePluginUrl(inputUrl);
-    const source = await fetchPluginSource(url);
-    const plugin = await evaluatePluginSource(source);
+    const source = options?.bundled ? "" : await fetchPluginSource(url);
+    const plugin = options?.bundled ? await evaluatePluginUrl(url) : await evaluatePluginSource(source);
     if (options?.expectedId && plugin.id !== options.expectedId) throw new Error(`插件更新后的 id 必须保持为 ${options.expectedId}`);
     const previous = usePluginStore.getState().plugins.find((item) => item.id === plugin.id);
     deactivatePlugin(plugin.id);
@@ -94,12 +111,12 @@ export async function installPluginFromUrl(inputUrl: string, options?: { officia
         await restorePlugin(previous);
         throw error;
     }
-    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: options?.official });
+    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: options?.official, bundled: options?.bundled });
     return plugin;
 }
 
 export async function updatePlugin(record: InstalledPlugin) {
-    return installPluginFromUrl(record.url, { official: record.official, expectedId: record.id });
+    return installPluginFromUrl(record.url, { official: record.official, bundled: record.bundled, expectedId: record.id });
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
@@ -108,8 +125,7 @@ export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean
         usePluginStore.getState().setEnabled(record.id, false);
         return;
     }
-    const source = record.local ? await fetchPluginSource(record.url) : record.source;
-    const plugin = await evaluatePluginSource(source);
+    const plugin = await loadInstalledPlugin(record);
     if (plugin.id !== record.id) throw new Error(`插件 id 已变化，预期 ${record.id}，实际 ${plugin.id}`);
     deactivatePlugin(record.id);
     activatePlugin(plugin);
@@ -132,8 +148,7 @@ export async function ensurePluginsLoaded() {
         await discoverLocalPlugins();
         for (const record of usePluginStore.getState().plugins.filter((item) => item.enabled)) {
             try {
-                const source = record.local ? await fetchPluginSource(record.url) : record.source;
-                activatePlugin(await evaluatePluginSource(source));
+                activatePlugin(await loadInstalledPlugin(record));
             } catch (error) {
                 console.error(`[plugin] 加载失败: ${record.id}`, error);
             }
@@ -143,6 +158,12 @@ export async function ensurePluginsLoaded() {
         loaded = false;
         throw error;
     }
+}
+
+async function loadInstalledPlugin(record: InstalledPlugin) {
+    if (record.bundled) return evaluatePluginUrl(record.url);
+    const source = record.local ? await fetchPluginSource(record.url) : record.source;
+    return evaluatePluginSource(source);
 }
 
 async function discoverLocalPlugins() {

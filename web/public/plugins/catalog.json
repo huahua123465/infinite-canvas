@@ -1,0 +1,10 @@
+{
+    "version": 1,
+    "plugins": [
+        { "id": "sticky-note", "name": "便利贴节点", "version": "1.0.0", "description": "可换色、编辑并衍生文本节点", "icon": "📌", "entry": "sticky-note.js" },
+        { "id": "html", "name": "HTML 节点", "version": "1.0.0", "description": "使用 sandbox 与 CSP 渲染 HTML", "icon": "🌐", "entry": "html.js" },
+        { "id": "markdown", "name": "Markdown 节点", "version": "1.0.0", "description": "使用 marked 解析并经 DOMPurify 净化", "icon": "📝", "entry": "markdown.js" },
+        { "id": "svg", "name": "SVG 节点", "version": "1.0.0", "description": "编辑并安全渲染 SVG", "icon": "🔷", "entry": "svg.js" },
+        { "id": "panorama", "name": "3D 全景节点", "version": "1.0.0", "description": "使用仓库内置 Three.js 查看 360° 全景", "icon": "🌐", "entry": "panorama.js" }
+    ]
+}

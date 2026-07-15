@@ -4,7 +4,7 @@ import { AlertTriangle, Download, Puzzle, RefreshCw, Trash2 } from "lucide-react
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
-import { fetchOfficialPlugins, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
+import { fetchBundledPlugins, fetchOfficialPlugins, type BundledPluginEntry, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -15,13 +15,28 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const [url, setUrl] = useState("");
     const [installing, setInstalling] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
+    const [bundled, setBundled] = useState<BundledPluginEntry[]>([]);
+    const [bundledError, setBundledError] = useState<string | null>(null);
+    const [loadingBundled, setLoadingBundled] = useState(false);
     const [official, setOfficial] = useState<OfficialPluginEntry[]>([]);
     const [officialError, setOfficialError] = useState<string | null>(null);
     const [loadingOfficial, setLoadingOfficial] = useState(false);
 
     const installedById = useMemo(() => new Map(plugins.map((item) => [item.id, item])), [plugins]);
     const localPlugins = useMemo(() => plugins.filter((item) => item.local), [plugins]);
-    const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !item.official), [plugins]);
+    const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !item.official && !item.bundled), [plugins]);
+
+    const loadBundled = useCallback(async () => {
+        setLoadingBundled(true);
+        setBundledError(null);
+        try {
+            setBundled(await fetchBundledPlugins());
+        } catch (error) {
+            setBundledError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setLoadingBundled(false);
+        }
+    }, []);
 
     const loadOfficial = useCallback(async () => {
         setLoadingOfficial(true);
@@ -34,6 +49,10 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             setLoadingOfficial(false);
         }
     }, []);
+
+    useEffect(() => {
+        if (open && !bundled.length && !loadingBundled && !bundledError) void loadBundled();
+    }, [bundled.length, bundledError, loadBundled, loadingBundled, open]);
 
     useEffect(() => {
         if (open && !official.length && !loadingOfficial && !officialError) void loadOfficial();
@@ -50,6 +69,18 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
             message.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
         } finally {
             setInstalling(false);
+        }
+    };
+
+    const installBundled = async (entry: BundledPluginEntry) => {
+        setBusyId(entry.id);
+        try {
+            const plugin = await installPluginFromUrl(entry.url, { bundled: true, expectedId: entry.id });
+            message.success(`已安装内置插件 ${plugin.name}`);
+        } catch (error) {
+            message.error(`安装失败：${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            setBusyId(null);
         }
     };
 
@@ -106,6 +137,22 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     const empty = (text: string) => <div className="py-10 text-center text-sm" style={{ color: theme.node.muted }}>{text}</div>;
+    const bundledTab = bundledError ? (
+        <div className="space-y-3">
+            <div className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>加载失败：{bundledError}</div>
+            <Button type="text" size="small" icon={<RefreshCw className="size-4" />} onClick={loadBundled}>重新加载</Button>
+        </div>
+    ) : loadingBundled && !bundled.length ? empty("正在读取内置插件…") : bundled.length ? (
+        <div className="space-y-2">
+            <div className="text-xs" style={{ color: theme.node.muted }}>插件文件随仓库提供，未安装前不会执行。</div>
+            <div className="thin-scrollbar max-h-[42vh] space-y-2 overflow-auto">
+                {bundled.map((entry) => {
+                    const record = installedById.get(entry.id);
+                    return row(entry.id, entry.icon || <Puzzle className="size-4" />, entry.name, entry.version, entry.description, record?.bundled ? controls(record) : <Button type="primary" size="small" icon={<Download className="size-4" />} loading={busyId === entry.id} onClick={() => installBundled(entry)}>{record ? "切换内置" : "安装"}</Button>);
+                })}
+            </div>
+        </div>
+    ) : empty("暂无内置插件");
     const officialTab = officialError ? (
         <div className="space-y-3">
             <div className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>加载失败：{officialError}</div>
@@ -131,6 +178,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     const items = [
+        { key: "bundled", label: "内置可选", children: bundledTab },
         { key: "official", label: "官方插件", children: officialTab },
         ...(localPlugins.length ? [{ key: "local", label: "本地插件", children: localTab }] : []),
         { key: "third", label: "第三方插件", children: thirdPartyTab },
@@ -143,7 +191,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
                     <span>插件代码会在当前页面内直接执行，可访问本地数据（包含 AI API Key）。请仅安装你信任来源的插件。</span>
                 </div>
-                <Tabs defaultActiveKey="official" items={items} />
+                <Tabs defaultActiveKey="bundled" items={items} />
             </div>
         </Modal>
     );

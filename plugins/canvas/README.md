@@ -49,6 +49,12 @@ npm run dev     # watch,改动自动构建并同步
 
 本项目官方插件由 CI 集中构建后发布到孤儿分支 `plugins-dist`(**构建产物不进 git**),画布「节点插件」面板顶部的**官方插件**区经 jsDelivr 从该分支远程拉取并一键安装;第三方插件仍走下方「第三方插件」的 JS URL 安装。构建脚本与发布说明见 [`registry/`](./registry/README.md);清单地址可用 `VITE_PLUGIN_REGISTRY_URL` 覆盖成自建来源。
 
+## 仓库内置可选插件
+
+经安全审查的便利贴、HTML、Markdown、SVG 和 3D 全景浏览器 ESM 位于 `web/public/plugins/`,静态元信息位于 `web/public/plugins/catalog.json`。管理器读取清单时只解析 JSON,不会导入插件代码；用户点击「安装」后才从当前站点 `/plugins/` 目录直接加载。内置插件安装后默认立即启用,之后可禁用或卸载；未安装状态不会写入 localforage,也不会影响画布启动。
+
+内置产物允许相对导入同目录的已审查依赖,因此宿主只对 `bundled` 记录使用直接 ESM import,并限制为当前站点 `/plugins/` 路径。远程官方和第三方 URL 仍走源码下载、Blob 隔离和本地缓存,不能借用内置直载通道。
+
 ## 本地开发
 
 `npm run dev` 起 watch,产物会同步到 `web/public/plugins/<name>.js`。此后有两种方式在画布里用到它:

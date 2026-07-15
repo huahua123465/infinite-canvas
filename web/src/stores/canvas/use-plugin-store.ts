@@ -13,6 +13,7 @@ export type InstalledPlugin = {
     enabled: boolean;
     local?: boolean;
     official?: boolean;
+    bundled?: boolean;
     installedAt: string;
 };
 
