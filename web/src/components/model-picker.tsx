@@ -3,6 +3,7 @@ import { Select, type SelectProps } from "antd";
 import { Cpu } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { videoReferenceLimitsLabel, videoReferenceLimitsTitle } from "@/lib/video-model-capabilities";
 import { cangyuanPricingKey, fetchCangyuanModelPricing, findModelPricing, formatModelPricing, type ModelPricingIndex } from "@/services/api/model-pricing";
 import { modelOptionLabel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
@@ -39,9 +40,9 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             options.map((model) => {
                 const channel = resolveModelChannel(config, model);
                 const pricing = channel.apiFormat === "cangyuan" ? formatModelPricing(findModelPricing(pricingByBaseUrl[cangyuanPricingKey(channel.baseUrl)], modelOptionName(model)), estimateSeconds) : null;
-                return { value: model, label: <ModelLabel config={config} model={model} price={pricing?.label} priceTitle={pricing?.title} /> };
+                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={pricing?.label} priceTitle={pricing?.title} /> };
             }),
-        [config, estimateSeconds, options, pricingByBaseUrl],
+        [capability, config, estimateSeconds, options, pricingByBaseUrl],
     );
     const current = value || "";
 
@@ -84,11 +85,17 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? `暂无匹配的${label}模型` : "请先到配置里添加渠道和模型";
 }
 
-function ModelLabel({ config, model, price, priceTitle }: { config: AiConfig; model: string; price?: string; priceTitle?: string }) {
+function ModelLabel({ config, model, capability, price, priceTitle }: { config: AiConfig; model: string; capability?: ModelCapability; price?: string; priceTitle?: string }) {
+    const showReferenceLimits = capability === "video";
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={model} />
             <span className="min-w-0 truncate">{modelOptionLabel(config, model)}</span>
+            {showReferenceLimits ? (
+                <span title={`${videoReferenceLimitsTitle(model)}；顺序为 图片·视频·音频`} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 text-[11px] font-medium leading-5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200">
+                    {videoReferenceLimitsLabel(model)}
+                </span>
+            ) : null}
             {price ? (
                 <span title={priceTitle} className="shrink-0 rounded border border-emerald-200 bg-emerald-50 px-1.5 text-[11px] font-medium leading-5 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200">
                     {price}

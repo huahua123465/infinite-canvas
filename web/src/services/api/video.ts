@@ -4,7 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -243,8 +243,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isCangyuanGrokVideoModel(model)) {
         return createCangyuanGrokVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     }
-    const fixedResolutionModel = Boolean(seedanceModelFixedResolution(model));
-    const limits = fixedResolutionModel ? { images: 9, videos: 3, audios: 3 } : { images: 4, videos: 3, audios: 1 };
+    const limits = SEEDANCE_REFERENCE_LIMITS;
     if (references.length > limits.images) throw new Error(`当前 Seedance 模型参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length > limits.videos) throw new Error(`当前 Seedance 模型参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`当前 Seedance 模型参考音频不能超过 ${limits.audios} 条`);
@@ -263,7 +262,8 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
-        ...(!fixedResolutionModel ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
+        resolution: normalizeCangyuanSeedanceResolution(config.vquality),
+        audio: boolConfig(config.videoGenerateAudio, true),
         ...(primaryImageUrl ? { image_url: primaryImageUrl } : {}),
         ...(extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
         ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),

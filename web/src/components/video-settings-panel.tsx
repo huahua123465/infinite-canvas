@@ -4,7 +4,6 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { cangyuanSeedanceFixedResolution } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
@@ -124,7 +123,6 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
-    const fixedResolutionWithoutAudio = cangyuanSeedanceFixedResolution(config, selectedModel);
     const availableResolutionOptions = isCangyuanStandard ? cangyuanSeedanceStandardResolutionOptions : seedanceResolutionOptions;
     const updateResolution = (value: string) => {
         const matchedModel = findSeedanceModelOptionByResolution(config, selectedModel, value);
@@ -182,17 +180,7 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
-                        {fixedResolutionWithoutAudio ? (
-                            <div className="space-y-1 py-1 text-xs leading-5" style={{ color: theme.node.muted }}>
-                                <div className="flex items-center justify-between gap-3">
-                                    <span className="text-sm" style={{ color: theme.node.text }}>生成声音</span>
-                                    <span className="font-semibold text-amber-500">不接收声音开关</span>
-                                </div>
-                                <div>沧元固定分辨率型号不接收 audio 字段，当前前端无法要求或保证模型原生声音；如需有声音轨，请切换到 seedance-2.0、fast 或 mini 标准型号。</div>
-                            </div>
-                        ) : (
-                            <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
-                        )}
+                        <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
                         <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
                     </div>
                 </SettingGroup>
