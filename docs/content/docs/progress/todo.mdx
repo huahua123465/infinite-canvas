@@ -8,5 +8,5 @@ description: 当前项目后续值得处理的事项
 本文档用来记录当前项目后续比较值得处理的事项。
 
 - 本地 Agent 接入后续：按[本地 Agent 接入规划](/docs/progress/local-agent-integration-plan)把 Claude Code CLI Adapter 升级为 Claude Agent SDK Adapter，并完善工具队列体验。
-- 官方 v0.8 后续：第一阶段插件宿主核心完成并等待人工回归；验证通过后按[官方 v0.8 合并记录](/docs/progress/official-v0.8-merge-notes)进入第二阶段，增量接入 TypeScript SDK、插件模板和默认不安装/不启用的示例插件，再单独进入第三阶段自定义模型调用脚本。
+- 官方 v0.8 后续：第一阶段已经测试通过，第二阶段 SDK、插件模板、安全示例插件和仓库内置静态分发已经完成并等待人工回归；验证通过后按[官方 v0.8 合并记录](/docs/progress/official-v0.8-merge-notes)单独进入第三阶段自定义模型调用脚本。
 - 视频任务误提交保护：沧元公开 API 暂无暂停或取消任务端点；视频任务正式提交前增加短暂可撤回阶段，拿到任务 ID 后把“停止生成”明确区分为“停止等待”，并在同镜头再次创建版本前提示旧任务仍可能继续运行和计费。
