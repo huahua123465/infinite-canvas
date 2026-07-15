@@ -558,6 +558,13 @@ function NodeCreateMenu({ position, onCreate, onClose }: { position: Position; o
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     useNodeRegistryVersion((state) => state.version);
     const extensionDefinitions = listNodeDefinitions().filter((definition) => definition.showInCreateMenu !== false);
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    useEffect(() => {
+        const close = () => onCloseRef.current();
+        window.addEventListener("pointerdown", close);
+        return () => window.removeEventListener("pointerdown", close);
+    }, []);
     return (
         <div className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur" data-canvas-no-zoom style={{ left: position.x, top: position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between px-1">
