@@ -39,6 +39,10 @@ export async function fetchCangyuanModelPricing(baseUrl: string) {
     return request;
 }
 
+export function invalidateCangyuanModelPricing(baseUrl: string) {
+    pricingRequests.delete(cangyuanPricingKey(baseUrl));
+}
+
 export function findModelPricing(index: ModelPricingIndex | undefined, model: string) {
     if (!index) return undefined;
     const name = normalizePricingName(model);

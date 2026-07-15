@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ModelPicker } from "@/components/model-picker";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
 import { fetchChannelModels } from "@/services/api/image";
+import { invalidateCangyuanModelPricing } from "@/services/api/model-pricing";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
@@ -133,6 +134,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         setLoadingChannelId(channel.id);
         try {
             const models = await fetchChannelModels(channel);
+            if (channel.apiFormat === "cangyuan") invalidateCangyuanModelPricing(channel.baseUrl);
             updateChannels(config.channels.map((item) => (item.id === channel.id ? { ...item, models } : item)));
             message.success(`${channel.name} 模型列表已更新`);
         } catch (error) {
@@ -152,6 +154,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         try {
             const entries = await Promise.all(runnable.map(async (channel) => [channel.id, await fetchChannelModels(channel)] as const));
             const modelMap = new Map(entries);
+            runnable.filter((channel) => channel.apiFormat === "cangyuan").forEach((channel) => invalidateCangyuanModelPricing(channel.baseUrl));
             updateChannels(config.channels.map((channel) => (modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) || [] } : channel)));
             message.success("模型列表已更新");
         } catch (error) {

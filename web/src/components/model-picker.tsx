@@ -44,21 +44,20 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             }),
         [capability, config, estimateSeconds, options, pricingByBaseUrl],
     );
+    const pricingOptionsKey = options.join("\n");
     const current = value || "";
 
     useEffect(() => {
         if (!pricingKeys.length) return;
-        const missingKeys = pricingKeys.filter((key) => !pricingByBaseUrl[key]);
-        if (!missingKeys.length) return;
         let cancelled = false;
-        void Promise.all(missingKeys.map(async (key) => [key, await fetchCangyuanModelPricing(key)] as const)).then((entries) => {
+        void Promise.all(pricingKeys.map(async (key) => [key, await fetchCangyuanModelPricing(key)] as const)).then((entries) => {
             if (cancelled || !entries.length) return;
             setPricingByBaseUrl((currentPricing) => ({ ...currentPricing, ...Object.fromEntries(entries) }));
         });
         return () => {
             cancelled = true;
         };
-    }, [pricingByBaseUrl, pricingKeys]);
+    }, [pricingKeys, pricingOptionsKey]);
 
     return (
         <Select
