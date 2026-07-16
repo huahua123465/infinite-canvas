@@ -215,7 +215,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo ? [{ id: "lastFrame", title: "在右侧显示视频尾帧", label: "尾帧", icon: <SkipForward className="size-4" />, onClick: () => onShowVideoFrame(node, "last") }] : []),
         ...(hasVideo ? [{ id: "separateAudio", title: separatingAudio ? "正在分离人声和背景音乐" : "将视频分离为人声和背景音乐", label: separatingAudio ? "分离中" : "分离音频", icon: separatingAudio ? <LoaderCircle className="size-4 animate-spin" /> : <AudioLines className="size-4" />, onClick: () => onSeparateAudio(node), disabled: separatingAudio }] : []),
         ...(canOpenDialog ? [{ id: "edit", title: "编辑", label: "编辑", icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
-        ...(isScript && !isSeriesChapterProxy ? [{ id: "exportScriptAssets", title: "批量生成并导出资产", label: "批量生成资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
+        ...(isScript && !isSeriesChapterProxy ? [{ id: "exportScriptAssets", title: "导出已生成资产到画布，不会自动生图", label: "导出资产", icon: <FolderPlus className="size-4" />, onClick: () => onExportScriptAssets(node) }] : []),
         ...(isScript && !isSeriesChapterProxy ? [{ id: "batchScriptVideos", title: "按合成提示词批量生成视频", label: "批量生成视频", icon: <Video className="size-4" />, onClick: () => onBatchGenerateScriptVideos(node) }] : []),
         ...(isText ? [{ id: "editText", title: "编辑文本", label: "编辑文字", icon: <Pencil className="size-4" />, onClick: () => onEditText(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),

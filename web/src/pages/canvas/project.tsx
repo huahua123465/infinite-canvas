@@ -3124,19 +3124,24 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData) => {
             const scriptNode = withStoryboardVideoSettings(node);
             if (scriptNode !== node) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
-            const assets = scriptNode.metadata?.storyboardAssets || [];
-            if (!assets.length) {
+            const allAssets = scriptNode.metadata?.storyboardAssets || [];
+            const activeEpisodeId = scriptNode.metadata?.storyboardActiveChapterId || scriptNode.metadata?.storyboardChapters?.[0]?.id;
+            const episodeAssets = storyboardAssetsForEpisode(scriptNode, activeEpisodeId);
+            if (!episodeAssets.length) {
                 message.warning("请先打开脚本节点完成第二步资产准备");
                 setScriptNodeId(scriptNode.id);
                 return;
             }
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
-            if (assets.some((asset) => !storyboardAssetReady(asset)) && !isAiConfigReady(generationConfig, generationConfig.model)) {
-                openConfigDialog(true);
+            const missingCount = episodeAssets.filter((asset) => !storyboardAssetReady(asset)).length;
+            if (missingCount) {
+                message.warning(`当前集还有 ${missingCount} 个资产未准备完成，请在第二步生成或上传后再导出`);
+                setScriptNodeId(scriptNode.id);
                 return;
             }
+            const assets = allAssets.filter(storyboardAssetReady);
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "image"), model: effectiveConfig.imageModel || effectiveConfig.model, count: "1" };
             const imageConfig = storyboardNodeSize(CanvasNodeType.Image, generationConfig.size);
-            const nextAssets = assets.map((asset) => ({ ...asset }));
+            const nextAssets = allAssets.map((asset) => ({ ...asset }));
             const assetNodeIds = { ...(scriptNode.metadata?.storyboardAssetNodeIds || {}) };
             const mentionNodeIds = { ...(scriptNode.metadata?.storyboardAssetMentionNodeIds || {}) };
             const exportedNodes: CanvasNodeData[] = [];
@@ -3147,27 +3152,18 @@ function InfiniteCanvasPage() {
             const workspacePositions = defaultWorkspacePositions;
             const exportedCountByKind: Record<StoryboardAssetKind, number> = { character: 0, scene: 0, prop: 0 };
             setStoryboardActionKey("asset:export");
+            const messageKey = `storyboard-assets-export:${scriptNode.id}`;
+            message.open({ key: messageKey, type: "loading", content: "正在导出已生成资产到画布", duration: 0 });
             try {
-                for (let index = 0; index < nextAssets.length; index += 1) {
-                    const asset = nextAssets[index];
+                for (const asset of assets) {
                     const prompt = storyboardAssetImagePrompt(asset);
-                    let uploaded: UploadedImage | null = null;
                     let content = asset.imageUrl || "";
                     if (!content && asset.storageKey) content = await resolveImageUrl(asset.storageKey, "");
-                    if (!content && prompt) {
-                        updateStoryboardAsset(scriptNode.id, asset.id, { status: NODE_STATUS_LOADING, errorDetails: undefined });
-                        const image = await requestGeneration(generationConfig, prompt).then((items) => items[0]);
-                        uploaded = await uploadImage(image.dataUrl);
-                        content = uploaded.url;
-                        nextAssets[index] = { ...asset, imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined };
-                        updateStoryboardAsset(scriptNode.id, asset.id, { imageUrl: uploaded.url, storageKey: uploaded.storageKey, status: NODE_STATUS_SUCCESS, errorDetails: undefined });
-                    }
                     if (!content) continue;
                     const existingNode = nodesRef.current.find((item) => item.id === assetNodeIds[asset.id]) || nodesRef.current.find((item) => item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata?.storyboardAssetId === asset.id);
                     const existingId = existingNode?.id || nanoid();
                     assetNodeIds[asset.id] = existingId;
                     mentionNodeIds[`@${asset.name}`] = existingId;
-                    const size = uploaded ? fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height) : imageConfig;
                     const sceneGroupId = asset.kind === "scene" ? `storyboard-scene:${scriptNode.id}:${asset.id}` : undefined;
                     const workspacePosition = workspacePositions[asset.kind];
                     const kindIndex = exportedCountByKind[asset.kind]++;
@@ -3177,10 +3173,12 @@ function InfiniteCanvasPage() {
                         type: CanvasNodeType.Image,
                         title: `${ASSET_KIND_TEXT[asset.kind]}｜${asset.name}`,
                         position,
-                        width: size.width,
-                        height: size.height,
+                        width: imageConfig.width,
+                        height: imageConfig.height,
                         metadata: {
-                            ...(uploaded ? imageMetadata(uploaded) : { content, storageKey: asset.storageKey, status: NODE_STATUS_SUCCESS }),
+                            content,
+                            storageKey: asset.storageKey,
+                            status: NODE_STATUS_SUCCESS,
                             prompt: prompt || asset.prompt || asset.description,
                             generationType: "generation",
                             model: generationConfig.model,
@@ -3228,14 +3226,14 @@ function InfiniteCanvasPage() {
                     const next = [...workspaceNodes.map((workspaceNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id })), ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: assetNode.id }))];
                     return addUniqueConnections(prev.filter((connection) => !workspaceIds.has(connection.fromNodeId) && !workspaceIds.has(connection.toNodeId)), next);
                 });
-                message.success(`已拆分角色、场景、道具工作区，共包含 ${exportedNodes.length} 个资产节点`);
+                message.success({ key: messageKey, content: `已更新角色、场景、道具工作区，共包含 ${exportedNodes.length} 个已生成资产节点` });
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "导出资产失败");
+                message.error({ key: messageKey, content: error instanceof Error ? error.message : "导出资产失败" });
             } finally {
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardAsset],
+        [effectiveConfig, message],
     );
 
     const composeStoryboardFinalPrompt = useCallback(
