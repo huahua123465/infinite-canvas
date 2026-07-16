@@ -335,6 +335,10 @@ export type CanvasNodeMetadata = {
     audioFormat?: string;
     audioSpeed?: string;
     audioInstructions?: string;
+    voiceboxProfileId?: string;
+    voiceboxProfileName?: string;
+    voiceboxGenerationId?: string;
+    voiceboxEngine?: string;
     references?: string[];
     naturalWidth?: number;
     naturalHeight?: number;

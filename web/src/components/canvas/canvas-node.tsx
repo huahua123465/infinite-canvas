@@ -2313,6 +2313,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
             <div className="flex min-w-0 items-center gap-2 text-sm opacity-70">
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{node.title || "音频"}</span>
+                {node.metadata?.voiceboxProfileName ? <span className="ml-auto shrink-0 text-xs">{node.metadata.voiceboxProfileName}</span> : null}
             </div>
             <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
         </div>

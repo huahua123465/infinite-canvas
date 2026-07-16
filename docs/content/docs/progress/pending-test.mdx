@@ -35,6 +35,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Voicebox 模型缓存目录：统一启动脚本应同时设置 `VOICEBOX_MODELS_DIR`、`HF_HOME`、Hugging Face Hub/Xet/Assets、Torch 和 XDG 缓存环境变量，使 Voicebox 与 Transformers 后续下载统一保存到项目内 `voicebox/.runtime/models/`，不得继续写入 `C:\Users\<用户>\.cache\huggingface`；已有全局缓存只按用户明确要求执行一次性迁移，不得由启动脚本自动搬走其他项目共享的模型。
 
 - Voicebox Web 生成状态反馈：点击金色生成按钮后，提交阶段按钮应展开显示“生成中…”和旋转图标；异步任务进入后台后，输入区下方应持续显示当前生成数量及“完成后自动播放并进入右侧记录”的说明，任务完成时显示包含音频时长的成功提示，失败时继续显示原有错误提示。状态只订阅现有任务队列，不新增轮询；后台仍允许继续提交下一条音频。
+- Voicebox 画布档案直连：画布选择声音档案后，每次生成都应通过开发代理或本地 Agent 固定白名单读取该档案与 Voicebox Web 生成设置，并把真实档案 ID、档案引擎、`1.7B` 模型规格、长文本分段、交叉混合和标准化设置提交到 Voicebox `/generate`；不得命中画布本地或共享音频结果缓存而跳过 Voicebox。生成完成后，Voicebox Web 历史应出现同一次任务，画布音频节点顶部应显示档案名称，“信息”中应能核对档案 ID、任务 ID 和实际引擎；重试相同文字也应创建新的 Voicebox 任务并返回该任务的原始音频。
 
 - 视频本地高质量音频分离：已有视频的悬浮操作栏应显示“分离音频”；点击后由 `start-web.bat` 静默启动本地助手，首次使用自动准备私有 Python、FFmpeg、PyTorch CUDA 12.8 音频依赖并下载 BS-Roformer 模型，不要求安装 Docker。私有 FFmpeg 应能被分离子进程识别，RTX 3060 等 NVIDIA 显卡应显示 CUDA 可用并参与推理。处理过程中操作栏显示“分离中”且不能重复提交，完成后在原视频右侧生成并连接“人声”和“背景音乐”两个可播放、可下载、可连接到后续视频作为参考音频的本地音频节点；服务未就绪或分离失败时只提示错误，不生成残缺节点。
 - 沧元 Omni 与 Seedance 单模型视频参数：选择 `omni-fast` 或 `omni-fast-no-water` 后，画布和视频工作台应显示固定 720p、约 10 秒、仅支持 16:9/9:16，并允许最多 5 张、单张不超过 5MB 的参考图；提交 5 张图时应通过 multipart 重复发送 `input_reference`，不得再进入 Seedance 4 图校验或附带 `duration`、`resolution`、`audio`。标准 `seedance-2.0/fast/mini` 仍保持图片 4、视频 3、音频 1 和 480p/720p 参数；固定分辨率 `seedance-2.0-480p/720p/1080p/4k` 及其 fast/mini 档位应允许图片 9、视频 3、音频 3，且请求不再发送与模型档位冲突的 `resolution` 或 `audio` 字段。画布生成或重试 Seedance 视频时，不应再出现 `seedanceModelFixedResolution is not defined`，请求应能正常进入参数校验和任务提交阶段。

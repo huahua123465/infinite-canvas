@@ -9,9 +9,10 @@ import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/
 import { resolveModelScript } from "@/stores/use-model-script-store";
 import type { ReferenceAudio } from "@/types/media";
 
-type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string; seed?: number; candidateCount?: number };
-export type StoredAudioFile = UploadedFile & { cacheKey: string; cacheHit?: "local" | "shared" };
-export type VoiceboxProfile = { id: string; name: string; description?: string | null; language: string; voice_type?: "cloned" | "preset" | "designed"; default_engine?: string | null; sample_count?: number };
+type VoiceboxGenerationSource = { voiceboxGenerationId: string; voiceboxProfileId: string; voiceboxProfileName: string; voiceboxEngine?: string };
+type RequestOptions = { signal?: AbortSignal; referenceAudios?: ReferenceAudio[]; promptText?: string; seed?: number; candidateCount?: number; onVoiceboxGeneration?: (source: VoiceboxGenerationSource) => void };
+export type StoredAudioFile = UploadedFile & Partial<VoiceboxGenerationSource> & { cacheKey: string; cacheHit?: "local" | "shared" };
+export type VoiceboxProfile = { id: string; name: string; description?: string | null; language: string; voice_type?: "cloned" | "preset" | "designed"; preset_engine?: string | null; preset_voice_id?: string | null; default_engine?: string | null; sample_count?: number };
 type AudioCacheRecord = { storageKey: string; bytes: number; mimeType: string; durationMs?: number; createdAt: number };
 type SharedAudioCacheEntry = { key: string; url: string; bytes?: number; mimeType?: string; durationMs?: number };
 export type VolcengineVoiceCloneStatus = 0 | 1 | 2 | 3 | 4;
@@ -52,7 +53,8 @@ type VolcengineVoiceCloneResponse = {
     status?: VolcengineVoiceCloneStatus;
     speaker_status?: VolcengineVoiceCloneModelStatus[];
 };
-type VoiceboxGeneration = { id: string; status?: string; error?: string | null; duration?: number | null };
+type VoiceboxGeneration = { id: string; status?: string; error?: string | null; duration?: number | null; engine?: string | null };
+type VoiceboxGenerationSettings = { max_chunk_chars?: number; crossfade_ms?: number; normalize_audio?: boolean };
 
 const audioCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "audio_generation_cache" });
 const voiceCloneStore = localforage.createInstance({ name: "infinite-canvas", storeName: "volcengine_voice_clones" });
@@ -154,23 +156,30 @@ async function requestVoiceboxSpeech(config: AiConfig, text: string, options?: R
     if (options?.referenceAudios?.length) throw new Error("Voicebox 不接受单次请求参考音频，请先在 Voicebox 页面把样本加入声音档案");
     let generationId = "";
     try {
+        const [profile, settings] = await Promise.all([
+            requestVoicebox<VoiceboxProfile>(config, `/profiles/${encodeURIComponent(profileId)}`, { signal: options?.signal }),
+            requestVoicebox<VoiceboxGenerationSettings>(config, "/settings/generation", { signal: options?.signal }),
+        ]);
+        const engine = profile.preset_engine || profile.default_engine || null;
         const generation = await requestVoicebox<VoiceboxGeneration>(config, "/generate", {
             method: "POST",
             payload: {
-                profile_id: profileId,
+                profile_id: profile.id,
                 text,
                 language: voiceboxLanguage(text),
                 seed: options?.seed,
-                engine: null,
+                engine,
+                model_size: "1.7B",
                 instruct: config.audioInstructions.trim().slice(0, 500) || null,
-                max_chunk_chars: 800,
-                crossfade_ms: 50,
-                normalize: true,
+                max_chunk_chars: settings.max_chunk_chars ?? 800,
+                crossfade_ms: settings.crossfade_ms ?? 50,
+                normalize: settings.normalize_audio ?? true,
             },
             signal: options?.signal,
         });
         generationId = generation.id;
         if (!generationId) throw new Error("Voicebox 没有返回生成任务 ID");
+        options?.onVoiceboxGeneration?.({ voiceboxGenerationId: generationId, voiceboxProfileId: profile.id, voiceboxProfileName: profile.name, voiceboxEngine: generation.engine || engine || undefined });
         let status = generation.status || "generating";
         while (!["completed", "failed"].includes(status)) {
             await abortableDelay(1000, options?.signal);
@@ -445,15 +454,19 @@ export async function requestStoredAudioGeneration(config: AiConfig, prompt: str
     const selectedModel = config.model || config.audioModel;
     const script = await resolveModelScript("audio", selectedModel);
     const cacheKey = await audioGenerationCacheKey(config, prompt, options, script);
-    const cached = await readLocalAudioCache(cacheKey);
-    if (cached) return { ...cached, cacheKey, cacheHit: "local" };
     const provider = resolveAudioProvider(config, config.model || config.audioModel);
+    const alwaysGenerate = provider.kind === "voicebox";
+    if (!alwaysGenerate) {
+        const cached = await readLocalAudioCache(cacheKey);
+        if (cached) return { ...cached, cacheKey, cacheHit: "local" };
+    }
     const format = provider.kind === "voxcpm" || provider.kind === "voicebox" ? "wav" : config.audioFormat;
-    const shared = script || options?.referenceAudios?.length ? null : await readSharedAudioCache(cacheKey, format);
+    const shared = alwaysGenerate || script || options?.referenceAudios?.length ? null : await readSharedAudioCache(cacheKey, format);
     if (shared) return { ...shared, cacheKey, cacheHit: "shared" };
-    const audio = await storeGeneratedAudio(await requestAudioGeneration(config, prompt, options), format);
-    await writeLocalAudioCache(cacheKey, audio);
-    return { ...audio, cacheKey };
+    let voiceboxSource: VoiceboxGenerationSource | undefined;
+    const audio = await storeGeneratedAudio(await requestAudioGeneration(config, prompt, { ...options, onVoiceboxGeneration: (source) => { voiceboxSource = source; options?.onVoiceboxGeneration?.(source); } }), format);
+    if (!alwaysGenerate) await writeLocalAudioCache(cacheKey, audio);
+    return { ...audio, cacheKey, ...(voiceboxSource || {}) };
 }
 
 async function readLocalAudioCache(cacheKey: string): Promise<UploadedFile | null> {

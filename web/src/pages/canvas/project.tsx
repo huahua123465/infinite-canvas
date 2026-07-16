@@ -5,7 +5,7 @@ import { BookOpen, Bot, Clapperboard, FileInput, FileText, FolderOpen, Grid2x2, 
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import { requestStoredAudioGeneration } from "@/services/api/audio";
+import { requestStoredAudioGeneration, type StoredAudioFile } from "@/services/api/audio";
 import { separateVideoAudio } from "@/services/audio-separation";
 import { requestVideoGeneration, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
@@ -5985,8 +5985,9 @@ async function extractVideoLastFrame(videoFile: UploadedFile): Promise<UploadedI
     return extractVideoFrame(videoFile, "last");
 }
 
-function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
-    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs };
+function audioMetadata(audio: UploadedFile | StoredAudioFile): CanvasNodeMetadata {
+    const source = audio as Partial<StoredAudioFile>;
+    return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs, voiceboxProfileId: source.voiceboxProfileId, voiceboxProfileName: source.voiceboxProfileName, voiceboxGenerationId: source.voiceboxGenerationId, voiceboxEngine: source.voiceboxEngine };
 }
 
 function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {

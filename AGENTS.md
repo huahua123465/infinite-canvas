@@ -113,3 +113,4 @@
 - Script 第一步的每个生产片段必须先形成可执行场景卡：明确当前目标、失败代价、人物策略、2-4 个因果动作节拍、阻力反作用、动作转折、可见结果、价值变化和起止状态；不得用心理描述或泛化情绪代替物理动作，缺少任一核心字段时必须在写入分镜前有限重写，第三步按同一动作链生成时间轴。
 - Voicebox 的 `VOICEBOX_MODELS_DIR`、`HF_HOME`、Hugging Face Hub/Xet/Assets、Torch 和 XDG 模型缓存必须统一指向项目内 `voicebox/.runtime/models/`，Transformers 复用 `HF_HOME`，不得继续设置已弃用的 `TRANSFORMERS_CACHE` 或默认写入系统 C 盘用户缓存；迁移已有全局缓存前必须确认其内容和目标绝对路径，不得由启动脚本自动搬走其他项目共享的模型。
 - `voicebox/` 是自动拉取且被 Git 忽略的固定上游源码；项目级 Voicebox Web 定制必须作为 `voicebox-patches/*.patch` 提交，并由统一启动脚本幂等应用、在补丁哈希变化时重建 Web，不得只修改本机 `voicebox/` 后交付。
+- 画布中的 Voicebox 输入区必须等价于 Voicebox Web 的生成输入区：选择档案后只以真实档案 ID 调用 Voicebox，并由档案决定引擎、预设/克隆音色和默认效果；不得按档案名称重新映射音色，也不得用画布音频结果缓存跳过新的 Voicebox 任务。生成节点必须保留档案 ID 与 Voicebox 任务 ID，便于核对 Web 历史和画布返回音频来自同一次生成。

@@ -306,7 +306,7 @@ function safeRemoteMediaUrl(value: string) {
 function safeVoiceboxUrl(baseUrl: string, apiPath: string, method: string) {
     const path = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
     const allowed = method === "GET"
-        ? path === "/health" || path === "/profiles" || /^\/(history|audio)\/[\w-]+$/.test(path)
+        ? path === "/health" || path === "/profiles" || path === "/settings/generation" || /^\/profiles\/[\w-]+$/.test(path) || /^\/(history|audio)\/[\w-]+$/.test(path)
         : path === "/generate" || /^\/generate\/[\w-]+\/cancel$/.test(path);
     if (!allowed) throw new Error("unsupported Voicebox API path");
     const base = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || "http://127.0.0.1:17493";
