@@ -7,7 +7,8 @@ export type VideoReferenceLimits = Readonly<{
     audios: number;
 }>;
 
-const SEEDANCE_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 4, videos: 3, audios: 1 };
+const SEEDANCE_STANDARD_REFERENCE_LIMITS: VideoReferenceLimits = { images: 4, videos: 3, audios: 1 };
+const SEEDANCE_FIXED_REFERENCE_LIMITS: VideoReferenceLimits = { images: 9, videos: 3, audios: 3 };
 const GROK_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 7, videos: 1, audios: 0 };
 const GROK_VIDEO_15_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0, audios: 0 };
 const OMNI_IMAGE_REFERENCE_LIMITS: VideoReferenceLimits = { images: 5, videos: 0, audios: 0 };
@@ -16,13 +17,18 @@ const SORA_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0
 
 export function videoReferenceLimits(model: string) {
     const name = modelOptionName(model).toLowerCase();
-    if (name.startsWith("seedance-2.0")) return SEEDANCE_VIDEO_REFERENCE_LIMITS;
+    if (name.startsWith("seedance-2.0")) return seedanceModelFixedResolution(name) ? SEEDANCE_FIXED_REFERENCE_LIMITS : SEEDANCE_STANDARD_REFERENCE_LIMITS;
     if (name.startsWith("grok-video-1.5")) return GROK_VIDEO_15_REFERENCE_LIMITS;
     if (name.startsWith("grok-video")) return GROK_VIDEO_REFERENCE_LIMITS;
     if (name === "omni-fast" || name === "omni-fast-no-water") return OMNI_IMAGE_REFERENCE_LIMITS;
     if (name === "omni-v2v" || name === "omni-v2v-no-water") return OMNI_VIDEO_REFERENCE_LIMITS;
     if (name === "sora-2" || name === "sora-2-pro" || name === "sora2") return SORA_VIDEO_REFERENCE_LIMITS;
     return null;
+}
+
+export function isOmniImageVideoModel(model: string) {
+    const name = modelOptionName(model).toLowerCase();
+    return name === "omni-fast" || name === "omni-fast-no-water";
 }
 
 export function videoReferenceLimitsLabel(model: string) {

@@ -4,6 +4,7 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { isOmniImageVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
@@ -43,6 +44,9 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", smartDurationLabel = "智能", smartDurationHint = "由模型智能决定视频时长" }: VideoSettingsPanelProps) {
+    if (isOmniImageVideoModel(config.model || config.videoModel)) {
+        return <OmniVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} smartDurationLabel={smartDurationLabel} smartDurationHint={smartDurationHint} />;
     }
@@ -189,6 +193,31 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
     );
 }
 
+function OmniVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const ratio = normalizeSeedanceRatio(config.size) === "9:16" ? "9:16" : "16:9";
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="固定规格" color={theme.node.muted}>
+                    <div className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: theme.node.stroke }}>720p · 约 10 秒 · 最多 5 张参考图（单张 ≤5MB）</div>
+                </SettingGroup>
+                <SettingGroup title="比例" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {[{ value: "16:9", label: "横屏" }, { value: "9:16", label: "竖屏" }].map((item) => (
+                            <button key={item.value} type="button" className="flex h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent text-sm transition hover:opacity-80" style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", item.value)}>
+                                <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
+                                <span>{item.label}</span>
+                                <span className="text-[10px] leading-none opacity-55">{item.value}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
 function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
     const requestConfig = resolveModelRequestConfig(config, model);
     const name = modelOptionName(model).toLowerCase();
@@ -198,6 +227,7 @@ function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
 
 export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
+    if (isOmniImageVideoModel(modelName)) return "720p";
     if (isSeedanceVideoModel(modelName)) {
         const resolution = normalizeSeedanceResolution(value, modelName);
         return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, model) && resolution !== "480p" ? "720p" : resolution);
@@ -214,7 +244,8 @@ export function videoSizeLabel(value: string) {
     return sizeOptions.find((item) => item.value === size)?.label || size;
 }
 
-export function videoSecondsLabel(value: string) {
+export function videoSecondsLabel(value: string, model = "") {
+    if (isOmniImageVideoModel(model)) return "约10s";
     if (String(value).trim() === "-1") return "智能";
     return `${value || "6"}s`;
 }

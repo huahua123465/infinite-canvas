@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
+import { isOmniImageVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -299,14 +300,17 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isCangyuanGrokVideoModel(model)) {
         return createCangyuanGrokVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     }
-    const limits = SEEDANCE_REFERENCE_LIMITS;
-    if (references.length > limits.images) throw new Error(`当前 Seedance 模型参考图不能超过 ${limits.images} 张`);
-    if (videoReferences.length > limits.videos) throw new Error(`当前 Seedance 模型参考视频不能超过 ${limits.videos} 条`);
-    if (audioReferences.length > limits.audios) throw new Error(`当前 Seedance 模型参考音频不能超过 ${limits.audios} 条`);
+    if (isOmniImageVideoModel(model)) return createCangyuanOmniImageTask(config, model, prompt, references, videoReferences, audioReferences, options);
+    const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
+    const modelName = modelOptionName(model);
+    const fixedResolution = seedanceModelFixedResolution(modelName);
+    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
+    if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
+    if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
         throw new Error("沧元算力视频参考视频/音频必须同时提供至少 1 张主参考图");
     }
-    assertSeedanceVideoReferences(videoReferences);
+    assertSeedanceVideoReferences(videoReferences, fixedResolution ? 2_000 : 4_000);
     assertSeedanceAudioReferences(audioReferences);
     const imageUrls = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
     const referenceVideos = await Promise.all(videoReferences.slice(0, limits.videos).map(resolveSeedanceVideoUrl));
@@ -314,12 +318,11 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     const primaryImageUrl = imageUrls[0] || "";
     const extraImageUrls = imageUrls.slice(1);
     const payload = {
-        model: modelOptionName(model),
+        model: modelName,
         prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
-        resolution: normalizeCangyuanSeedanceResolution(config.vquality),
-        audio: boolConfig(config.videoGenerateAudio, true),
+        ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
         ...(primaryImageUrl ? { image_url: primaryImageUrl } : {}),
         ...(extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
         ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
@@ -333,6 +336,30 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
+    }
+}
+
+async function createCangyuanOmniImageTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const limits = videoReferenceLimits(model)!;
+    const modelName = modelOptionName(model);
+    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
+    if (videoReferences.length || audioReferences.length) throw new Error(`${modelName} 只支持参考图，不支持参考视频或参考音频`);
+    const body = new FormData();
+    body.set("model", modelName);
+    body.set("prompt", prompt);
+    body.set("aspect_ratio", normalizeCangyuanOmniRatio(config.size));
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const oversizedIndex = files.findIndex((file) => file.size > 5 * 1024 * 1024);
+    if (oversizedIndex >= 0) throw new Error(`参考图 ${oversizedIndex + 1} 超过 ${modelName} 单图 5MB 上限`);
+    files.forEach((file) => body.append("input_reference", file));
+    try {
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
+        const taskId = cangyuanVideoTaskId(created);
+        if (!taskId) throw new Error("Omni 视频接口没有返回任务 ID");
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: ["model", "prompt", "aspect_ratio", ...(files.length ? ["input_reference"] : [])] };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Omni 视频任务创建失败"));
     }
 }
 
@@ -436,13 +463,13 @@ function buildSeedancePayload(config: AiConfig, model: string, content: Array<Re
     };
 }
 
-function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
-    const error = seedanceVideoReferenceError(videoReferences);
+function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[], minDurationMs = 4_000) {
+    const error = seedanceVideoReferenceError(videoReferences, minDurationMs);
     if (error) throw new Error(error);
     let total = 0;
     for (const video of videoReferences) {
         if (!video.durationMs) continue;
-        if (video.durationMs < 2000 || video.durationMs > 15000) throw new Error("Seedance 参考视频单个时长需要在 2-15 秒之间");
+        if (video.durationMs < minDurationMs || video.durationMs > 15000) throw new Error(`Seedance 参考视频单个时长需要在 ${minDurationMs / 1000}-15 秒之间`);
         total += video.durationMs;
     }
     if (total > 15000) throw new Error("Seedance 参考视频总时长不能超过 15 秒");
@@ -579,6 +606,10 @@ function normalizeCangyuanVideoRatio(value: string) {
 function normalizeCangyuanVideoDuration(value: string) {
     const duration = normalizeSeedanceDuration(value);
     return duration === -1 ? 5 : duration;
+}
+
+function normalizeCangyuanOmniRatio(value: string) {
+    return normalizeCangyuanVideoRatio(value) === "9:16" ? "9:16" : "16:9";
 }
 
 function normalizeCangyuanSeedanceResolution(value: string) {

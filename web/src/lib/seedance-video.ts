@@ -198,14 +198,14 @@ function seedanceReferenceName(name: string) {
     return name.replace(/\.(?:png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a|aac)$/i, "").trim() || "未命名素材";
 }
 
-export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
+export function seedanceVideoReferenceError(videos: ReferenceVideo[], minDurationMs = 4_000) {
     let totalDurationMs = 0;
     for (let index = 0; index < videos.length; index += 1) {
         const video = videos[index];
         const label = seedanceReferenceLabel("video", index);
         if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return `${label} 超过 50MB，请压缩后再上传`;
         if (video.durationMs) {
-            if (video.durationMs < 4000 || video.durationMs > 15000) return `${label} 时长需要在 4-15 秒之间`;
+            if (video.durationMs < minDurationMs || video.durationMs > 15000) return `${label} 时长需要在 ${minDurationMs / 1000}-15 秒之间`;
             totalDurationMs += video.durationMs;
         }
         if (video.width && video.height) {
