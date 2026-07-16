@@ -535,14 +535,14 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                 {COLUMNS.map((_, colIndex) => {
                                     const detail = promptDetails[String(rowIndex)];
                                     return (
-                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
+                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} h-px border-b border-r border-[#303030] align-top`}>
                                             {colIndex === 8 ? (
-                                                <button className="block min-h-[78px] w-full px-3 py-3 text-left leading-5 text-[#bdbdbd] outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
+                                                <button className="block h-full min-h-[78px] w-full overflow-y-auto px-3 py-3 text-left leading-5 text-[#bdbdbd] outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
                                                     <span className="line-clamp-3">{detail?.storyboardPrompt || row[colIndex] || "点击打开合成提示词"}</span>
                                                     {detail?.videoMotionPrompt ? <span className="mt-2 inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
                                                 </button>
                                             ) : (
-                                                <textarea className={`block w-full resize-none bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`} style={{ minHeight: 78, color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
+                                                <textarea className={`block h-full min-h-[78px] w-full resize-none overflow-y-auto bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""}`} style={{ color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
                                             )}
                                         </td>
                                     );
@@ -653,7 +653,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                 <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
                                     {COLUMNS.slice(0, 8).map((_, colIndex) => (
                                         <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
-                                            <div className={`max-h-24 overflow-hidden px-3 py-3 leading-5 ${colIndex < 2 ? "text-center font-semibold" : "text-[#ececec]"}`}>{row[colIndex] || "-"}</div>
+                                            <div className={`max-h-24 px-3 py-3 leading-5 ${colIndex < 2 ? "overflow-hidden text-center font-semibold" : "thin-scrollbar overflow-y-auto text-[#ececec]"}`}>{row[colIndex] || "-"}</div>
                                         </td>
                                     ))}
                                     <td className="border-b border-r border-[#303030] align-top">
