@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 3D 全景内置插件模块完整性：安装“3D 全景节点”时，`panorama.js`、`three-0.180.0.module.js` 和版本匹配的 `three.core.js` 应依次从当前站点以 JavaScript 返回，不再出现 `Failed to fetch dynamically imported module`。安装后连接一张等距柱状全景图，应可拖拽旋转；切换图片、删除节点、禁用或卸载插件后不得残留动画、全局指针监听、纹理或 WebGL 上下文。
+
 - 前端依赖安全与主题回归：移除项目唯一的 `ProConfigProvider` 包裹和未实际使用的 `@ant-design/pro-components` 后，`npm audit` 应保持 0 vulnerabilities；浅色和深色模式下首页、画布、设置弹窗、模型脚本编辑器及 Ant Design 消息/弹窗应继续使用现有 `ConfigProvider` token 正常显示。关闭更新前启动的 Vite 进程并重新运行 `start-web.bat` 后，版本弹窗的当前版本应同时刷新为 `v0.8.0`。
 
 - v0.8 可见版本标识：重新启动 Vite 开发服务或重新构建静态前端后，画布右上角版本入口和“版本更新”弹窗的当前版本应显示 `v0.8.0`；版本号继续由根目录 `VERSION` 单一注入，不应修改画布组件写死文案。本次只更新可见版本标识，第三阶段仍需人工回归，正式 CHANGELOG 归档和 `v0.8.0` tag 尚未创建。

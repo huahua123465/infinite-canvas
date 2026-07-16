@@ -92,7 +92,7 @@ description: 记录官方 v0.8 与当前定制项目的分阶段合并范围、�
 - HTML：无同源权限 sandbox iframe、CSP、上游 `{{input}}` 转义和内联脚本边界。
 - Markdown：固定 `marked 17.0.6`，渲染前使用 `DOMPurify 3.4.12` HTML profile 净化。
 - SVG：DOMPurify SVG profile，禁止脚本、`foreignObject`、`href` 和 `xlink:href`。
-- 3D 全景：固定 `Three.js 0.180.0`，不依赖运行时 CDN，并清理动画、监听器、纹理和 WebGL 上下文。
+- 3D 全景：固定 `Three.js 0.180.0`，仓库同时包含入口模块依赖的 `three.core.js`，不依赖运行时 CDN，并清理动画、监听器、纹理和 WebGL 上下文。
 - 仓库内置分发：静态清单、五个浏览器 ESM、固定依赖和许可证；默认未安装、未启用。
 
 第二阶段独立提交：
