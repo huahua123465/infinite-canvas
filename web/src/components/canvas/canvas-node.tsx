@@ -11,6 +11,7 @@ import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { isSoraVideoModel } from "@/lib/video-model-capabilities";
 import { resolveImageUrl } from "@/services/image-storage";
 import { classifyVideoFailure } from "@/services/api/video";
 import { defaultConfig, modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -1010,6 +1011,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
         </div>
     ) : null;
     const failureInfo = classifyVideoFailure(node.metadata?.errorDetails || "视频生成失败");
+    const canQueryOriginalTask = Boolean(videoTaskId && ["timeout", "network", "unknown"].includes(failureInfo.kind));
     const [taskRecoveryOpen, setTaskRecoveryOpen] = useState(false);
     const [manualVideoTaskId, setManualVideoTaskId] = useState(videoTaskId || "");
 
@@ -1094,7 +1096,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                                     编辑参考
                                 </button>
                                 {videoTaskId ? <span className="max-w-[180px] truncate rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px]" title={videoTaskId}>{videoTaskId}</span> : null}
-                                {isError && videoTaskId ? (
+                                {isError && canQueryOriginalTask ? (
                                     <button
                                         type="button"
                                         className="rounded px-1.5 py-0.5 hover:bg-white/10"
@@ -1107,7 +1109,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                                 ) : null}
                                 {isError ? (
                                     <button type="button" className="rounded px-1.5 py-0.5 font-semibold text-[#2f80ff] hover:bg-white/10" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onClick={() => onRetry?.(node)}>
-                                        重新生成
+                                        {failureInfo.kind === "policy_rejected" ? "修改后重试" : "重新生成"}
                                     </button>
                                 ) : null}
                                 {isError && !videoTaskId ? (
@@ -1170,7 +1172,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                 <div className="flex h-full w-full flex-col justify-center gap-3 p-5" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center gap-2 text-red-300">
                         <AlertTriangle className="size-4" />
-                        <span className="text-sm font-semibold">生成未接回</span>
+                        <span className="text-sm font-semibold">{failureInfo.kind === "network" ? "生成未接回" : "生成失败"}</span>
                     </div>
                     <div className="line-clamp-4 text-xs leading-5 opacity-75">{node.metadata?.errorDetails || "视频生成中断，可用任务 ID 查询平台结果。"}</div>
                     <div className="text-[11px] opacity-55">{failureInfo.label}：{failureInfo.advice}</div>
@@ -1178,7 +1180,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                     {videoTaskId ? <div className="truncate font-mono text-[10px] opacity-55" title={videoTaskId}>任务ID：{videoTaskId}</div> : null}
                     {requestAuditPanel}
                     <div className="flex flex-wrap gap-2">
-                        {videoTaskId ? (
+                        {canQueryOriginalTask ? (
                             <button type="button" className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetry?.(node, videoTaskQueryPatch(node)); }} onMouseDown={(event) => event.stopPropagation()}>
                                 <RefreshCw className="size-3.5" />
                                 查询原任务
@@ -1186,7 +1188,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                         ) : null}
                         <button type="button" className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]" style={{ background: theme.node.fill, borderColor: theme.toolbar.border, color: theme.node.text }} onClick={(event) => { event.stopPropagation(); onRetry?.(node); }} onMouseDown={(event) => event.stopPropagation()}>
                             <Video className="size-3.5" />
-                            重新生成
+                            {failureInfo.kind === "policy_rejected" ? "修改后重新生成" : "重新生成"}
                         </button>
                     </div>
                     {!videoTaskId ? (
@@ -1657,6 +1659,10 @@ function StoryboardVideoPromptPreviewModal({
     };
 
     const updateDraftModel = (model: string) => {
+        if (isSoraVideoModel(model)) {
+            updateDraftConfig({ model, videoSeconds: "8", size: "16:9" });
+            return;
+        }
         const fixedResolution = seedanceModelFixedResolution(model);
         updateDraftConfig(fixedResolution ? { model, vquality: fixedResolution } : { model });
     };

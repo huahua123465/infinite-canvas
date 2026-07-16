@@ -13,7 +13,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { classifyVideoFailure, createVideoGenerationTask, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
@@ -590,6 +590,11 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
             updateConfig("size", "16:9");
             return;
         }
+        if (isSoraVideoModel(value)) {
+            updateConfig("videoSeconds", "8");
+            updateConfig("size", "16:9");
+            return;
+        }
         const fixedResolution = seedanceModelFixedResolution(value);
         if (fixedResolution) updateConfig("vquality", fixedResolution);
     };
@@ -645,6 +650,7 @@ function PendingVideoCard() {
 
 function FailedVideoCard({ error, onRetry, onQuery }: { error: string; onRetry: () => void; onQuery?: () => void }) {
     const failure = classifyVideoFailure(error);
+    const canQueryOriginalTask = onQuery && ["timeout", "network", "unknown"].includes(failure.kind);
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">
@@ -655,9 +661,9 @@ function FailedVideoCard({ error, onRetry, onQuery }: { error: string; onRetry: 
                 <div className="text-xs text-red-500/80 dark:text-red-300/75">{failure.advice}</div>
             </div>
             <div className="flex justify-end gap-2 border-t border-red-200 p-3 dark:border-red-950">
-                {onQuery ? <Button size="small" onClick={onQuery}>查询原任务</Button> : null}
+                {canQueryOriginalTask ? <Button size="small" onClick={onQuery}>查询原任务</Button> : null}
                 <Button size="small" danger onClick={onRetry}>
-                    重新生成
+                    {failure.kind === "policy_rejected" ? "修改后重新生成" : "重新生成"}
                 </Button>
             </div>
         </div>

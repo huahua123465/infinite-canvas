@@ -4,7 +4,7 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { isOmniImageVideoModel } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
@@ -46,6 +46,9 @@ type VideoSettingsPanelProps = {
 export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", smartDurationLabel = "智能", smartDurationHint = "由模型智能决定视频时长" }: VideoSettingsPanelProps) {
     if (isOmniImageVideoModel(config.model || config.videoModel)) {
         return <OmniVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
+    if (isSoraVideoModel(config.model || config.videoModel)) {
+        return <SoraVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} smartDurationLabel={smartDurationLabel} smartDurationHint={smartDurationHint} />;
@@ -218,6 +221,45 @@ function OmniVideoSettingsPanel({ config, onConfigChange, theme, showTitle, clas
     );
 }
 
+function SoraVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const ratio = normalizeSeedanceRatio(config.size) === "9:16" ? "9:16" : "16:9";
+    const duration = Number(config.videoSeconds) || 8;
+    const generateAudio = boolConfig(config.videoGenerateAudio, true);
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="模型规格" color={theme.node.muted}>
+                    <div className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: theme.node.stroke }}>平台自适应清晰度 · 最多 1 张帧参考图</div>
+                </SettingGroup>
+                <SettingGroup title="比例" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {[{ value: "16:9", label: "横屏" }, { value: "9:16", label: "竖屏" }].map((item) => (
+                            <OptionPill key={item.value} selected={ratio === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)}>
+                                {item.label} · {item.value}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="时长" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {[4, 8, 12].map((value) => (
+                            <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                {value}s
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="输出" color={theme.node.muted}>
+                    <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
+                        <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
 function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
     const requestConfig = resolveModelRequestConfig(config, model);
     const name = modelOptionName(model).toLowerCase();
@@ -228,6 +270,7 @@ function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
 export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
     if (isOmniImageVideoModel(modelName)) return "720p";
+    if (isSoraVideoModel(modelName)) return "模型自适应";
     if (isSeedanceVideoModel(modelName)) {
         const resolution = normalizeSeedanceResolution(value, modelName);
         return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, model) && resolution !== "480p" ? "720p" : resolution);

@@ -8,7 +8,7 @@ import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
-import { isOmniImageVideoModel } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
@@ -182,6 +182,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
 
 function videoModelPatch(model: string) {
     if (isOmniImageVideoModel(model)) return { model, vquality: "720p", seconds: "10", size: "16:9" };
+    if (isSoraVideoModel(model)) return { model, seconds: "8", size: "16:9" };
     const fixedResolution = seedanceModelFixedResolution(model);
     return fixedResolution ? { model, vquality: fixedResolution } : { model };
 }

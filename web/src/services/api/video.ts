@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { isOmniImageVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -161,7 +161,7 @@ export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
     if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
-    if (/内容策略|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "请调整参考图或使用更中性的提示词，不要原样重试。" };
+    if (/内容策略|内容审查|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "原任务已被平台终止，查询不会改变结果。请先移除真人正脸、版权 IP 或敏感题材，换用更中性的提示词或非写实参考图后再创建新任务。" };
     if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
     if (/timeout|超时|expired|长时间未完成/.test(value)) return { kind: "timeout", label: "任务等待超时", advice: "任务 ID 已保留，请优先查询原任务，不要直接重复提交。" };
     if (/network error|网络|failed to fetch|查询失败|视频地址.*(?:下载失败|不可播放|已失效)|视频下载结果为空|connection|cors/.test(value)) return { kind: "network", label: "视频结果未接回", advice: "请使用原任务 ID 继续查询，避免重新提交任务。" };
@@ -300,6 +300,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isCangyuanGrokVideoModel(model)) {
         return createCangyuanGrokVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     }
+    if (isSoraVideoModel(model)) return createCangyuanSoraVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isOmniImageVideoModel(model)) return createCangyuanOmniImageTask(config, model, prompt, references, videoReferences, audioReferences, options);
     const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
     const modelName = modelOptionName(model);
@@ -336,6 +337,30 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
+    }
+}
+
+async function createCangyuanSoraVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const modelName = modelOptionName(model);
+    if (references.length > 1) throw new Error(`${modelName} 最多支持 1 张帧参考图`);
+    if (videoReferences.length || audioReferences.length) throw new Error(`${modelName} 不支持参考视频或参考音频`);
+    const images = await Promise.all(references.slice(0, 1).map((image) => resolveSeedanceImageUrl(config, image)));
+    const payload = {
+        model: modelName,
+        prompt,
+        duration: normalizeCangyuanVideoDuration(config.videoSeconds),
+        aspect_ratio: normalizeCangyuanOmniRatio(config.size),
+        generate_audio: boolConfig(config.videoGenerateAudio, true),
+        ...(images.length ? { reference_mode: "frame", images } : {}),
+    };
+    try {
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const taskId = cangyuanVideoTaskId(created);
+        if (!taskId) throw new Error("Sora 视频接口没有返回任务 ID");
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Sora 视频任务创建失败", modelName));
     }
 }
 
@@ -737,14 +762,14 @@ function videoResultUrl(payload: VideoResponse | VideoResponseData | SeedanceTas
     return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
-function readAxiosError(error: unknown, fallback: string) {
+function readAxiosError(error: unknown, fallback: string, model = "") {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError(error)) {
         const responseData = error.response?.data;
-        return normalizeVideoErrorMessage(extractErrorMessage(responseData) || statusMessage(error.response?.status, fallback));
+        return normalizeVideoErrorMessage(extractErrorMessage(responseData) || statusMessage(error.response?.status, fallback), model);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return normalizeVideoErrorMessage(error instanceof Error ? error.message : fallback);
+    return normalizeVideoErrorMessage(error instanceof Error ? error.message : fallback, model);
 }
 
 function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number, progress?: number): VideoGenerationProgress {
@@ -794,11 +819,14 @@ function safeJsonPreview(value: unknown) {
     }
 }
 
-function normalizeVideoErrorMessage(message: string) {
+function normalizeVideoErrorMessage(message: string, model = "") {
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
         return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。\n\n原始错误：${message}`;
     }
     if (/input\.media|aspect_ratio|\bratio\b|parameters\.(resolution|duration|generate_audio|watermark)|resolution|duration|generate_audio|watermark/i.test(message)) {
+        if (isSoraVideoModel(model)) {
+            return `当前视频参数与沧元 Sora 2 接口不匹配。Sora 2 仅支持 4/8/12 秒、16:9 或 9:16，不接收 resolution；参考图最多 1 张，且不支持参考视频或参考音频。\n\n原始错误：${message}`;
+        }
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;
     }
     return message;

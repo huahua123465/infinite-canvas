@@ -1,6 +1,6 @@
 import { seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { isOmniImageVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -52,7 +52,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
-    const maxPromptLength = model.startsWith("grok-video") ? 4096 : 5000;
+    const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) ? 1200 : 5000;
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
     if (model.startsWith("seedance-2.0")) {
@@ -86,6 +86,13 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("omni_ratio", "当前 Omni 模型只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
     }
 
+    if (isSoraVideoModel(model)) {
+        if (![4, 8, 12].includes(duration)) issues.push(blocked("sora_duration", "Sora 2 视频时长只能选择 4、8 或 12 秒", "请修改当前视频时长。"));
+        if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("sora_ratio", "Sora 2 只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
+        if (input.references.length > 1) issues.push(blocked("sora_images", "Sora 2 最多支持 1 张帧参考图", "请移除多余参考图。"));
+        if (input.videoReferences.length || input.audioReferences.length) issues.push(blocked("sora_media", "Sora 2 不支持参考视频或参考音频", "请只保留提示词和最多一张帧参考图。"));
+    }
+
     if (model.startsWith("grok-video")) {
         if (!grokDurations.has(duration)) issues.push(blocked("grok_duration", "Grok 视频时长只能选择 4、6、8、10、12 或 15 秒", "请修改视频时长。"));
         if (input.audioReferences.length) issues.push(blocked("grok_audio", "Grok 视频暂不支持参考音频", "请移除参考音频。"));
@@ -102,7 +109,9 @@ async function inspectReferenceImage(reference: ReferenceImage, index: number, t
     try {
         const dataUrl = await imageToDataUrl(reference);
         if (!dataUrl) return [blocked(`image_missing_${index}`, `${label} 无法读取`, "请重新选择参考图。")];
-        if (isOmniImageVideoModel(model) && dataUrlToFile({ ...reference, dataUrl }).size > 5 * 1024 * 1024) return [blocked(`omni_image_size_${index}`, `${label} 超过 Omni 单图 5MB 上限`, "请压缩图片后重试。")];
+        const imageBytes = dataUrlToFile({ ...reference, dataUrl }).size;
+        if (isOmniImageVideoModel(model) && imageBytes > 5 * 1024 * 1024) return [blocked(`omni_image_size_${index}`, `${label} 超过 Omni 单图 5MB 上限`, "请压缩图片后重试。")];
+        if (isSoraVideoModel(model) && imageBytes > 10 * 1024 * 1024) return [blocked(`sora_image_size_${index}`, `${label} 超过 Sora 2 单图 10MB 上限`, "请压缩图片后重试。")];
         const image = await loadImage(dataUrl);
         const issues: VideoPreflightIssue[] = [];
         const shortSide = Math.min(image.naturalWidth, image.naturalHeight);

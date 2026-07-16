@@ -31,6 +31,11 @@ export function isOmniImageVideoModel(model: string) {
     return name === "omni-fast" || name === "omni-fast-no-water";
 }
 
+export function isSoraVideoModel(model: string) {
+    const name = modelOptionName(model).toLowerCase();
+    return name === "sora-2" || name === "sora-2-pro" || name === "sora2";
+}
+
 export function videoReferenceLimitsLabel(model: string) {
     const limits = videoReferenceLimits(model);
     return limits ? `${limits.images}·${limits.videos}·${limits.audios}` : "待核对";
