@@ -10,6 +10,7 @@ $venvDir = Join-Path $backendDir "venv"
 $python = Join-Path $venvDir "Scripts\python.exe"
 $pip = Join-Path $venvDir "Scripts\pip.exe"
 $runtimeDir = Join-Path $voiceboxDir ".runtime"
+$modelsDir = Join-Path $runtimeDir "models"
 $setupMarker = Join-Path $runtimeDir "setup-complete"
 $webDistDir = Join-Path $voiceboxDir "web\dist"
 $webIndex = Join-Path $webDistDir "index.html"
@@ -26,7 +27,15 @@ if (-not (Test-Path (Join-Path $voiceboxDir "package.json"))) {
     if ($LASTEXITCODE -ne 0) { throw "Voicebox source download failed." }
 }
 
-New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+New-Item -ItemType Directory -Force -Path $runtimeDir, $modelsDir | Out-Null
+$env:VOICEBOX_MODELS_DIR = $modelsDir
+$env:HF_HOME = $modelsDir
+$env:HF_HUB_CACHE = $modelsDir
+$env:HUGGINGFACE_HUB_CACHE = $modelsDir
+$env:HF_ASSETS_CACHE = Join-Path $modelsDir "assets"
+$env:HF_XET_CACHE = Join-Path $modelsDir "xet"
+$env:TORCH_HOME = Join-Path $modelsDir "torch"
+$env:XDG_CACHE_HOME = Join-Path $modelsDir "cache"
 
 if (-not $StartOnly) {
     if (-not (Test-Path $python)) {
