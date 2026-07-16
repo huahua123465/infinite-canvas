@@ -1,0 +1,141 @@
+diff --git a/app/src/components/Generation/FloatingGenerateBox.tsx b/app/src/components/Generation/FloatingGenerateBox.tsx
+--- a/app/src/components/Generation/FloatingGenerateBox.tsx
++++ b/app/src/components/Generation/FloatingGenerateBox.tsx
+@@ -53,6 +53,7 @@ export function FloatingGenerateBox({
+   const trackEditorHeight = useStoryStore((state) => state.trackEditorHeight);
+   const { data: currentStory } = useStory(selectedStoryId);
+   const addPendingStoryAdd = useGenerationStore((s) => s.addPendingStoryAdd);
++  const pendingGenerationCount = useGenerationStore((s) => s.pendingGenerationIds.size);
+   const { toast } = useToast();
+ 
+   const composeMutation = useMutation({
+@@ -478,8 +479,11 @@ export function FloatingGenerateBox({
+                   <Button
+                     type="submit"
+                     disabled={isPending || !selectedProfileId}
+-                    className="h-10 w-10 rounded-full bg-accent hover:bg-accent/90 hover:scale-105 text-accent-foreground shadow-lg hover:shadow-accent/50 transition-all duration-200"
+-                    size="icon"
++                    className={cn(
++                      'h-10 rounded-full bg-accent hover:bg-accent/90 hover:scale-105 text-accent-foreground shadow-lg hover:shadow-accent/50 transition-all duration-200',
++                      isPending ? 'w-auto px-4' : 'w-10',
++                    )}
++                    size={isPending ? 'default' : 'icon'}
+                     aria-label={
+                       isPending
+                         ? t('generation.button.generating')
+@@ -489,7 +493,10 @@ export function FloatingGenerateBox({
+                     }
+                   >
+                     {isPending ? (
+-                      <Loader2 className="h-4 w-4 animate-spin" />
++                      <span className="flex items-center gap-2">
++                        <Loader2 className="h-4 w-4 animate-spin" />
++                        <span className="text-xs font-medium">{t('generation.button.generating')}</span>
++                      </span>
+                     ) : (
+                       <Sparkles className="h-4 w-4" />
+                     )}
+@@ -504,6 +511,27 @@ export function FloatingGenerateBox({
+                 </div>
+               </div>
+             </div>
++
++            <AnimatePresence initial={false}>
++              {pendingGenerationCount > 0 && (
++                <motion.div
++                  initial={{ opacity: 0, y: -4, height: 0 }}
++                  animate={{ opacity: 1, y: 0, height: 'auto' }}
++                  exit={{ opacity: 0, y: -4, height: 0 }}
++                  className="mx-1 mt-2 overflow-hidden"
++                  role="status"
++                  aria-live="polite"
++                >
++                  <div className="flex items-center gap-2 rounded-xl border border-accent/20 bg-accent/10 px-3 py-2 text-xs text-foreground/80">
++                    <span className="relative flex h-2 w-2 shrink-0">
++                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-50" />
++                      <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
++                    </span>
++                    <span>{t('generation.progress.active', { count: pendingGenerationCount })}</span>
++                  </div>
++                </motion.div>
++              )}
++            </AnimatePresence>
+ 
+             {/* Additive instruct textarea — shown below main text when toggle is on and engine supports it */}
+             <AnimatePresence>
+diff --git a/app/src/lib/hooks/useGenerationProgress.ts b/app/src/lib/hooks/useGenerationProgress.ts
+--- a/app/src/lib/hooks/useGenerationProgress.ts
++++ b/app/src/lib/hooks/useGenerationProgress.ts
+@@ -1,5 +1,6 @@
+ import { useQueryClient } from '@tanstack/react-query';
+ import { useEffect, useRef } from 'react';
++import { useTranslation } from 'react-i18next';
+ import { useToast } from '@/components/ui/use-toast';
+ import { apiClient } from '@/lib/api/client';
+ import { useGenerationSettings } from '@/lib/hooks/useSettings';
+@@ -29,6 +30,7 @@ const AGENT_SOURCES = new Set(['mcp', 'rest']);
+  */
+ export function useGenerationProgress() {
+   const queryClient = useQueryClient();
++  const { t } = useTranslation();
+   const { toast } = useToast();
+   const pendingIds = useGenerationStore((s) => s.pendingGenerationIds);
+   const removePendingGeneration = useGenerationStore((s) => s.removePendingGeneration);
+@@ -107,11 +109,13 @@ export function useGenerationProgress() {
+                 });
+             } else {
+-              // toast({
+-              //   title: 'Generation complete!',
+-              //   description: data.duration
+-              //     ? `Audio generated (${data.duration.toFixed(2)}s)`
+-              //     : 'Audio generated',
+-              // });
++              toast({
++                title: t('generation.progress.completedTitle'),
++                description: data.duration
++                  ? t('generation.progress.completedWithDuration', {
++                      duration: data.duration.toFixed(2),
++                    })
++                  : t('generation.progress.completed'),
++              });
+             }
+ 
+             // Auto-play if enabled and nothing is currently playing.
+@@ -166,4 +171,5 @@ export function useGenerationProgress() {
+     toast,
+     setAudioWithAutoPlay,
++    t,
+   ]);
+ }
+diff --git a/app/src/i18n/locales/en/translation.json b/app/src/i18n/locales/en/translation.json
+--- a/app/src/i18n/locales/en/translation.json
++++ b/app/src/i18n/locales/en/translation.json
+@@ -694,6 +694,12 @@
+       "generating": "Generating…",
+       "selectFirst": "Select a voice profile first"
+     },
++    "progress": {
++      "active": "Generating {{count}} audio item(s). It will autoplay and appear in history when ready.",
++      "completedTitle": "Generation complete",
++      "completedWithDuration": "Audio generated ({{duration}}s).",
++      "completed": "Audio generated and added to history."
++    },
+     "instruct": {
+       "show": "Show delivery instructions",
+       "hide": "Hide delivery instructions",
+diff --git a/app/src/i18n/locales/zh-CN/translation.json b/app/src/i18n/locales/zh-CN/translation.json
+--- a/app/src/i18n/locales/zh-CN/translation.json
++++ b/app/src/i18n/locales/zh-CN/translation.json
+@@ -694,6 +694,12 @@
+       "generating": "生成中…",
+       "selectFirst": "请先选择声音档案"
+     },
++    "progress": {
++      "active": "正在生成 {{count}} 个音频，完成后会自动播放并显示在右侧记录中。",
++      "completedTitle": "生成完成",
++      "completedWithDuration": "音频已生成，时长 {{duration}} 秒。",
++      "completed": "音频已生成并加入历史记录。"
++    },
+     "instruct": {
+       "show": "显示传达说明",
+       "hide": "隐藏传达说明",

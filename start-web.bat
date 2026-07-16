@@ -85,20 +85,19 @@ if errorlevel 1 (
 )
 
 echo Checking local Voicebox service...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:17493/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
-if errorlevel 1 (
-  if exist "%VOICEBOX_START_SCRIPT%" (
-    echo Preparing and starting local Voicebox service...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%VOICEBOX_START_SCRIPT%" -NoBrowser
-    if errorlevel 1 (
-      echo Voicebox setup or startup failed.
-      echo Check voicebox\.runtime\voicebox-error.log and the messages above.
-      pause
-      exit /b 1
-    )
+if exist "%VOICEBOX_START_SCRIPT%" (
+  echo Preparing and starting local Voicebox service...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%VOICEBOX_START_SCRIPT%" -NoBrowser
+  if errorlevel 1 (
+    echo Voicebox setup or startup failed.
+    echo Check voicebox\.runtime\voicebox-error.log and the messages above.
+    pause
+    exit /b 1
   )
 ) else (
-  echo Local Voicebox service is already running.
+  echo Cannot find start-voicebox.ps1.
+  pause
+  exit /b 1
 )
 
 echo.

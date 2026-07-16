@@ -16,12 +16,14 @@ $webDistDir = Join-Path $voiceboxDir "web\dist"
 $webIndex = Join-Path $webDistDir "index.html"
 $frontendDir = Join-Path $voiceboxDir "frontend"
 $frontendIndex = Join-Path $frontendDir "index.html"
+$patchDir = Join-Path $PSScriptRoot "voicebox-patches"
+$patchStateFile = Join-Path $runtimeDir "web-patch-state"
+$git = (Get-Command git -ErrorAction Stop).Source
 
 if (-not (Test-Path (Join-Path $voiceboxDir "package.json"))) {
     if (Test-Path $voiceboxDir) {
         throw "The voicebox directory is incomplete. Remove it and run start-web.bat again."
     }
-    $git = (Get-Command git -ErrorAction Stop).Source
     Write-Host "Downloading Voicebox v0.5.0 for first-time setup..."
     & $git clone --branch v0.5.0 --depth 1 --single-branch https://github.com/jamiepine/voicebox.git $voiceboxDir
     if ($LASTEXITCODE -ne 0) { throw "Voicebox source download failed." }
@@ -36,6 +38,23 @@ $env:HF_ASSETS_CACHE = Join-Path $modelsDir "assets"
 $env:HF_XET_CACHE = Join-Path $modelsDir "xet"
 $env:TORCH_HOME = Join-Path $modelsDir "torch"
 $env:XDG_CACHE_HOME = Join-Path $modelsDir "cache"
+
+$patchFiles = @(Get-ChildItem -Path $patchDir -Filter "*.patch" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+$patchState = ($patchFiles | ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
+$currentPatchState = if (Test-Path $patchStateFile) { [IO.File]::ReadAllText($patchStateFile) } else { "" }
+$patchesChanged = $patchState -ne $currentPatchState
+if ($patchesChanged) {
+    Write-Host "Applying Infinite Canvas Voicebox Web patches..."
+    foreach ($patchFile in $patchFiles) {
+        & $git -C $voiceboxDir apply --reverse --check $patchFile.FullName 2>$null
+        if ($LASTEXITCODE -eq 0) { continue }
+        & $git -C $voiceboxDir apply --check $patchFile.FullName
+        if ($LASTEXITCODE -ne 0) { throw "Voicebox Web patch cannot be applied: $($patchFile.Name)" }
+        & $git -C $voiceboxDir apply $patchFile.FullName
+        if ($LASTEXITCODE -ne 0) { throw "Voicebox Web patch failed: $($patchFile.Name)" }
+    }
+}
+$needsWebBuild = $patchesChanged -or -not (Test-Path $webIndex)
 
 if (-not $StartOnly) {
     if (-not (Test-Path $python)) {
@@ -71,7 +90,7 @@ if (-not $StartOnly) {
         if ($LASTEXITCODE -ne 0) { throw "Voicebox Qwen3-TTS installation failed." }
         New-Item -ItemType File -Force -Path $setupMarker | Out-Null
     }
-    if (-not (Test-Path $webIndex)) {
+    if ($needsWebBuild) {
         Write-Host "Installing and preparing the Voicebox Web page..."
         Push-Location $voiceboxDir
         try {
@@ -82,8 +101,11 @@ if (-not $StartOnly) {
         } finally {
             Pop-Location
         }
-    }
-    if (-not (Test-Path $frontendIndex)) {
+        Write-Host "Preparing Voicebox Web files for the local service..."
+        New-Item -ItemType Directory -Force -Path $frontendDir | Out-Null
+        Copy-Item -Path (Join-Path $webDistDir "*") -Destination $frontendDir -Recurse -Force
+        [IO.File]::WriteAllText($patchStateFile, $patchState, [Text.UTF8Encoding]::new($false))
+    } elseif (-not (Test-Path $frontendIndex)) {
         Write-Host "Preparing Voicebox Web files for the local service..."
         New-Item -ItemType Directory -Force -Path $frontendDir | Out-Null
         Copy-Item -Path (Join-Path $webDistDir "*") -Destination $frontendDir -Recurse -Force
