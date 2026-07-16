@@ -247,10 +247,15 @@ export type CanvasNodeMetadata = {
     storyboardProductionScope?: StoryboardProductionScope;
     storyboardCustomVideoBudget?: number;
     storyboardEpisodeDurationSeconds?: number;
+    storyboardTargetChapterCount?: number;
     storyboardPlanningConfigKey?: string;
     storyboardOriginalBeatCount?: number;
     storyboardActiveChapterId?: string;
     storyboardChapters?: StoryboardChapter[];
+    storyboardLockedNarrationChapterIds?: string[];
+    storyboardSeriesChapterNodeIds?: Record<string, string>;
+    storyboardSeriesRootNodeId?: string;
+    storyboardSeriesChapterId?: string;
     storyboardPlanningErrorStage?: string;
     storyboardPlanningRawResponse?: string;
     storyboardStep?: StoryboardStep;

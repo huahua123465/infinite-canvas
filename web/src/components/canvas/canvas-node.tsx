@@ -2320,6 +2320,28 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
 }
 
 function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererProps) {
+    if (node.metadata?.storyboardSeriesRootNodeId) {
+        const chapter = node.metadata?.storyboardChapters?.[0];
+        return (
+            <div className="flex h-full w-full flex-col justify-between p-5 text-center" style={{ background: theme.node.fill, color: theme.node.text }}>
+                <div className="flex items-center gap-2 text-left text-sm font-medium opacity-80">
+                    <FileText className="size-4" />
+                    <span className="min-w-0 truncate">{node.title || chapter?.title || "章节脚本"}</span>
+                </div>
+                <div className="flex flex-1 flex-col items-center justify-center gap-4">
+                    <div className="flex size-12 items-center justify-center rounded-2xl border" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
+                        <FileText className="size-6 opacity-55" />
+                    </div>
+                    <div className="text-sm font-semibold">{chapter?.title || "系列章节"}</div>
+                    <div className="text-xs opacity-60">{chapter?.shotIndexes.length || 0} 个片段 · 约 {Math.round(chapter?.durationSeconds || 0)} 秒</div>
+                    <div className="text-[11px] opacity-45">引用系列主节点事实、旁白与共享资产</div>
+                </div>
+                <button type="button" className="h-9 rounded-lg text-sm font-medium transition hover:scale-[1.01]" style={{ background: theme.toolbar.activeBg, color: theme.toolbar.activeText }} onClick={(event) => { event.stopPropagation(); onOpenScript?.(node); }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    打开本章制作 →
+                </button>
+            </div>
+        );
+    }
     const rows = normalizeStoryboardRows(node.metadata?.storyboardRows);
     const activeEpisodeId = node.metadata?.storyboardActiveChapterId || node.metadata?.storyboardChapters?.[0]?.id;
     const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
@@ -2327,7 +2349,7 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
     const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const productionScope = node.metadata?.storyboardProductionScope || "single";
     const productionMode = node.metadata?.storyboardProductionMode || "documentary";
-    const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, node.metadata?.storyboardEpisodeDurationSeconds || 90, node.metadata?.storyboardCustomVideoBudget);
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, node.metadata?.storyboardEpisodeDurationSeconds || 90, node.metadata?.storyboardCustomVideoBudget, node.metadata?.storyboardTargetChapterCount);
     const planningStale = Boolean(rows.length && node.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
     const isReady = filledRows > 0 && !planningStale;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;

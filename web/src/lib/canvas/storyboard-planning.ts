@@ -166,7 +166,7 @@ export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     });
 }
 
-export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number, episodeDurationSeconds = 90, scope: StoryboardProductionScope = "series") {
+export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], mode: StoryboardProductionMode, customBudget?: number, episodeDurationSeconds = 90, scope: StoryboardProductionScope = "series", targetChapterCount?: number) {
     const beatById = new Map(beats.map((beat) => [beat.id, beat]));
     const chapters: StoryboardChapter[] = [];
     let currentChapter: StoryboardChapter | undefined;
@@ -179,11 +179,20 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
         items.at(-1)?.push(index);
         return items;
     }, []);
-    segments.forEach((indexes) => {
+    const requestedChapterCount = scope === "series" ? Math.max(1, Math.min(30, Number(targetChapterCount) || 0)) : 1;
+    const chapterCount = requestedChapterCount ? Math.min(requestedChapterCount, segments.length) : 0;
+    const totalDuration = segments.reduce((total, indexes) => total + indexes.reduce((sum, index) => sum + storyboardClipDuration(shots[index].row[1]), 0), 0);
+    segments.forEach((indexes, segmentIndex) => {
         const segmentDuration = indexes.reduce((total, index) => total + storyboardClipDuration(shots[index].row[1]), 0);
         const firstShot = shots[indexes[0]];
         const beat = beatById.get(firstShot.plan.sourceBeatIds[0]);
-        if (!currentChapter || (scope === "series" && currentChapter.shotIndexes.length > 0 && (currentChapter.durationSeconds || 0) + segmentDuration > episodeSeconds)) {
+        const remainingSegments = segments.length - segmentIndex;
+        const remainingChapters = chapterCount ? chapterCount - chapters.length : 0;
+        const targetDuration = chapterCount ? totalDuration / chapterCount : episodeSeconds;
+        const shouldStartChapter = !currentChapter || (scope === "series" && currentChapter.shotIndexes.length > 0 && (chapterCount
+            ? chapters.length < chapterCount && ((currentChapter.durationSeconds || 0) >= targetDuration || remainingSegments === remainingChapters)
+            : (currentChapter.durationSeconds || 0) + segmentDuration > episodeSeconds));
+        if (shouldStartChapter) {
             const episodeNumber = chapters.length + 1;
             const phase = (beat?.phase || beat?.timeStage || "故事推进").trim();
             currentChapter = { id: `E${String(episodeNumber).padStart(2, "0")}`, title: scope === "single" ? `单集 · ${phase}` : `第 ${episodeNumber} 集 · ${phase}`, shotIndexes: [], durationSeconds: 0, targetClipCount };
@@ -222,16 +231,17 @@ export function storyboardSingleEpisodeBeatTarget(mode: StoryboardProductionMode
     return Math.max(6, Math.min(30, clips * 3));
 }
 
-export function storyboardPlanningConfigKey(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
-    return `scene-contract-v2/${scope}/${mode}/${Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90))}/${mode === "custom" ? Number(customBudget) || 8 : "auto"}`;
+export function storyboardPlanningConfigKey(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number, targetChapterCount?: number) {
+    return `scene-contract-v3/${scope}/${mode}/${Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90))}/${mode === "custom" ? Number(customBudget) || 8 : "auto"}/${scope === "series" ? Math.max(1, Math.min(30, Number(targetChapterCount) || 8)) : 1}`;
 }
 
-export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number) {
+export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, mode: StoryboardProductionMode, episodeDurationSeconds = 90, customBudget?: number, targetChapterCount?: number) {
     const seconds = Math.max(60, Math.min(300, Number(episodeDurationSeconds) || 90));
     const target = storyboardEpisodeClipTarget(mode, seconds, customBudget);
     const clipSeconds = Math.max(8, Math.min(15, Math.round(seconds / target)));
     if (scope === "single") return `这是整篇故事的单集浓缩生产：只生成 1 集，总时长约 ${seconds} 秒，动态视频预算固定为 ${target} 个片段，每个片段约 ${clipSeconds} 秒。不得因为跨地点或事实较多而增加片段数；每个片段只选择 1 个同地点、同人物时期的主要可见事实，其余相邻背景事实只能由旁白承载且不得要求画面切换。无法放入预算的次要细节继续浓缩，不得重新扩写成多集或把多个地点塞进同一视频。`;
-    return `按漫剧单集生产规划：每集约 ${seconds} 秒，动态视频预算固定为约 ${target} 个片段，每个片段约 ${clipSeconds} 秒。每个片段只选择 1 个同地点、同人物时期的主要可见事实；相邻背景事实可由旁白承载，但不得要求画面切换到另一地点或人物时期，也不得按一事实一片段无限拆分。`;
+    const chapters = Math.max(1, Math.min(30, Number(targetChapterCount) || 8));
+    return `这是完整系列生产，目标拆为约 ${chapters} 集；每集约 ${seconds} 秒，动态视频预算固定为约 ${target} 个片段，每个片段约 ${clipSeconds} 秒。按年代、地点、人物身体状态和关键转折划分章节，不得机械平均截断连续事件。每个片段只选择 1 个同地点、同人物时期的主要可见事实；相邻背景事实可由旁白承载，但不得要求画面切换到另一地点或人物时期，也不得按一事实一片段无限拆分。`;
 }
 
 function storyboardClipDuration(value?: string) {
@@ -260,6 +270,19 @@ export function storyboardCoverage(beats: StoryboardSourceBeat[], shots: Planned
     const coveredIds = new Set(shots.flatMap((shot) => shot.plan.sourceBeatIds));
     const missingBeatIds = beats.map((beat) => beat.id).filter((id) => !coveredIds.has(id));
     return { covered: beats.length - missingBeatIds.length, total: beats.length, missingBeatIds };
+}
+
+export function storyboardSpeechParts(value: string) {
+    const text = value.trim();
+    const quotedDialogues = Array.from(text.matchAll(/[“"]([^”"]+)[”"]/g)).map((item) => item[1].trim()).filter(Boolean);
+    const labelledDialogues = Array.from(text.matchAll(/(?:对白|台词)\s*[：:]\s*([^。；\n]+)/g)).map((item) => item[1].trim()).filter(Boolean);
+    const dialogues = Array.from(new Set([...quotedDialogues, ...labelledDialogues]));
+    const narrationMatch = text.match(/(?:旁白|VO)\s*[：:]\s*([\s\S]*?)(?=(?:对白|台词)\s*[：:]|$)/i);
+    const narration = (narrationMatch?.[1] || (/(?:对白|台词)\s*[：:]/.test(text) || dialogues.length ? "" : text))
+        .replace(/[“"][^”"]+[”"]/g, "")
+        .replace(/^(?:旁白|VO)\s*[：:]\s*/i, "")
+        .trim();
+    return { narration, dialogues };
 }
 
 export function plannedShotsForBeats(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[]) {

@@ -5,6 +5,10 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- Script 完整系列章节节点与共享资产：新建 Script 后选择“完整系列”，应可填写目标章数（例如 8 章）；重新规划后实际章节数应在连续性组不被切断的前提下按目标收口。第一步章节状态栏点击“同步章节节点”，画布应在系列主节点下方生成对应数量的章节 Script 节点；双击或点击“打开本章制作”应打开系列主节点并自动切到正确章节。章节节点只作为引用视图，不得复制事实、提示词和资产库；不同章节识别到同名资产时继续复用主节点资产，删除系列主节点时其章节代理节点应一并删除。
+
+- Script 分章旁白锁定与音画提示词：完整系列的每一章在第一步应显示按镜头汇总的旁白主稿、中文字符预算和超时/内部指令检查；旁白超出片段可朗读时间或含“与同时间段可见动作同步”等内部说明时不得锁定。锁定后当前章“对白旁白”列不可编辑，未锁定不得进入资产和提示词步骤；修改任一分镜后应自动解除锁定。第三步模型不得改写或遗漏锁定旁白，保守兜底应把旁白连续分配到前三段时间轴、把引号内人物原话单独写成对白，并且不得再把同步说明作为声音朗读。
+
 - 3D 全景内置插件模块完整性：安装“3D 全景节点”时，`panorama.js`、`three-0.180.0.module.js` 和版本匹配的 `three.core.js` 应依次从当前站点以 JavaScript 返回，不再出现 `Failed to fetch dynamically imported module`。安装后连接一张等距柱状全景图，应可拖拽旋转；切换图片、删除节点、禁用或卸载插件后不得残留动画、全局指针监听、纹理或 WebGL 上下文。
 
 - 前端依赖安全与主题回归：移除项目唯一的 `ProConfigProvider` 包裹和未实际使用的 `@ant-design/pro-components` 后，`npm audit` 应保持 0 vulnerabilities；浅色和深色模式下首页、画布、设置弹窗、模型脚本编辑器及 Ant Design 消息/弹窗应继续使用现有 `ConfigProvider` token 正常显示。关闭更新前启动的 Vite 进程并重新运行 `start-web.bat` 后，版本弹窗的当前版本应同时刷新为 `v0.8.0`。
@@ -29,6 +33,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Voicebox Windows 首次安装兼容：Windows/Python 3.11 不得从源码编译缺少预构建 wheel 的 `pyopenjtalk`，应改用保持 `import pyopenjtalk` 兼容的 `pyopenjtalk-plus 0.4.1.post8` Windows wheel，并补齐其余日语分词依赖；安装失败后 `setup-complete` 不存在时，重新运行 `start-web.bat` 应复用已有虚拟环境继续安装，无需删除整个 Voicebox 目录。
 
 - Voicebox 模型缓存目录：统一启动脚本应同时设置 `VOICEBOX_MODELS_DIR`、`HF_HOME`、Hugging Face Hub/Xet/Assets、Torch 和 XDG 缓存环境变量，使 Voicebox 与 Transformers 后续下载统一保存到项目内 `voicebox/.runtime/models/`，不得继续写入 `C:\Users\<用户>\.cache\huggingface`；已有全局缓存只按用户明确要求执行一次性迁移，不得由启动脚本自动搬走其他项目共享的模型。
+
+- Voicebox Web 生成状态反馈：点击金色生成按钮后，提交阶段按钮应展开显示“生成中…”和旋转图标；异步任务进入后台后，输入区下方应持续显示当前生成数量及“完成后自动播放并进入右侧记录”的说明，任务完成时显示包含音频时长的成功提示，失败时继续显示原有错误提示。状态只订阅现有任务队列，不新增轮询；后台仍允许继续提交下一条音频。
 
 - 视频本地高质量音频分离：已有视频的悬浮操作栏应显示“分离音频”；点击后由 `start-web.bat` 静默启动本地助手，首次使用自动准备私有 Python、FFmpeg、PyTorch CUDA 12.8 音频依赖并下载 BS-Roformer 模型，不要求安装 Docker。私有 FFmpeg 应能被分离子进程识别，RTX 3060 等 NVIDIA 显卡应显示 CUDA 可用并参与推理。处理过程中操作栏显示“分离中”且不能重复提交，完成后在原视频右侧生成并连接“人声”和“背景音乐”两个可播放、可下载、可连接到后续视频作为参考音频的本地音频节点；服务未就绪或分离失败时只提示错误，不生成残缺节点。
 - 沧元 Omni 与 Seedance 单模型视频参数：选择 `omni-fast` 或 `omni-fast-no-water` 后，画布和视频工作台应显示固定 720p、约 10 秒、仅支持 16:9/9:16，并允许最多 5 张、单张不超过 5MB 的参考图；提交 5 张图时应通过 multipart 重复发送 `input_reference`，不得再进入 Seedance 4 图校验或附带 `duration`、`resolution`、`audio`。标准 `seedance-2.0/fast/mini` 仍保持图片 4、视频 3、音频 1 和 480p/720p 参数；固定分辨率 `seedance-2.0-480p/720p/1080p/4k` 及其 fast/mini 档位应允许图片 9、视频 3、音频 3，且请求不再发送与模型档位冲突的 `resolution` 或 `audio` 字段。画布生成或重试 Seedance 视频时，不应再出现 `seedanceModelFixedResolution is not defined`，请求应能正常进入参数校验和任务提交阶段。

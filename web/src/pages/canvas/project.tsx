@@ -26,7 +26,7 @@ import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
-import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardEpisodeClipRange, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssues, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
+import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardEpisodeClipRange, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssues, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -1309,7 +1309,7 @@ function InfiniteCanvasPage() {
                           count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
                     : type === CanvasNodeType.Script
-                      ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], storyboardProductionScope: "single", storyboardProductionMode: "documentary", storyboardEpisodeDurationSeconds: 90, storyboardCustomVideoBudget: 8, model: effectiveConfig.textModel || effectiveConfig.model }
+                      ? { content: "", prompt: STORYBOARD_SCRIPT_PRESET, status: NODE_STATUS_IDLE, fontSize: 12, storyboardRows: [], storyboardProductionScope: "single", storyboardProductionMode: "documentary", storyboardEpisodeDurationSeconds: 90, storyboardCustomVideoBudget: 8, storyboardTargetChapterCount: 8, model: effectiveConfig.textModel || effectiveConfig.model }
                       : undefined;
             const newNode = createCanvasNode(type, targetPosition, configMetadata);
 
@@ -1491,6 +1491,7 @@ function InfiniteCanvasPage() {
             nodesRef.current.forEach((node) => {
                 if (ids.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => allIds.add(childId));
                 if (ids.has(node.id)) node.metadata?.workspaceChildNodeIds?.forEach((childId) => allIds.add(childId));
+                if (node.metadata?.storyboardSeriesRootNodeId && ids.has(node.metadata.storyboardSeriesRootNodeId)) allIds.add(node.id);
             });
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
@@ -2221,6 +2222,83 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node)));
     }, []);
 
+    const openStoryboardScriptNode = useCallback((node: CanvasNodeData) => {
+        const rootId = node.metadata?.storyboardSeriesRootNodeId;
+        if (!rootId) {
+            setScriptNodeId(node.id);
+            return;
+        }
+        const root = nodesRef.current.find((item) => item.id === rootId);
+        if (!root) {
+            message.error("系列主节点已不存在，无法打开本章");
+            return;
+        }
+        const chapterId = node.metadata?.storyboardSeriesChapterId;
+        if (chapterId) setNodes((prev) => prev.map((item) => (item.id === rootId ? { ...item, metadata: { ...item.metadata, storyboardActiveChapterId: chapterId } } : item)));
+        setScriptNodeId(rootId);
+    }, [message]);
+
+    const createStoryboardChapterNodes = useCallback((node: CanvasNodeData) => {
+        const root = node.metadata?.storyboardSeriesRootNodeId ? nodesRef.current.find((item) => item.id === node.metadata?.storyboardSeriesRootNodeId) : node;
+        const chapters = root?.metadata?.storyboardChapters || [];
+        if (!root || root.metadata?.storyboardProductionScope !== "series" || !chapters.length) {
+            message.warning("请先按完整系列规划出章节");
+            return;
+        }
+        const existing = nodesRef.current.filter((item) => item.metadata?.storyboardSeriesRootNodeId === root.id);
+        const existingByChapter = new Map(existing.map((item) => [item.metadata?.storyboardSeriesChapterId, item]));
+        const validChapterIds = new Set(chapters.map((chapter) => chapter.id));
+        const staleIds = new Set(existing.filter((item) => !item.metadata?.storyboardSeriesChapterId || !validChapterIds.has(item.metadata.storyboardSeriesChapterId)).map((item) => item.id));
+        const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Script];
+        const columns = Math.min(4, chapters.length);
+        const startX = root.position.x;
+        const startY = root.position.y + root.height + 96;
+        const proxies = chapters.map((chapter, index) => {
+            const current = existingByChapter.get(chapter.id);
+            const column = index % columns;
+            const row = Math.floor(index / columns);
+            const created = current || createCanvasNode(CanvasNodeType.Script, {
+                x: startX + column * (spec.width + 54) + spec.width / 2,
+                y: startY + row * (spec.height + 72) + spec.height / 2,
+            }, {});
+            return {
+                ...created,
+                title: chapter.title,
+                metadata: {
+                    ...created.metadata,
+                    storyboardSeriesRootNodeId: root.id,
+                    storyboardSeriesChapterId: chapter.id,
+                    storyboardProductionScope: "series" as const,
+                    storyboardActiveChapterId: chapter.id,
+                    storyboardChapters: [chapter],
+                    storyboardStep: root.metadata?.storyboardStep || "shots",
+                    status: NODE_STATUS_SUCCESS,
+                },
+            };
+        });
+        const proxyById = new Map(proxies.map((item) => [item.id, item]));
+        const chapterNodeIds = Object.fromEntries(chapters.map((chapter, index) => [chapter.id, proxies[index].id]));
+        setNodes((prev) => {
+            const updated = prev.filter((item) => !staleIds.has(item.id)).map((item) => item.id === root.id
+                ? { ...item, metadata: { ...item.metadata, storyboardSeriesChapterNodeIds: chapterNodeIds } }
+                : proxyById.get(item.id) || item);
+            const currentIds = new Set(updated.map((item) => item.id));
+            return [...updated, ...proxies.filter((item) => !currentIds.has(item.id))];
+        });
+        setConnections((prev) => addUniqueConnections(prev.filter((connection) => !staleIds.has(connection.fromNodeId) && !staleIds.has(connection.toNodeId)), proxies.map((proxy) => ({ id: nanoid(), fromNodeId: root.id, toNodeId: proxy.id }))));
+        message.success(`已在画布同步 ${chapters.length} 个章节 Script 节点，共用系列主节点资产`);
+    }, [message]);
+
+    const setStoryboardNarrationLocked = useCallback((nodeId: string, chapterId: string, locked: boolean) => {
+        setNodes((prev) => prev.map((node) => {
+            if (node.id !== nodeId) return node;
+            const current = new Set(node.metadata?.storyboardLockedNarrationChapterIds || []);
+            if (locked) current.add(chapterId);
+            else current.delete(chapterId);
+            return { ...node, metadata: { ...node.metadata, storyboardLockedNarrationChapterIds: Array.from(current) } };
+        }));
+    }, []);
+
     const updateStoryboardRows = useCallback((nodeId: string, rows: StoryboardRowsUpdater) => {
         setNodes((prev) =>
             prev.map((node) => {
@@ -2234,6 +2312,7 @@ function InfiniteCanvasPage() {
                         content: storyboardRowsToMarkdownForCanvas(normalized),
                         storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
                         storyboardStep: "shots",
+                        storyboardLockedNarrationChapterIds: [],
                     },
                 };
             }),
@@ -2308,8 +2387,9 @@ function InfiniteCanvasPage() {
             const productionMode = scriptNode.metadata?.storyboardProductionMode || "documentary";
             const episodeDurationSeconds = scriptNode.metadata?.storyboardEpisodeDurationSeconds || 90;
             const customVideoBudget = scriptNode.metadata?.storyboardCustomVideoBudget;
-            const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, episodeDurationSeconds, customVideoBudget);
-            const clipPlanInstruction = storyboardClipPlanInstruction(productionScope, productionMode, episodeDurationSeconds, customVideoBudget);
+            const targetChapterCount = scriptNode.metadata?.storyboardTargetChapterCount || 8;
+            const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, episodeDurationSeconds, customVideoBudget, targetChapterCount);
+            const clipPlanInstruction = storyboardClipPlanInstruction(productionScope, productionMode, episodeDurationSeconds, customVideoBudget, targetChapterCount);
             const planningCheckpointKey = `${storyText}\n\n【生产配置】${planningConfigKey}`;
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
@@ -2479,7 +2559,7 @@ function InfiniteCanvasPage() {
                 if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要 ${plannedShots.length} 个片段，超过当前 ${STORYBOARD_ROW_LIMIT} 镜安全上限，请拆成上下集`);
                 const beatOrder = new Map(beats.map((beat, index) => [beat.id, index]));
                 plannedShots.sort((first, second) => Math.min(...first.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)) - Math.min(...second.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)));
-                const production = planStoryboardProduction(plannedShots, beats, productionMode, customVideoBudget, episodeDurationSeconds, productionScope);
+                const production = planStoryboardProduction(plannedShots, beats, productionMode, customVideoBudget, episodeDurationSeconds, productionScope, targetChapterCount);
                 const normalized = renumberStoryboardRowsForCanvas(production.shots.map((item) => item.row));
                 const shotPlans = Object.fromEntries(production.shots.map((item, index) => [String(index), item.plan]));
                 updatePlanningProgress(96, productionScope === "single" ? "单集核心事实覆盖通过，写入生产片段" : "完整事实覆盖通过，写入分集片段");
@@ -2502,11 +2582,13 @@ function InfiniteCanvasPage() {
                                       storyboardCoverage: coverage,
                                       storyboardProductionScope: productionScope,
                                       storyboardProductionMode: productionMode,
-                                      storyboardEpisodeDurationSeconds: episodeDurationSeconds,
-                                      storyboardPlanningConfigKey: planningConfigKey,
+                                       storyboardEpisodeDurationSeconds: episodeDurationSeconds,
+                                       storyboardTargetChapterCount: targetChapterCount,
+                                       storyboardPlanningConfigKey: planningConfigKey,
                                       storyboardOriginalBeatCount: originalBeatCount,
                                       storyboardActiveChapterId: production.chapters[0]?.id,
-                                      storyboardChapters: production.chapters,
+                                       storyboardChapters: production.chapters,
+                                       storyboardLockedNarrationChapterIds: [],
                                       storyboardPlanningProgress: undefined,
                                       storyboardPlanningCheckpoint: undefined,
                                       storyboardPlanningErrorStage: undefined,
@@ -3160,6 +3242,11 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData, rowIndex?: number, replaceExisting = false) => {
             const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+            const targetChapterId = rowIndex === undefined ? scriptNode.metadata?.storyboardActiveChapterId || scriptNode.metadata?.storyboardChapters?.[0]?.id : scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]?.chapterId;
+            if (scriptNode.metadata?.storyboardProductionScope === "series" && targetChapterId && !scriptNode.metadata?.storyboardLockedNarrationChapterIds?.includes(targetChapterId)) {
+                message.warning("请先在第一步检查并锁定本章旁白主稿，再合成提示词");
+                return;
+            }
             const dynamicIndexes = storyboardActiveRowIndexes(scriptNode, rows).filter((index) => scriptNode.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
             const indexes = rowIndex === undefined
                 ? dynamicIndexes.filter((index) => replaceExisting || !scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim() || Boolean(scriptNode.metadata?.storyboardPromptErrors?.[String(index)]))
@@ -3196,7 +3283,7 @@ function InfiniteCanvasPage() {
                             detail = parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []);
                             const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                             detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
-                            assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || []);
+                            assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
                         } catch (error) {
                             if (isGenerationCanceled(error)) throw error;
                             if (isStoryboardVideoPromptFormatError(error)) {
@@ -3220,7 +3307,7 @@ function InfiniteCanvasPage() {
                                     detail = parseStoryboardPromptDetailAnswer(repaired, scriptNode.metadata?.storyboardAssets || []);
                                     const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                                     detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
-                                    assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || []);
+                                    assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
                                 } catch (repairError) {
                                     if (isGenerationCanceled(repairError)) throw repairError;
                                     lastError = isStoryboardVideoPromptFormatError(repairError) ? repairError.message : friendlyGenerationError(repairError, "提示词 JSON 自动修复失败");
@@ -5255,7 +5342,7 @@ function InfiniteCanvasPage() {
                             onRetry={(node, patch) => void (node.type === CanvasNodeType.Script ? generateStoryboardShotsFromInputs(node) : handleRetryNode(node, patch))}
                             onEditPrompt={openNodePromptPanel}
                             onGenerateImage={generateImageFromTextNode}
-                            onOpenScript={(node) => setScriptNodeId(node.id)}
+                            onOpenScript={openStoryboardScriptNode}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onContextMenu={(event, id) => {
                                 event.preventDefault();
@@ -5434,6 +5521,8 @@ function InfiniteCanvasPage() {
                     onBatchGenerateVideos={(node) => void batchGenerateStoryboardVideos(node)}
                     onActiveEpisodeChange={(nodeId, episodeId) => handleConfigNodeChange(nodeId, { storyboardActiveChapterId: episodeId })}
                     onProductionConfigChange={handleConfigNodeChange}
+                    onCreateChapterNodes={createStoryboardChapterNodes}
+                    onNarrationLockChange={setStoryboardNarrationLocked}
                     config={effectiveConfig}
                 />
 
@@ -7664,6 +7753,7 @@ function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[]
         safeShotPlan ? `本片段事实与连续性计划：\n${JSON.stringify({ sourceBeats: safeSourceBeats, ...safeShotPlan })}` : "",
         buildSeedanceStoryboardPromptContext(node, rowIndex, assets),
         strictSafety ? "保守呈现要求：采用适合大众观看的间接画面，以环境变化、空镜、遗留物件、家庭成员的克制反应和旁白蒙太奇承载情节；保留因果与前后状态，不补写新的事件。" : "",
+        shotPlan?.chapterId && node.metadata?.storyboardLockedNarrationChapterIds?.includes(shotPlan.chapterId) ? "本章旁白已经人工锁定：当前片段“对白旁白”中的 VO 必须逐字保留，只允许安排起止秒数，不得总结、扩写、改写或加入导演说明。" : "",
         `当前片段：\n${currentRowLines.join("\n")}`,
         contextRows ? `前后片段上下文：\n${contextRows}` : "",
         `第二步资产清单：\n${assetLines}`,
@@ -7711,9 +7801,11 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const assetBinding = assets.length
         ? assets.map((asset) => `@${asset.name}：${asset.kind === "character" ? "作为人物身份参考，只控制脸型、年龄状态、发型、体态、服装和画风" : asset.kind === "scene" ? "作为唯一场景空间参考，只控制地点结构、陈设、环境和光线关系" : "作为核心道具参考，只控制外观、材质、尺寸和使用连续性"}`).join("\n")
         : "本片段无参考资产，按当前文字描述生成，并保持主体、场景和道具连续。";
-    const dialogue = storyboardNarrationWithinBudget(storyboardSafetyComposeText(row[5] || "", true), changeEnd - establishEnd);
-    const [firstVoiceover, secondVoiceover] = storyboardSplitNarration(dialogue, Math.max(1, (actionEnd - establishEnd) * 4));
-    const voiceoverTimeline = [firstVoiceover ? `${establishEnd}-${actionEnd}秒 VO：${firstVoiceover}，与同时间段可见动作同步。` : "", secondVoiceover ? `${actionEnd}-${changeEnd}秒 VO：${secondVoiceover}，与同时间段可见动作同步。` : ""].filter(Boolean).join("\n");
+    const speech = storyboardSpeechParts(storyboardSafetyComposeText(row[5] || "", true));
+    const narrationEnd = speech.dialogues.length ? actionEnd : changeEnd;
+    const dialogue = storyboardLockedSpeechForRow(node, rows, rowIndex)?.narration || storyboardNarrationWithinBudget(speech.narration, narrationEnd);
+    const [establishVoiceover, actionVoiceover, changeVoiceover] = storyboardSplitNarrationByLimits(dialogue, [establishEnd * 4, (actionEnd - establishEnd) * 4, ...(speech.dialogues.length ? [] : [(changeEnd - actionEnd) * 4])]);
+    const voiceoverTimeline = [establishVoiceover ? `0-${establishEnd}秒 VO：${establishVoiceover}` : "", actionVoiceover ? `${establishEnd}-${actionEnd}秒 VO：${actionVoiceover}` : "", changeVoiceover ? `${actionEnd}-${changeEnd}秒 VO：${changeVoiceover}` : "", speech.dialogues.length ? `${actionEnd}-${changeEnd}秒 对白：${speech.dialogues.map((item) => `{${item}}`).join("；")}` : ""].filter(Boolean).join("\n");
     return {
         storyboardPrompt: [assetBinding.replace(/\n/g, "；"), [timeStage, sceneAsset ? `@${sceneAsset.name}` : scene, framing].filter(Boolean).join("，"), `${subject}处于${startState}，正准备${dramaticGoal}，身体保持即将执行“${tactic}”的起始姿态`, `画面承担${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}功能，预示${valueShift}`, lighting, style, "静态单场景构图，人物身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
         videoMotionPrompt: [
@@ -7761,13 +7853,16 @@ function storyboardNarrationWithinBudget(value: string, duration: number) {
     return result || Array.from(text).slice(0, limit).join("");
 }
 
-function storyboardSplitNarration(value: string, firstLimit: number): [string, string] {
-    const characters = Array.from(value);
-    if (characters.length <= firstLimit) return [value, ""];
-    const first = characters.slice(0, firstLimit).join("");
-    const punctuation = Math.max(first.lastIndexOf("。"), first.lastIndexOf("；"), first.lastIndexOf("，"));
-    const splitAt = punctuation >= Math.floor(firstLimit * 0.6) ? punctuation + 1 : firstLimit;
-    return [characters.slice(0, splitAt).join(""), characters.slice(splitAt).join("")];
+function storyboardSplitNarrationByLimits(value: string, limits: number[]) {
+    const remaining = Array.from(value);
+    return limits.map((limit, index) => {
+        if (!remaining.length) return "";
+        if (index === limits.length - 1) return remaining.splice(0).join("");
+        const sample = remaining.slice(0, Math.max(1, limit)).join("");
+        const punctuation = Math.max(sample.lastIndexOf("。"), sample.lastIndexOf("；"), sample.lastIndexOf("，"));
+        const take = punctuation >= Math.floor(limit * 0.6) ? punctuation + 1 : Math.min(limit, remaining.length);
+        return remaining.splice(0, take).join("");
+    });
 }
 
 function storyboardPrimaryVisibleBeat(sourceBeats: StoryboardSourceBeat[], row: string[]) {
@@ -7908,7 +8003,7 @@ function parseStoryboardPromptDetailAnswer(content: string, assets: StoryboardAs
     return normalizeStoryboardPromptDetailAssets({ storyboardPrompt: storyboardPrompt || videoMotionPrompt, videoMotionPrompt: videoMotionPrompt || storyboardPrompt, assetMentions: Array.from(new Set(assetMentions)) }, assets);
 }
 
-function assertStoryboardVideoPromptFormat(prompt: string, duration: number, detail?: StoryboardPromptDetail, assets: StoryboardAsset[] = []) {
+function assertStoryboardVideoPromptFormat(prompt: string, duration: number, detail?: StoryboardPromptDetail, assets: StoryboardAsset[] = [], expectedSpeech?: ReturnType<typeof storyboardSpeechParts>) {
     const sections = ["生成规格", "参考资产绑定", "叙事目标", "起始画面", `${duration}秒时间轴`, "镜头运动", "光线与画面质感", "声音时间轴", "连续性与稳定约束"];
     const missing = sections.filter((section) => !prompt.includes(`【${section}】`));
     if (missing.length) throw new Error(`视频运动提示词格式不完整：缺少${missing.join("、")}`);
@@ -7922,14 +8017,25 @@ function assertStoryboardVideoPromptFormat(prompt: string, duration: number, det
     const soundTimeline = prompt.match(/【声音时间轴】([\s\S]*?)【连续性与稳定约束】/)?.[1] || "";
     if (!new RegExp(`(?:^|\\n)\\s*0\\s*[-—–~至]\\s*${duration}\\s*秒\\s*[：:]`).test(soundTimeline)) throw new Error(`视频运动提示词格式不完整：声音时间轴必须用0-${duration}秒标明全程环境声或无声状态`);
     const voiceLines = Array.from(soundTimeline.matchAll(/(?:^|\n)\s*(\d+(?:\.\d+)?)\s*[-—–~至]\s*(\d+(?:\.\d+)?)\s*秒\s*VO\s*[：:]\s*([^\n]+)/gi));
+    if (/与同时间段可见动作同步|可见动作同步|导演指令|声音时间轴/.test(voiceLines.map((item) => item[3]).join("\n"))) throw new Error("视频运动提示词格式不完整：旁白包含内部导演指令");
     const voiceLength = voiceLines.reduce((total, item) => total + Array.from(item[3].replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length, 0);
     if (voiceLength > duration * 4) throw new Error(`视频运动提示词格式不完整：${duration}秒旁白共${voiceLength}字，超过自然语速上限${duration * 4}字`);
+    const normalizeSpeech = (value: string) => value.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "");
+    if (expectedSpeech?.narration && normalizeSpeech(voiceLines.map((item) => item[3]).join("")) !== normalizeSpeech(expectedSpeech.narration)) throw new Error("视频运动提示词格式不完整：模型改写或遗漏了已锁定旁白");
+    const dialogueLines = Array.from(soundTimeline.matchAll(/\{([^}]+)\}/g)).map((item) => item[1]);
+    if (expectedSpeech?.dialogues.length && normalizeSpeech(dialogueLines.join("")) !== normalizeSpeech(expectedSpeech.dialogues.join(""))) throw new Error("视频运动提示词格式不完整：模型改写或遗漏了已锁定对白");
     if (voiceLines.some((item) => !ranges.some(([start, end]) => start === Number(item[1]) && end === Number(item[2])))) throw new Error("视频运动提示词格式不完整：每句VO的起止时间必须与画面时间轴对应分段完全一致");
     const finalRange = ranges.at(-1);
     const finalLine = finalRange ? timeline.match(new RegExp(`(?:^|\\n)\\s*${finalRange[0]}\\s*[-—–~至]\\s*${finalRange[1]}\\s*秒\\s*[：:]([^\\n]+)`))?.[1] || "" : "";
     if (!/稳定|保持|停住|静止|落点|不再/.test(finalLine)) throw new Error("视频运动提示词格式不完整：最后1-2秒必须只保持稳定落点，不得继续增加剧情");
     const sceneMentions = assets.filter((asset) => asset.kind === "scene" && ((detail?.assetMentions || []).includes(`@${asset.name}`) || prompt.includes(`@${asset.name}`)));
     if (new Set(sceneMentions.map((asset) => asset.id)).size > 1) throw new Error("视频运动提示词格式不完整：普通片段最多只能绑定一个主要场景资产");
+}
+
+function storyboardLockedSpeechForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {
+    const chapterId = node.metadata?.storyboardShotPlans?.[String(rowIndex)]?.chapterId;
+    if (!chapterId || !node.metadata?.storyboardLockedNarrationChapterIds?.includes(chapterId)) return undefined;
+    return storyboardSpeechParts(rows[rowIndex]?.[5] || "");
 }
 
 function normalizeStoryboardVideoPromptLayout(prompt: string, duration: number) {
