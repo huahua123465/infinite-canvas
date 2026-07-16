@@ -140,9 +140,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     }, [assets, editingAssetId]);
 
     useEffect(() => {
-        if (!node || planningStale || view !== "assets" || activeEpisodePrepared || actionKey === "asset:prepare" || node.metadata?.storyboardAssetError) return;
+        if (productionScope === "series" && activeEpisodeId && !narrationLocked && view !== "shots") setView("shots");
+    }, [activeEpisodeId, narrationLocked, productionScope, view]);
+
+    useEffect(() => {
+        if (!node || planningStale || view !== "assets" || (productionScope === "series" && activeEpisodeId && !narrationLocked) || activeEpisodePrepared || actionKey === "asset:prepare" || node.metadata?.storyboardAssetError) return;
         onPrepareAssets(node);
-    }, [actionKey, activeEpisodePrepared, node, onPrepareAssets, planningStale, view]);
+    }, [actionKey, activeEpisodeId, activeEpisodePrepared, narrationLocked, node, onPrepareAssets, planningStale, productionScope, view]);
 
     const groupedAssets = useMemo(() => Object.fromEntries(ASSET_SECTIONS.map(({ kind }) => [kind, assets.filter((asset) => asset.kind === kind)])) as Record<StoryboardAssetKind, StoryboardAsset[]>, [assets]);
 
@@ -179,7 +183,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     };
 
     const openPrompts = () => {
-        if (!node || !rows.length || !assets.length || missingAssets > 0) return;
+        if (!node || !rows.length || !assets.length || missingAssets > 0 || (productionScope === "series" && activeEpisodeId && !narrationLocked)) return;
         setView("prompts");
     };
 
