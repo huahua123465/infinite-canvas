@@ -2868,7 +2868,8 @@ function InfiniteCanvasPage() {
                 message.warning("只有角色资产可以生成声音");
                 return;
             }
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "audio"), model: "local-voxcpm::VoxCPM2", audioModel: "local-voxcpm::VoxCPM2", audioVoice: "default", audioFormat: "wav", count: "1" };
+            const audioModel = effectiveConfig.audioModel || defaultConfig.audioModel;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, undefined, "audio"), model: audioModel, audioModel, count: "1" };
             const baseVoiceProfile = storyboardAssetVoiceProfile(asset, scriptNode.metadata?.storyboardAssetStyle, generationConfig);
             const sampleText = storyboardAssetVoiceSampleText(asset, baseVoiceProfile, scriptNode);
             const voiceProfile = { ...baseVoiceProfile, sampleText };
@@ -2882,11 +2883,12 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(`asset-voice:${assetId}`);
-            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceSampleText: sampleText });
+            const audioVoice = asset.voiceAudioVoice || generationConfig.audioVoice;
+            updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioStatus: NODE_STATUS_LOADING, voiceAudioError: undefined, voiceAudioVoice: audioVoice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceSampleText: sampleText });
             const targetId = `storyboard-asset-voice:${scriptNode.id}:${assetId}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
             try {
-                const audioConfig = { ...generationConfig, audioSpeed: voiceProfile.speed, audioInstructions: voicePrompt };
+                const audioConfig = { ...generationConfig, audioVoice, audioSpeed: voiceProfile.speed, audioInstructions: voicePrompt };
                 const candidates: StoryboardVoiceCandidate[] = [];
                 const failures: Error[] = [];
                 for (let index = 0; index < 3; index += 1) {
@@ -2900,7 +2902,7 @@ function InfiniteCanvasPage() {
                 }
                 if (!candidates.length) throw failures[0] || new Error("声音候选生成失败");
                 const selected = candidates[0];
-                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: selected.url, voiceAudioStorageKey: selected.storageKey, voiceAudioDurationMs: selected.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: "default", voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: selected.cacheKey, voiceAudioCacheHit: selected.cacheHit, voiceAudioCandidates: candidates, voiceAudioSelectedCandidateId: selected.id, voiceSampleText: sampleText });
+                updateStoryboardAsset(scriptNode.id, assetId, { voicePrompt, voiceAudioUrl: selected.url, voiceAudioStorageKey: selected.storageKey, voiceAudioDurationMs: selected.durationMs, voiceAudioStatus: NODE_STATUS_SUCCESS, voiceAudioError: undefined, voiceAudioVoice: audioVoice, voiceAudioSpeed: voiceProfile.speed, voiceAudioInstructions: voicePrompt, voiceAudioCacheKey: selected.cacheKey, voiceAudioCacheHit: selected.cacheHit, voiceAudioCandidates: candidates, voiceAudioSelectedCandidateId: selected.id, voiceSampleText: sampleText });
                 syncStoryboardAssetVoiceReference(scriptNode, asset, selected);
                 if (failures.length) message.warning(`已生成 ${candidates.length} 个声音候选，另有 ${failures.length} 个失败，可重新生成补齐`);
                 else message.success("已生成 3 个声音候选，可以试听选择");

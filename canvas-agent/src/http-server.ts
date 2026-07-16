@@ -47,6 +47,7 @@ export function startHttpServer() {
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.post("/api/proxy/volcengine/voice-clone", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/voice_clone")));
     app.post("/api/proxy/volcengine/get-voice", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/get_voice")));
+    app.post("/api/proxy/voicebox", route(proxyVoicebox));
     app.get("/agent/codex/workspace", (_req, res) => {
         const workspace = ensureSiteWorkspace(config);
         res.json({ ok: true, workspace });
@@ -175,6 +176,27 @@ async function proxyMediaDownload(req: Request, res: Response) {
     res.send(data);
 }
 
+async function proxyVoicebox(req: Request, res: Response) {
+    const body = (req.body || {}) as { baseUrl?: unknown; path?: unknown; method?: unknown; payload?: unknown };
+    const method = stringField(body.method).toUpperCase() === "POST" ? "POST" : "GET";
+    const url = safeVoiceboxUrl(stringField(body.baseUrl), stringField(body.path), method);
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+        upstream = await fetch(url, {
+            method,
+            headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+            body: method === "POST" && body.payload && typeof body.payload === "object" ? JSON.stringify(body.payload) : undefined,
+        });
+    } catch {
+        throw new Error("Voicebox local service is not running on 127.0.0.1:17493");
+    }
+    const data = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(data);
+}
+
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
 }
@@ -278,6 +300,18 @@ function safeRemoteMediaUrl(value: string) {
     if (!value) return "";
     const url = new URL(value);
     if (url.protocol !== "https:") throw new Error("only https media urls are allowed");
+    return url.toString();
+}
+
+function safeVoiceboxUrl(baseUrl: string, apiPath: string, method: string) {
+    const path = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
+    const allowed = method === "GET"
+        ? path === "/health" || path === "/profiles" || /^\/(history|audio)\/[\w-]+$/.test(path)
+        : path === "/generate" || /^\/generate\/[\w-]+\/cancel$/.test(path);
+    if (!allowed) throw new Error("unsupported Voicebox API path");
+    const base = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || "http://127.0.0.1:17493";
+    const url = new URL(`${base}${path}`);
+    if (url.protocol !== "http:" || url.port !== "17493" || !["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname)) throw new Error("only local Voicebox on port 17493 is allowed");
     return url.toString();
 }
 

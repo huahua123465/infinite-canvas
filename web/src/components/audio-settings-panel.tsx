@@ -3,6 +3,7 @@ import { useEffect, useState, type HTMLAttributes, type ReactNode } from "react"
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { VolcengineVoiceCloneModal } from "@/components/volcengine-voice-clone-modal";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
+import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
 import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, volcengineVoiceLabel } from "@/lib/audio-generation";
 import { DEFAULT_VOLCENGINE_SPEAKER, normalizeAudioVoiceForProvider, resolveAudioProvider } from "@/lib/audio-provider";
 import { type CanvasTheme } from "@/lib/canvas-theme";
@@ -29,6 +30,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const provider = resolveAudioProvider(config, modelValue);
     const isVolcengine = provider.kind === "volcengine";
     const isVoxCPM = provider.kind === "voxcpm";
+    const isVoicebox = provider.kind === "voicebox";
     const voice = provider.kind === "openai" ? normalizeAudioVoiceForProvider(config, modelValue) : normalizeAudioVoiceValue(config.audioVoice);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const speed = normalizeAudioSpeedValue(config.audioSpeed);
@@ -58,7 +60,7 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                 ) : null}
-                <SettingGroup title={isVolcengine ? "火山音色 / Voice_type" : isVoxCPM ? "VoxCPM 生成方式" : "OpenAI 声音"} color={theme.node.muted}>
+                <SettingGroup title={isVolcengine ? "火山音色 / Voice_type" : isVoxCPM ? "VoxCPM 生成方式" : isVoicebox ? "Voicebox 声音档案" : "OpenAI 声音"} color={theme.node.muted}>
                     {provider.kind === "unsupported" ? (
                         <div className="rounded-lg border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
                             当前音频模型暂不支持生成，请切换到 OpenAI TTS 或火山 OpenSpeech 模型。
@@ -89,6 +91,13 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 试听会调用当前火山语音 API，成功后会写入缓存。
                             </div>
                         </>
+                    ) : isVoicebox ? (
+                        <div className="space-y-2.5">
+                            <VoiceboxProfileSelect config={config} value={config.audioVoice || ""} onChange={(value) => onConfigChange("audioVoice", value)} />
+                            <div className="text-xs leading-5" style={{ color: theme.node.muted }}>
+                                克隆样本、预设音色和默认效果在 Voicebox 独立页面管理；画布保存声音档案 ID 并复用生成结果。
+                            </div>
+                        </div>
                     ) : isVoxCPM ? (
                         <div className="space-y-2.5">
                             <div className="flex items-center gap-2 text-xs" style={{ color: theme.node.muted }}>
@@ -122,8 +131,8 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     )}
                 </SettingGroup>
                 <SettingGroup title="格式" color={theme.node.muted}>
-                    {isVoxCPM ? (
-                        <OptionPill selected theme={theme} onClick={() => onConfigChange("audioFormat", "wav")}>WAV 48 kHz</OptionPill>
+                    {isVoxCPM || isVoicebox ? (
+                        <OptionPill selected theme={theme} onClick={() => onConfigChange("audioFormat", "wav")}>WAV{isVoxCPM ? " 48 kHz" : ""}</OptionPill>
                     ) : (
                         <div className="grid grid-cols-3 gap-2.5">
                             {audioFormatOptions.map((item) => (
@@ -134,28 +143,30 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     )}
                 </SettingGroup>
-                <SettingGroup title="语速" color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {speedOptions.map((value) => (
-                            <OptionPill key={value} selected={speed === value} theme={theme} onClick={() => onConfigChange("audioSpeed", value)}>
-                                {audioSpeedLabel(value)}
-                            </OptionPill>
-                        ))}
-                    </div>
-                    <input
-                        type="number"
-                        min={0.25}
-                        max={4}
-                        step={0.05}
-                        className="h-9 w-full rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                        style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
-                        value={config.audioSpeed || "1"}
-                        onChange={(event) => onConfigChange("audioSpeed", event.target.value)}
-                        onBlur={(event) => onConfigChange("audioSpeed", normalizeAudioSpeedValue(event.target.value))}
-                        onMouseDown={(event) => event.stopPropagation()}
-                    />
-                </SettingGroup>
-                <SettingGroup title={isVoxCPM ? "音色与表演指令" : "声音指令"} color={theme.node.muted}>
+                {isVoicebox ? null : (
+                    <SettingGroup title="语速" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {speedOptions.map((value) => (
+                                <OptionPill key={value} selected={speed === value} theme={theme} onClick={() => onConfigChange("audioSpeed", value)}>
+                                    {audioSpeedLabel(value)}
+                                </OptionPill>
+                            ))}
+                        </div>
+                        <input
+                            type="number"
+                            min={0.25}
+                            max={4}
+                            step={0.05}
+                            className="h-9 w-full rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
+                            value={config.audioSpeed || "1"}
+                            onChange={(event) => onConfigChange("audioSpeed", event.target.value)}
+                            onBlur={(event) => onConfigChange("audioSpeed", normalizeAudioSpeedValue(event.target.value))}
+                            onMouseDown={(event) => event.stopPropagation()}
+                        />
+                    </SettingGroup>
+                )}
+                <SettingGroup title={isVoxCPM ? "音色与表演指令" : isVoicebox ? "Voicebox 表演指令" : "声音指令"} color={theme.node.muted}>
                     <textarea
                         value={config.audioInstructions || ""}
                         placeholder="例如：自然、温暖、适合旁白。"

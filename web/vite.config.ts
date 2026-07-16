@@ -20,6 +20,11 @@ export default defineConfig({
                 changeOrigin: true,
                 secure: true,
             },
+            "/api/proxy/voicebox": {
+                target: "http://127.0.0.1:17493",
+                changeOrigin: true,
+                rewrite: (requestPath) => requestPath.replace(/^\/api\/proxy\/voicebox/, ""),
+            },
         },
     },
     resolve: {

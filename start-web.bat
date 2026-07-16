@@ -5,8 +5,19 @@ set "WEB_DIR=%~dp0web"
 set "AGENT_DIR=%~dp0canvas-agent"
 set "AUDIO_SEPARATOR_DIR=%~dp0audio-separator-service"
 set "VOXCPM_SERVICE_DIR=%~dp0voxcpm-service"
+set "VOICEBOX_START_SCRIPT=%~dp0start-voicebox.ps1"
 set "WEB_PORT=3000"
 set "CANVAS_URL=http://127.0.0.1:%WEB_PORT%/"
+
+echo ============================================================
+echo Infinite Canvas unified launcher
+echo   Web              http://127.0.0.1:3000
+echo   Canvas Agent     http://127.0.0.1:17371
+echo   Audio Separator  http://127.0.0.1:17372
+echo   VoxCPM           http://127.0.0.1:8810
+echo   Voicebox         http://127.0.0.1:17493
+echo ============================================================
+echo.
 
 if not exist "%WEB_DIR%\package.json" (
   echo Cannot find web\package.json.
@@ -73,6 +84,28 @@ if errorlevel 1 (
   echo Local VoxCPM service is already running.
 )
 
+echo Checking local Voicebox service...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:17493/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
+if errorlevel 1 (
+  if exist "%VOICEBOX_START_SCRIPT%" (
+    echo Preparing and starting local Voicebox service...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%VOICEBOX_START_SCRIPT%" -NoBrowser
+    if errorlevel 1 (
+      echo Voicebox setup or startup failed.
+      echo Check voicebox\.runtime\voicebox-error.log and the messages above.
+      pause
+      exit /b 1
+    )
+  )
+) else (
+  echo Local Voicebox service is already running.
+)
+
+echo.
+echo All local services have been checked or started by this launcher.
+echo Canvas:   http://127.0.0.1:%WEB_PORT%/
+echo Voicebox: http://127.0.0.1:17493/
+echo.
 echo Starting web dev server...
 call npm run dev -- --port %WEB_PORT%
 

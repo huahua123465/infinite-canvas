@@ -1,9 +1,10 @@
 @echo off
 setlocal
 
-set "ROOT=%~dp0"
+set "SERVICE_DIR=%~dp0"
+for %%I in ("%SERVICE_DIR%..") do set "ROOT=%%~fI\"
 if not defined VOXCPM_DIR set "VOXCPM_DIR=%ROOT%..\..\VoxCPM"
-if not defined VOXCPM_RUNTIME_DIR set "VOXCPM_RUNTIME_DIR=%ROOT%voxcpm-service\.runtime"
+if not defined VOXCPM_RUNTIME_DIR set "VOXCPM_RUNTIME_DIR=%SERVICE_DIR%.runtime"
 if not defined VOXCPM_HOST set "VOXCPM_HOST=127.0.0.1"
 if not defined VOXCPM_PORT set "VOXCPM_PORT=8810"
 if not defined VOXCPM_DEVICE set "VOXCPM_DEVICE=cuda"
@@ -54,4 +55,4 @@ uv pip install --python "%VOXCPM_PYTHON%" --reinstall torch==2.10.0 torchaudio==
 if errorlevel 1 exit /b 1
 
 :start_service
-"%VOXCPM_PYTHON%" "%ROOT%voxcpm-service\server.py" --host "%VOXCPM_HOST%" --port "%VOXCPM_PORT%"
+"%VOXCPM_PYTHON%" "%SERVICE_DIR%server.py" --host "%VOXCPM_HOST%" --port "%VOXCPM_PORT%"

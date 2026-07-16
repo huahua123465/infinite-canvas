@@ -3,6 +3,8 @@ import { App, Button, Dropdown, Input, InputNumber, Modal, Select } from "antd";
 import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Maximize2, Plus, RefreshCw, Sparkles, Square, Trash2, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
+import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -70,6 +72,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
+    const voiceboxAudioSelected = resolveAudioProvider(config, config.audioModel).kind === "voicebox";
     const assetError = node?.metadata?.storyboardAssetError || "";
     const promptDetails = node?.metadata?.storyboardPromptDetails || {};
     const promptErrors = node?.metadata?.storyboardPromptErrors || {};
@@ -433,10 +436,22 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 <div className="thin-scrollbar min-h-0 flex-1 overscroll-contain overflow-auto px-5 py-4">
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}名称`} value={editingAsset.name} onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { name: value })} />
                                     {editingAsset.kind === "character" ? (
-                                        <div className="mb-4 grid grid-cols-2 gap-3">
-                                            <AssetEditorField label="角色本名" value={editingAsset.baseName || ""} placeholder="例如 白秋妹" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { baseName: value })} />
-                                            <AssetEditorField label="年龄/时期状态" value={editingAsset.lifeStage || ""} placeholder="例如 年轻时期" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { lifeStage: value })} />
-                                        </div>
+                                        <>
+                                            <div className="mb-4 grid grid-cols-2 gap-3">
+                                                <AssetEditorField label="角色本名" value={editingAsset.baseName || ""} placeholder="例如 白秋妹" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { baseName: value })} />
+                                                <AssetEditorField label="年龄/时期状态" value={editingAsset.lifeStage || ""} placeholder="例如 年轻时期" onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { lifeStage: value })} />
+                                            </div>
+                                            {voiceboxAudioSelected ? (
+                                                <div className="mb-4 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3 text-cyan-50">
+                                                    <div className="mb-2 text-xs font-semibold">Voicebox 声音档案</div>
+                                                    <VoiceboxProfileSelect
+                                                        config={config}
+                                                        value={editingAsset.voiceAudioVoice || config.audioVoice || ""}
+                                                        onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { voiceAudioVoice: value, voiceAudioUrl: undefined, voiceAudioStorageKey: undefined, voiceAudioDurationMs: undefined, voiceAudioCandidates: undefined, voiceAudioSelectedCandidateId: undefined, voiceAudioStatus: "idle", voiceAudioError: undefined })}
+                                                    />
+                                                </div>
+                                            ) : null}
+                                        </>
                                     ) : null}
                                     <AssetEditorField label={`${ASSET_KIND_LABEL[editingAsset.kind]}描述`} value={editingAsset.description} textarea onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { description: value })} />
                                     <AssetEditorField label="资产原始提示词" value={editingAsset.prompt} textarea tall onChange={(value) => onUpdateAsset(node.id, editingAsset.id, { prompt: value })} />
@@ -1188,7 +1203,7 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                         ) : hasVoice ? (
                             <audio src={asset.voiceAudioUrl || asset.voiceAudioStorageKey} controls className="h-8 w-full" onClick={(event) => event.stopPropagation()} />
                         ) : (
-                            <div className="text-[11px] leading-5 text-cyan-100/75">本地 VoxCPM 自动理解人物年龄、性格和经历并生成试听</div>
+                            <div className="text-[11px] leading-5 text-cyan-100/75">使用当前音频模型和角色声音设置生成试听候选</div>
                         )}
                     </div>
                     <button

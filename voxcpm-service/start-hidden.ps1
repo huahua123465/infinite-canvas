@@ -1,8 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$root = Split-Path $PSScriptRoot -Parent
 $logDir = Join-Path $PSScriptRoot "logs"
-$launcher = Join-Path $root "start-voxcpm.bat"
+$launcher = Join-Path $PSScriptRoot "start-service.bat"
 
 try {
     Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8810/health" -TimeoutSec 2 | Out-Null
@@ -10,4 +9,4 @@ try {
 } catch {}
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-Start-Process $env:ComSpec -WindowStyle Hidden -WorkingDirectory $root -ArgumentList "/d /c call `"$launcher`"" -RedirectStandardOutput (Join-Path $logDir "service.log") -RedirectStandardError (Join-Path $logDir "service-error.log")
+Start-Process $env:ComSpec -WindowStyle Hidden -WorkingDirectory $PSScriptRoot -ArgumentList "/d /c call `"$launcher`"" -RedirectStandardOutput (Join-Path $logDir "service.log") -RedirectStandardError (Join-Path $logDir "service-error.log")

@@ -1,7 +1,7 @@
 import { audioVoiceOptions, normalizeAudioVoiceValue, normalizeVolcengineSpeakerValue, volcengineVoiceOptions } from "@/lib/audio-generation";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
-export type AudioProviderKind = "openai" | "volcengine" | "voxcpm" | "unsupported";
+export type AudioProviderKind = "openai" | "volcengine" | "voxcpm" | "voicebox" | "unsupported";
 
 export type AudioProviderInfo = {
     kind: AudioProviderKind;
@@ -18,6 +18,7 @@ export function resolveAudioProvider(config: AiConfig, modelValue = config.model
     const baseUrl = requestConfig.baseUrl.trim();
     if (/openspeech\.bytedance\.com/i.test(baseUrl) || /^seed-(tts|icl)-/i.test(model)) return { kind: "volcengine", label: "火山 OpenSpeech", model, baseUrl };
     if (/voxcpm/i.test(model) || /127\.0\.0\.1:8810|localhost:8810/i.test(baseUrl)) return { kind: "voxcpm", label: "本地 VoxCPM", model, baseUrl };
+    if (/voicebox/i.test(model) || /127\.0\.0\.1:17493|localhost:17493/i.test(baseUrl)) return { kind: "voicebox", label: "本地 Voicebox", model, baseUrl };
     if (requestConfig.apiFormat === "gemini") return { kind: "unsupported", label: "暂不支持音频", model, baseUrl };
     return { kind: "openai", label: "OpenAI TTS", model, baseUrl };
 }
@@ -30,6 +31,7 @@ export function normalizeAudioVoiceForProvider(config: AiConfig, modelValue: str
     const provider = resolveAudioProvider(config, modelValue);
     if (provider.kind === "volcengine") return normalizeVolcengineSpeakerValue(voice) || DEFAULT_VOLCENGINE_SPEAKER;
     if (provider.kind === "voxcpm") return "default";
+    if (provider.kind === "voicebox") return voice.trim();
     if (audioVoiceOptions.some((item) => item.value === voice.trim().toLowerCase())) return normalizeAudioVoiceValue(voice);
     return "alloy";
 }

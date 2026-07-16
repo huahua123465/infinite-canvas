@@ -28,8 +28,8 @@ export function CanvasAudioSettingsPopover({ config, onConfigChange, buttonClass
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const modelValue = config.model || config.audioModel;
     const provider = resolveAudioProvider(config, modelValue);
-    const voiceLabel = provider.kind === "volcengine" ? volcengineVoiceLabel(normalizeVolcengineSpeakerValue(config.audioVoice) || config.audioVoice) : provider.kind === "voxcpm" ? "自动音色" : audioVoiceLabel(normalizeAudioVoiceForProvider(config, modelValue));
-    const formatLabel = provider.kind === "voxcpm" ? "WAV" : audioFormatLabel(config.audioFormat);
+    const voiceLabel = provider.kind === "volcengine" ? volcengineVoiceLabel(normalizeVolcengineSpeakerValue(config.audioVoice) || config.audioVoice) : provider.kind === "voxcpm" ? "自动音色" : provider.kind === "voicebox" ? "声音档案" : audioVoiceLabel(normalizeAudioVoiceForProvider(config, modelValue));
+    const formatLabel = provider.kind === "voxcpm" || provider.kind === "voicebox" ? "WAV" : audioFormatLabel(config.audioFormat);
 
     useEffect(() => {
         if (!open) return;
