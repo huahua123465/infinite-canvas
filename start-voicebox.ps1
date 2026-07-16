@@ -44,7 +44,17 @@ if (-not $StartOnly) {
             & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
             if ($LASTEXITCODE -ne 0) { throw "Voicebox CUDA PyTorch installation failed." }
         }
-        & $pip install -r (Join-Path $backendDir "requirements.txt")
+        $requirements = Join-Path $backendDir "requirements.txt"
+        if ($env:OS -eq "Windows_NT") {
+            $windowsRequirements = Join-Path $runtimeDir "requirements-windows.txt"
+            $requirementsText = [IO.File]::ReadAllText($requirements).Replace("misaki[en,ja,zh]", "misaki[en,zh]")
+            [IO.File]::WriteAllText($windowsRequirements, $requirementsText, [Text.UTF8Encoding]::new($false))
+            Write-Host "Installing the prebuilt Windows OpenJTalk package..."
+            & $pip install pyopenjtalk-plus==0.4.1.post8 fugashi jaconv mojimoji
+            if ($LASTEXITCODE -ne 0) { throw "Voicebox Windows OpenJTalk dependency installation failed." }
+            $requirements = $windowsRequirements
+        }
+        & $pip install -r $requirements
         if ($LASTEXITCODE -ne 0) { throw "Voicebox Python dependency installation failed." }
         & $pip install --no-deps chatterbox-tts hume-tada
         if ($LASTEXITCODE -ne 0) { throw "Voicebox optional TTS engine installation failed." }
