@@ -156,10 +156,12 @@ async function requestVoiceboxSpeech(config: AiConfig, text: string, options?: R
     if (options?.referenceAudios?.length) throw new Error("Voicebox 不接受单次请求参考音频，请先在 Voicebox 页面把样本加入声音档案");
     let generationId = "";
     try {
-        const [profile, settings] = await Promise.all([
-            requestVoicebox<VoiceboxProfile>(config, `/profiles/${encodeURIComponent(profileId)}`, { signal: options?.signal }),
-            requestVoicebox<VoiceboxGenerationSettings>(config, "/settings/generation", { signal: options?.signal }),
+        const [profiles, settings] = await Promise.all([
+            requestVoicebox<VoiceboxProfile[]>(config, "/profiles", { signal: options?.signal }),
+            requestVoicebox<VoiceboxGenerationSettings>(config, "/settings/generation", { signal: options?.signal }).catch((): VoiceboxGenerationSettings => ({})),
         ]);
+        const profile = profiles.find((item) => item.id === profileId);
+        if (!profile) throw new Error("所选 Voicebox 声音档案不存在，请刷新档案列表后重新选择");
         const engine = profile.preset_engine || profile.default_engine || null;
         const generation = await requestVoicebox<VoiceboxGeneration>(config, "/generate", {
             method: "POST",
