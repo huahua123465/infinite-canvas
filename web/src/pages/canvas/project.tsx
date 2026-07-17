@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { BookOpen, Bot, Clapperboard, FileInput, FileText, FolderOpen, Grid2x2, Group, Home, ImageIcon, Images, List, Menu, Music2, Plus, Puzzle, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
+import { BookOpen, Bot, Clapperboard, FileInput, FileText, Fish, FolderOpen, Grid2x2, Group, Home, ImageIcon, Images, List, Menu, Music2, Plus, Puzzle, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
@@ -4440,6 +4440,12 @@ function InfiniteCanvasPage() {
                             navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
                         },
                     },
+                    {
+                        id: "open-jellyfish",
+                        label: "Jellyfish",
+                        icon: <Fish className="size-4" />,
+                        onClick: () => navigate(`/jellyfish?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`),
+                    },
                 ],
             },
             { id: "undo", label: "撤销", shortcut: "⌘Z", disabled: !historyState.canUndo, dividerBefore: true, onClick: undoCanvas },
@@ -5541,6 +5547,9 @@ function InfiniteCanvasPage() {
                     onOpenDirectorDesk={() => {
                         setLastDirectorDeskCanvasId(projectId);
                         navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
+                    }}
+                    onOpenJellyfish={() => {
+                        navigate(`/jellyfish?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
                     }}
                 />
 

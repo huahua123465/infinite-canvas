@@ -8,6 +8,7 @@ import CanvasProjectPage from "@/pages/canvas/project";
 import ConfigPage from "@/pages/config";
 import HomePage from "@/pages/home";
 import ImagePage from "@/pages/image";
+import JellyfishPage from "@/pages/jellyfish";
 import NotFound from "@/pages/not-found";
 import PromptsPage from "@/pages/prompts";
 import VideoPage from "@/pages/video";
@@ -40,5 +41,6 @@ export const router = createBrowserRouter([
             </Suspense>
         ),
     },
+    { path: "/jellyfish", element: <JellyfishPage /> },
     { path: "*", element: <NotFound /> },
 ]);

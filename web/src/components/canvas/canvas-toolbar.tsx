@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Clapperboard, Eraser, FileInput, FileText, FolderOpen, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Clapperboard, Eraser, FileInput, FileText, Fish, FolderOpen, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodeDefinition, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -36,6 +36,7 @@ export function CanvasToolbar({
     onShowImageInfoChange,
     onOpenMyAssets,
     onOpenDirectorDesk,
+    onOpenJellyfish,
 }: {
     selectedCount: number;
     canUndo: boolean;
@@ -63,6 +64,7 @@ export function CanvasToolbar({
     onShowImageInfoChange: (show: boolean) => void;
     onOpenMyAssets: () => void;
     onOpenDirectorDesk: () => void;
+    onOpenJellyfish: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const colorTheme = useThemeStore((state) => state.theme);
@@ -137,6 +139,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-director-desk" label="3D导演台" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenDirectorDesk}>
                     <Clapperboard className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-jellyfish" label="Jellyfish" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenJellyfish}>
+                    <Fish className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton
                     id="tool-style"
@@ -331,6 +336,7 @@ function toolLabel(id: string) {
     if (id === "tool-upload") return "上传素材";
     if (id === "tool-assets") return "我的素材";
     if (id === "tool-director-desk") return "3D导演台";
+    if (id === "tool-jellyfish") return "Jellyfish";
     if (id === "tool-style") return "画布外观";
     if (id === "tool-delete") return "删除选中";
     if (id === "tool-clear") return "清空画布";
