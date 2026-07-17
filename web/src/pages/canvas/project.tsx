@@ -298,7 +298,7 @@ const STORYBOARD_TEXT_IMPORT_PROMPT = `请把下面的文本整理成分镜脚�
 4. 只输出 Markdown 表格，不要解释，不要标题。`;
 const STORYBOARD_COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "分镜画面提示词"];
 const ASSET_KIND_TEXT: Record<StoryboardAssetKind, string> = { character: "人物", scene: "场景", prop: "道具" };
-const STORYBOARD_FINAL_PROMPT_PROMPT = `你是漫剧片段与 Seedance 2.0 视频导演提示词专家。请按 seedance-20 技能包的专业导演工作流，把单个 10-15 秒生产片段、第二步资产和全局风格整合成第三步“合成提示词”。
+const STORYBOARD_FINAL_PROMPT_PROMPT = `你是漫剧片段与 Seedance 2.0 视频导演提示词专家。请按 seedance-20 技能包的专业导演工作流，把单个 10-15 秒生产片段、第二步资产和全局风格整合成第三步“合成提示词”。你的任务不是把第一步画面描述改写得更华丽，而是把已锁定的场景卡翻译成模型可以执行的动作、镜头和声音指令。
 
 只输出 JSON，不要 Markdown，不要解释。
 
@@ -316,7 +316,7 @@ JSON 格式必须为：
 4. videoMotionPrompt 用于视频模型，必须严格按以下栏目依次输出：【生成规格】【参考资产绑定】【叙事目标】【起始画面】【N秒时间轴】【镜头运动】【光线与画面质感】【声音时间轴】【连续性与稳定约束】。N 必须等于当前片段时长，正文控制在 2000 字以内。
 5. 【N秒时间轴】固定写 4 个连续时间段，从 0 秒开始并精确结束于 N 秒，中间不得留空、重叠或超出总时长；四段只能推进 visualBeatIds 对应的同一地点、同一人物时期和同一动作链，依次承担空间建立、动作启动、动作推进与变化、稳定落点。最后保留 1-2 秒稳定结束画面，不新增人物、地点、道具、事件或转场。【声音时间轴】使用相同分段，让每句 VO 与同一时间段的可见证据直接对应。
 6. 每个片段只围绕 visualBeatIds 的一个主要可见事实和一个叙事目标；voiceoverBeatIds 只能补充不要求新画面的背景事实。必须继承本片段剧作字段中的 dramaticFunction、goal、obstacle、stakes、tactic、actionBeats、obstacleReaction、turningAction、result、plotRhythm、emotionRhythm 和 valueShift；四段时间轴按 actionBeats 的因果顺序推进，让阻力反作用触发 turningAction，再落到 result，不得把 voiceoverBeatIds 重新演成第二段剧情，不得使用蒙太奇跨越多个地点或人物时期。
-7. 动作用 physical verbs 写清楚演员/物体、力度、速度、幅度、身体部位、物理后果和终点，例如手指攥紧衣角、肩膀微颤后松开、脚步踩进泥水并停住。
+7. 动作用 physical verbs 写清楚演员/物体、力度、速度、幅度、身体部位、物理后果和终点，例如手指攥紧衣角、肩膀微颤后松开、脚步踩进泥水并停住。每个动作必须包含“谁的哪个身体部位/物体 + 做什么 + 造成什么可见变化”，禁止只写“情绪增强、关系恶化、气氛紧张”。
 8. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
 9. 一个片段只指定一种主要运镜，并写清起幅、速度、主体关系和落幅；内部节拍可用固定机位切景别或轻微推拉，但不要同时要求推拉摇移、无人机、环绕和手持。
 10. 有对白时用 {台词} 表示；旁白逐行使用“起止秒 VO：内容”；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。所有 VO 中文总字数不得超过 N×4，15 秒最多约 60 字；对白要短，唇形镜头优先锁定机位或轻微推镜。
@@ -332,7 +332,9 @@ JSON 格式必须为：
 20. 不要编造与剧本、分镜、资产冲突的新人物、新地点或新道具；如果信息不足，选择保守、可拍摄、低歧义的表达。
 21. “本片段事实与连续性计划”是事实约束：必须按顺序覆盖全部 sourceBeats，并让动作从 startState 到 endState；transition=continue 时承接上一片段，cut/time-jump 时明确新起场景，不得为了连续而混合两个时期。
 22. 如素材包含不适合直观呈现的脆弱处境，只调整视觉表达：使用朴素服装、空镜、灯光变化、遗留物件、人物克制反应等间接画面，保留原始因果和关系变化，不得改写成相反结果。
-23. 输出前执行保守自检：是否只有一个主要场景资产、一个人物时期、一个主动作和一个主运镜；每句 VO 是否与同时间段可见动作对应；VO 是否超过 N×4 个汉字；最后 1-2 秒是否只稳定停留；资产是否真实存在。任一不满足都先重写再输出。`;
+23. 四段时间轴必须分别写出：空间/站位确认、动作启动、阻力反作用与动作转折、结果和稳定落点；第二段和第三段必须明确引用 actionBeats 中的实际物理动作，第三段必须写出 obstacleReaction 如何触发 turningAction，第四段只能保持 result/endState，不能添加新剧情。
+24. 【声音时间轴】必须同时写全程环境声、动作音效、对白或旁白的精确起止段；生成声音默认开启，除非当前视频设置明确写了关闭。VO 只允许使用第一步已提供的旁白原文，不得把导演说明、同步要求、栏目名或资产绑定说明写成声音。
+25. 输出前执行保守自检：是否只有一个主要场景资产、一个人物时期、一个主动作和一个主运镜；每句 VO 是否与同时间段可见动作对应；VO 是否超过 N×4 个汉字；最后 1-2 秒是否只稳定停留；资产是否真实存在；声音是否明确。任一不满足都先重写再输出。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -2305,6 +2307,7 @@ function InfiniteCanvasPage() {
                 if (node.id !== nodeId) return node;
                 const currentRows = parseStoryboardRows(node.metadata?.storyboardRows);
                 const normalized = renumberStoryboardRowsForCanvas(typeof rows === "function" ? rows(currentRows) : rows);
+                const structuralChange = normalized.length !== currentRows.length;
                 return {
                     ...node,
                     metadata: {
@@ -2312,6 +2315,19 @@ function InfiniteCanvasPage() {
                         content: storyboardRowsToMarkdownForCanvas(normalized),
                         storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
                         storyboardStep: "shots",
+                        ...(structuralChange ? {
+                            storyboardPlanningConfigKey: undefined,
+                            storyboardPlanningCheckpoint: undefined,
+                            storyboardShotPlans: undefined,
+                            storyboardCoverage: undefined,
+                            storyboardChapters: undefined,
+                            storyboardActiveChapterId: undefined,
+                            storyboardDramaturgyPlan: undefined,
+                            storyboardDramaturgySource: undefined,
+                            storyboardDramaturgySkillRoot: undefined,
+                        } : {}),
+                        storyboardPromptDetails: undefined,
+                        storyboardPromptErrors: undefined,
                         storyboardLockedNarrationChapterIds: [],
                     },
                 };
@@ -2321,6 +2337,23 @@ function InfiniteCanvasPage() {
 
     const updateStoryboardAsset = useCallback((nodeId: string, assetId: string, patch: Partial<StoryboardAsset>) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardAssets: (node.metadata?.storyboardAssets || []).map((asset) => (asset.id === assetId ? { ...asset, ...patch } : asset)) } } : node)));
+    }, []);
+
+    const updateStoryboardShotPlan = useCallback((nodeId: string, rowIndex: number, patch: Partial<StoryboardShotPlan>) => {
+        setNodes((prev) => prev.map((node) => {
+            if (node.id !== nodeId) return node;
+            const current = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+            if (!current) return node;
+            const chapterId = current.chapterId;
+            const locked = new Set(node.metadata?.storyboardLockedNarrationChapterIds || []);
+            if (chapterId) locked.delete(chapterId);
+            const plans = { ...(node.metadata?.storyboardShotPlans || {}), [String(rowIndex)]: { ...current, ...patch } };
+            const promptDetails = { ...(node.metadata?.storyboardPromptDetails || {}) };
+            const promptErrors = { ...(node.metadata?.storyboardPromptErrors || {}) };
+            delete promptDetails[String(rowIndex)];
+            delete promptErrors[String(rowIndex)];
+            return { ...node, metadata: { ...node.metadata, storyboardShotPlans: plans, storyboardPromptDetails: promptDetails, storyboardPromptErrors: promptErrors, storyboardLockedNarrationChapterIds: Array.from(locked) } };
+        }));
     }, []);
 
     const deleteStoryboardAsset = useCallback((nodeId: string, assetId: string) => {
@@ -2578,7 +2611,7 @@ function InfiniteCanvasPage() {
                                       storyboardDramaturgyPlan: dramaturgyPlan,
                                       storyboardDramaturgySource: dramaturgySource,
                                       storyboardDramaturgySkillRoot: dramaturgySkillRoot,
-                                      storyboardShotPlans: shotPlans,
+                    storyboardShotPlans: Object.fromEntries(production.shots.map((item, index) => [String(index), { ...item.plan, shotId: item.plan.shotId || `S${String(index + 1).padStart(3, "0")}` }])),
                                       storyboardCoverage: coverage,
                                       storyboardProductionScope: productionScope,
                                       storyboardProductionMode: productionMode,
@@ -3282,6 +3315,7 @@ function InfiniteCanvasPage() {
                             const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                             detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
                             assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
+                            assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
                         } catch (error) {
                             if (isGenerationCanceled(error)) throw error;
                             if (isStoryboardVideoPromptFormatError(error)) {
@@ -3306,6 +3340,7 @@ function InfiniteCanvasPage() {
                                     const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                                     detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
                                     assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
+                                    assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
                                 } catch (repairError) {
                                     if (isGenerationCanceled(repairError)) throw repairError;
                                     lastError = isStoryboardVideoPromptFormatError(repairError) ? repairError.message : friendlyGenerationError(repairError, "提示词 JSON 自动修复失败");
@@ -5521,6 +5556,7 @@ function InfiniteCanvasPage() {
                     onProductionConfigChange={handleConfigNodeChange}
                     onCreateChapterNodes={createStoryboardChapterNodes}
                     onNarrationLockChange={setStoryboardNarrationLocked}
+                    onShotPlanChange={updateStoryboardShotPlan}
                     config={effectiveConfig}
                 />
 
@@ -6168,7 +6204,7 @@ function storyboardVideoSettingsFallbackPatch(node: CanvasNodeData, text: string
     if (!node.metadata?.size && parsed.size) patch.size = parsed.size;
     if (!node.metadata?.vquality && parsed.vquality) patch.vquality = parsed.vquality;
     if (!node.metadata?.seconds && parsed.seconds) patch.seconds = parsed.seconds;
-    if (!node.metadata?.generateAudio && parsed.generateAudio) patch.generateAudio = parsed.generateAudio;
+    if (!node.metadata?.generateAudio) patch.generateAudio = parsed.generateAudio === undefined ? "true" : parsed.generateAudio;
     if (!node.metadata?.watermark && parsed.watermark) patch.watermark = parsed.watermark;
     return patch;
 }
@@ -7497,7 +7533,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const videoSize = customConfig?.size || generationConfig.size;
     const videoSeconds = customConfig?.seconds || storyboardVideoSecondsForRow(generationConfig.videoSeconds, row);
     const videoQuality = customConfig?.vquality || generationConfig.vquality;
-    const videoGenerateAudio = customConfig?.generateAudio || generationConfig.videoGenerateAudio;
+    const videoGenerateAudio = customConfig?.generateAudio ?? generationConfig.videoGenerateAudio ?? "true";
     const videoWatermark = customConfig?.watermark || generationConfig.videoWatermark;
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
@@ -7785,6 +7821,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const camera = storyboardConservativeCamera(row[7]);
     const sound = storyboardSafetyComposeText((row[6] || "低声环境底噪与轻微生活声").split(/[。；;]/)[0], true);
     const style = storyboardSafetyComposeText(node.metadata?.storyboardAssetStyle || "", true);
+    const videoGenerateAudio = node.metadata?.generateAudio ?? "true";
     const dramaticGoal = storyboardSafetyComposeText(shotPlan?.goal || visibleBeat, true);
     const dramaticObstacle = storyboardSafetyComposeText(shotPlan?.obstacle || "当前环境与关系压力", true);
     const dramaticResult = storyboardSafetyComposeText(shotPlan?.result || endState, true);
@@ -7808,7 +7845,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     return {
         storyboardPrompt: [assetBinding.replace(/\n/g, "；"), [timeStage, sceneAsset ? `@${sceneAsset.name}` : scene, framing].filter(Boolean).join("，"), `${subject}处于${startState}，正准备${dramaticGoal}，身体保持即将执行“${tactic}”的起始姿态`, `画面承担${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}功能，预示${valueShift}`, lighting, style, "静态单场景构图，人物身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
         videoMotionPrompt: [
-            "【生成规格】", `${duration}秒，单一连续镜头，画幅、分辨率和声音遵循当前视频设置。`,
+            "【生成规格】", `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。`,
             "【参考资产绑定】", assetBinding,
             "【叙事目标】", `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${subject}尝试${dramaticGoal}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`,
             "【起始画面】", `${sceneAsset ? `@${sceneAsset.name}` : scene}，${framing}。${subject}处于${startState}。`,
@@ -7819,7 +7856,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
             `${changeEnd}-${duration}秒：动作停止并落在${endState}，明确呈现${valueShift}；镜头到达终点后保持稳定，不再增加新动作，为下一片段保留连续性落点。`,
             "【镜头运动】", `${camera}。全程只使用这一种主运镜，不改变机位逻辑，不叠加推拉摇移、环绕、手持或突然变焦。`,
             "【光线与画面质感】", `${lighting}。${style || "保持当前项目画风、自然曝光和真实材质"}，光源方向和人物画风全程一致。`,
-            "【声音时间轴】", `0-${duration}秒：<${sound}>。${voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；不额外生成旁白、字幕或背景音乐。"}`,
+            "【声音时间轴】", `0-${duration}秒：<${sound}>。${videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"}`,
             "【连续性与稳定约束】", "保持当前地点不变，不使用蒙太奇或跨场景转场；人物脸型、年龄状态、服装、身体比例、手指和场景结构稳定；资产不得变形、替换或凭空消失；无闪烁、跳帧、穿模、字幕、文字、Logo 或水印。",
         ].join("\n"),
         assetMentions,
@@ -7959,7 +7996,7 @@ function buildSeedanceStoryboardPromptContext(node: CanvasNodeData, rowIndex: nu
         node.metadata?.size ? `画幅/比例：${node.metadata.size}` : "",
         node.metadata?.seconds ? `视频时长：${node.metadata.seconds}s` : "",
         node.metadata?.vquality ? `清晰度：${node.metadata.vquality}` : "",
-        node.metadata?.generateAudio ? `生成声音：${node.metadata.generateAudio}` : "",
+        `生成声音：${node.metadata?.generateAudio === "false" ? "关闭" : "开启"}`,
         node.metadata?.watermark ? `水印设置：${node.metadata.watermark}` : "",
     ].filter(Boolean);
     const assetNames = assets.map((asset) => `@${asset.name}`).join("、") || "无";
@@ -8029,6 +8066,16 @@ function assertStoryboardVideoPromptFormat(prompt: string, duration: number, det
     if (!/稳定|保持|停住|静止|落点|不再/.test(finalLine)) throw new Error("视频运动提示词格式不完整：最后1-2秒必须只保持稳定落点，不得继续增加剧情");
     const sceneMentions = assets.filter((asset) => asset.kind === "scene" && ((detail?.assetMentions || []).includes(`@${asset.name}`) || prompt.includes(`@${asset.name}`)));
     if (new Set(sceneMentions.map((asset) => asset.id)).size > 1) throw new Error("视频运动提示词格式不完整：普通片段最多只能绑定一个主要场景资产");
+}
+
+function assertStoryboardPromptActionCoverage(prompt: string, plan?: StoryboardShotPlan) {
+    if (!plan) return;
+    const timeline = prompt.match(/【\d+秒时间轴】([\s\S]*?)【镜头运动】/)?.[1] || "";
+    const required = [plan.goal, plan.tactic, ...(plan.actionBeats || []), plan.obstacleReaction, plan.turningAction, plan.result].filter((value): value is string => Boolean(value && value.trim()));
+    const missing = required.filter((value) => !timeline.includes(value.trim().slice(0, Math.min(10, value.trim().length))));
+    if (missing.length >= Math.max(2, Math.ceil(required.length * 0.45))) throw new Error("视频运动提示词格式不完整：四段时间轴没有继承第一步场景卡的动作链");
+    const finalRange = timeline.match(/(?:^|\n)\s*\d+(?:\.\d+)?\s*[-—–~至]\s*\d+(?:\.\d+)?\s*秒\s*[：:]([^\n]+)/)?.[1] || "";
+    if (plan.result && !finalRange.includes(plan.result.trim().slice(0, Math.min(10, plan.result.trim().length)))) throw new Error("视频运动提示词格式不完整：最后一段没有落到场景卡可见结果");
 }
 
 function storyboardLockedSpeechForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {

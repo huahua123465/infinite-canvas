@@ -67,10 +67,11 @@ type CanvasScriptNodeDialogProps = {
     onProductionConfigChange: (nodeId: string, patch: { storyboardProductionScope?: StoryboardProductionScope; storyboardProductionMode?: StoryboardProductionMode; storyboardEpisodeDurationSeconds?: number; storyboardCustomVideoBudget?: number; storyboardTargetChapterCount?: number }) => void;
     onCreateChapterNodes: (node: CanvasNodeData) => void;
     onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void;
+    onShotPlanChange: (nodeId: string, rowIndex: number, patch: Partial<StoryboardShotPlan>) => void;
     config: AiConfig;
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, onCreateChapterNodes, onNarrationLockChange, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, config }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -111,6 +112,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
     const [previewSceneSheetAssetId, setPreviewSceneSheetAssetId] = useState<string | null>(null);
     const [promptEditorRowIndex, setPromptEditorRowIndex] = useState<number | null>(null);
+    const [shotPlanEditorRowIndex, setShotPlanEditorRowIndex] = useState<number | null>(null);
     const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
@@ -338,7 +340,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             staticShotCount={staticShotCount}
                         />
                     ) : (
-                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
+                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
                     <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
@@ -375,6 +377,17 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                                 </div>
                             </div>
                         </Modal>
+                    ) : null}
+                    {shotPlanEditorRowIndex !== null && node.metadata?.storyboardShotPlans?.[String(shotPlanEditorRowIndex)] ? (
+                        <ShotPlanEditorModal
+                            row={rows[shotPlanEditorRowIndex] || []}
+                            plan={node.metadata.storyboardShotPlans[String(shotPlanEditorRowIndex)]}
+                            onClose={() => setShotPlanEditorRowIndex(null)}
+                            onSave={(patch) => {
+                                onShotPlanChange(node.id, shotPlanEditorRowIndex, patch);
+                                setShotPlanEditorRowIndex(null);
+                            }}
+                        />
                     ) : null}
                     {editingAsset ? (
                         <div className="pointer-events-none absolute inset-0 z-40 bg-transparent">
@@ -500,7 +513,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
+function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     const plans = node.metadata?.storyboardShotPlans || {};
     const chapters = node.metadata?.storyboardChapters || [];
@@ -588,6 +601,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                     </div>
                                     <div className="flex items-center justify-center gap-1.5">
                                         <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="打开合成提示词" onClick={() => onOpenPrompt(rowIndex)} />
+                                        <Button size="small" type="text" className="!px-1.5 !text-[#d8d8d8]" icon={<Maximize2 className="size-3.5" />} title="编辑编剧场景卡" onClick={() => onOpenShotPlan(rowIndex)}>场景卡</Button>
                                         <RowActionButton loading={actionKey === `image:${rowIndex}`} icon={<ImageIcon className="size-3.5" />} title="生成分镜图" onClick={() => onGenerateImage(node, rowIndex)} />
                                         <RowActionButton loading={actionKey === `video:${rowIndex}`} icon={<Video className="size-3.5" />} title="生成视频" onClick={() => onGenerateVideo(node, rowIndex)} />
                                         <Dropdown
@@ -1031,6 +1045,32 @@ function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, sty
             </div>
         </div>
     );
+}
+
+function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; plan: StoryboardShotPlan; onClose: () => void; onSave: (patch: Partial<StoryboardShotPlan>) => void }) {
+    const { message } = App.useApp();
+    const [draft, setDraft] = useState<StoryboardShotPlan>(() => ({ ...plan, actionBeats: [...(plan.actionBeats || [])] }));
+    const update = (key: keyof StoryboardShotPlan, value: string | string[]) => setDraft((current) => ({ ...current, [key]: value }));
+    const fields: Array<[keyof StoryboardShotPlan, string, string]> = [
+        ["goal", "当前目标", "人物此刻要完成的可见动作"],
+        ["obstacle", "阻力/压力", "同场景中如何阻碍目标"],
+        ["stakes", "失败代价", "失败会具体失去什么或延误什么"],
+        ["tactic", "人物策略", "人物采取的物理策略"],
+        ["obstacleReaction", "阻力反作用", "阻力如何改变动作"],
+        ["turningAction", "动作转折", "哪个动作改变场面方向"],
+        ["result", "可见结果", "片段结束时观众能看到什么变化"],
+        ["valueShift", "价值变化", "开始状态 → 结束状态"],
+        ["startState", "起始状态", "人物、物件、空间在开头的状态"],
+        ["endState", "结束状态", "人物、物件、空间在结尾的状态"],
+    ];
+    return <Modal open centered footer={null} width={860} closeIcon={<X className="size-5" />} onCancel={onClose} title={`第 ${row[0] || ""} 镜 · 编剧场景卡`}>
+        <div className="grid max-h-[72vh] gap-3 overflow-y-auto pr-1">
+            <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">当前片段必须保持一个主要可见事实、一个地点和一个人物时期。动作要写演员或物体实际做什么，不要只写心理变化。</div>
+            {fields.map(([key, label, placeholder]) => <label key={String(key)} className="grid gap-1 text-xs text-[#bdbdbd]"><span>{label}</span><Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} value={String(draft[key] || "")} placeholder={placeholder} onChange={(event) => update(key, event.target.value)} /></label>)}
+            <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>2-4 个因果动作节拍</span><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} value={(draft.actionBeats || []).join("\n")} placeholder="每行一个动作，后一行由前一行结果触发" onChange={(event) => update("actionBeats", event.target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean).slice(0, 4))} /></label>
+        </div>
+        <div className="mt-4 flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" onClick={() => { onSave({ goal: draft.goal, obstacle: draft.obstacle, stakes: draft.stakes, tactic: draft.tactic, actionBeats: draft.actionBeats, obstacleReaction: draft.obstacleReaction, turningAction: draft.turningAction, result: draft.result, valueShift: draft.valueShift, startState: draft.startState, endState: draft.endState }); message.success(`第 ${row[0] || ""} 镜场景卡已保存，旧视频提示词已清除，请重新合成`); }}>保存场景卡</Button></div>
+    </Modal>;
 }
 
 function BatchSceneSheetButton({ node, actionKey, scenes, onBatchGenerateSceneSheets, onStopSceneSheets }: { node: CanvasNodeData; actionKey?: string | null; scenes: StoryboardAsset[]; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void }) {

@@ -117,6 +117,7 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
         return [{
             row,
             plan: {
+                shotId: text(item.shotId),
                 sourceBeatIds: stringList(item.sourceBeatIds),
                 visualBeatIds: stringList(item.visualBeatIds),
                 voiceoverBeatIds: stringList(item.voiceoverBeatIds),
@@ -199,6 +200,7 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
             chapters.push(currentChapter);
         }
         const chapter = currentChapter;
+        if (!chapter) return;
         indexes.forEach((index) => {
             const shot = shots[index];
             chapter.shotIndexes.push(index);

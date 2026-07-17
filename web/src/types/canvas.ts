@@ -159,6 +159,7 @@ export type StoryboardDramaturgyPlan = {
 };
 
 export type StoryboardShotPlan = {
+    shotId?: string;
     sourceBeatIds: string[];
     visualBeatIds?: string[];
     voiceoverBeatIds?: string[];
