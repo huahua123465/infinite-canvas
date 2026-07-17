@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Empty, Input, Modal } from "antd";
-import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, FileText, Group, Image as ImageIcon, Music2, Pencil, Puzzle, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Boxes, ChevronRight, Copy, Expand, FileText, Group, Image as ImageIcon, Music2, Pencil, Puzzle, RefreshCw, Star, Trash2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
@@ -1603,12 +1603,15 @@ function StoryboardVideoPromptPreviewModal({
     const audioReferences = node.metadata?.storyboardVideoAudioReferences || [];
     const audioContinuityPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     const autoFinalPrompt = storyboardVideoFinalPrompt(prompt, references, audioReferences);
+    const storedFinalPrompt = node.metadata?.storyboardVideoFinalPrompt || "";
+    const migratedFinalPrompt = storedFinalPrompt ? storyboardVideoFinalPrompt(stripStoryboardVideoAudioContinuityPrompt(stripStoryboardVideoFrameContinuityPrompt(storedFinalPrompt)), references, audioReferences) : autoFinalPrompt;
     const [draftConfig, setDraftConfig] = useState(() => buildStoryboardVideoNodeConfig(globalConfig, node));
     const draftConfigRef = useRef(draftConfig);
-    const [draftFinalPrompt, setDraftFinalPrompt] = useState(node.metadata?.storyboardVideoFinalPrompt || autoFinalPrompt);
+    const [draftFinalPrompt, setDraftFinalPrompt] = useState(migratedFinalPrompt);
     const [draftReferences, setDraftReferences] = useState<StoryboardVideoReference[]>(() => references);
+    const [promptExpanded, setPromptExpanded] = useState(false);
     const referenceCandidates = storyboardReferenceAssetCandidates(references, scriptReferences, imageAssets);
-    const continuityPrompt = storyboardVideoFrameContinuityPrompt(draftReferences);
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(draftReferences, draftFinalPrompt);
     const draftAssetLinks = draftReferences.map(storyboardReferenceToMentionLink);
     const orderedReferences = sortStoryboardVideoReferences(draftReferences);
     const modalFirstFrameSource = storyboardFirstFrameSourceText(draftReferences);
@@ -1627,7 +1630,10 @@ function StoryboardVideoPromptPreviewModal({
         const nextConfig = buildStoryboardVideoNodeConfig(globalConfig, node);
         draftConfigRef.current = nextConfig;
         setDraftConfig(nextConfig);
-        setDraftFinalPrompt(node.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences));
+        const stored = node.metadata?.storyboardVideoFinalPrompt || "";
+        const migrated = stored ? storyboardVideoFinalPrompt(stripStoryboardVideoAudioContinuityPrompt(stripStoryboardVideoFrameContinuityPrompt(stored)), references, audioReferences) : storyboardVideoFinalPrompt(node.metadata?.prompt || "", references, audioReferences);
+        setDraftFinalPrompt(migrated);
+        if (migrated !== stored && migrated.trim()) onConfigChange(storyboardVideoConfigPatch(nextConfig, prompt, migrated));
         setDraftReferences(references);
         setSaveHint("");
     }, [open, node.id]);
@@ -1800,7 +1806,10 @@ function StoryboardVideoPromptPreviewModal({
                 <section>
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold">最终生成提示词</div>
-                        <span className="text-xs text-stone-500">文字与参考图独立保存，删除 @ 名称不会移除已选图片</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-stone-500">文字与参考图独立保存，删除 @ 名称不会移除已选图片</span>
+                            <Button type="text" size="small" icon={<Expand className="size-3.5" />} onClick={() => setPromptExpanded(true)}>放大查看</Button>
+                        </div>
                     </div>
                     <StoryboardPromptAssetPicker references={referenceCandidates} selected={draftReferences} theme={theme} onToggle={toggleReference} />
                     <CanvasResourceMentionTextarea
@@ -1836,6 +1845,23 @@ function StoryboardVideoPromptPreviewModal({
                     </Button>
                 </div>
             </div>
+            <Modal
+                open={promptExpanded}
+                title="最终生成提示词预览"
+                onCancel={() => setPromptExpanded(false)}
+                footer={null}
+                width={980}
+                centered
+                destroyOnHidden
+                styles={{ body: { maxHeight: "72vh", overflowY: "auto" } }}
+            >
+                <div className="whitespace-pre-wrap text-sm leading-7 text-stone-700 dark:text-stone-200">
+                    {draftFinalPrompt ? renderStoryboardPromptMentions(draftFinalPrompt, draftAssetLinks, theme) : <span className="text-stone-400">暂无最终提示词</span>}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-1.5 border-t border-stone-200 pt-3 dark:border-stone-700">
+                    {draftAssetLinks.length ? draftAssetLinks.map((link) => <StoryboardAssetChip key={link.mention} link={link} compact theme={theme} />) : <span className="text-xs text-stone-500">暂未识别到 @ 资产</span>}
+                </div>
+            </Modal>
         </Modal>
     );
 }
@@ -2012,12 +2038,13 @@ function storyboardVideoConfigPatch(config: AiConfig, prompt: string, finalPromp
 }
 
 function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[], audioReferences?: StoryboardAudioReference[]) {
-    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
+    const basePrompt = stripStoryboardVideoFrameContinuityPrompt(prompt);
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references, basePrompt);
     const audioPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     const additions = [continuityPrompt, audioPrompt].filter(Boolean).join("\n");
-    if (!additions) return prompt;
+    if (!additions) return basePrompt;
     const marker = "【连续性与稳定约束】";
-    return prompt.includes(marker) ? prompt.replace(marker, `${marker}\n${additions}`).trim() : `${prompt}\n\n${additions}`.trim();
+    return basePrompt.includes(marker) ? basePrompt.replace(marker, `${marker}\n${additions}`).trim() : `${basePrompt}\n\n${additions}`.trim();
 }
 
 function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
@@ -2029,12 +2056,13 @@ function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioRefere
     ].join("\n");
 }
 
-function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[]) {
+function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[], prompt?: string) {
     if (!references?.length) return "";
-    const firstFrames = references.filter((item) => item.role === "firstFrame");
-    const sceneLocks = references.filter((item) => item.role === "sceneLock");
-    const subjectReferences = references.filter((item) => (item.role || "reference") === "reference");
-    const lastFrames = references.filter((item) => item.role === "lastFrame");
+    const relevantReferences = prompt?.trim() ? references.filter((item) => prompt.includes(item.mention) || item.role === "firstFrame" || item.role === "sceneLock" || item.role === "lastFrame") : references;
+    const firstFrames = relevantReferences.filter((item) => item.role === "firstFrame");
+    const sceneLocks = relevantReferences.filter((item) => item.role === "sceneLock");
+    const subjectReferences = relevantReferences.filter((item) => (item.role || "reference") === "reference");
+    const lastFrames = relevantReferences.filter((item) => item.role === "lastFrame");
     if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
@@ -2268,7 +2296,12 @@ function storyboardVideoReferenceSavePatch(node: CanvasNodeData, references: Sto
 }
 
 function stripStoryboardVideoFrameContinuityPrompt(prompt: string) {
-    return prompt.split(/\n\n视频连续性要求：/)[0].trim();
+    return prompt
+        .split(/\n\n视频连续性要求：/)[0]
+        .split("\n")
+        .filter((line) => !/^\s*-\s*(?:以首帧参考图|以场景锁定参考图|以主体参考图|视频动作和镜头运动需要自然过渡到尾帧参考图|保持人物身份、服装、场景、光影和空间关系连续)/.test(line))
+        .join("\n")
+        .trim();
 }
 
 function stripStoryboardVideoAudioContinuityPrompt(prompt: string) {

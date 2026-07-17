@@ -69,9 +69,10 @@ type CanvasScriptNodeDialogProps = {
     onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void;
     onShotPlanChange: (nodeId: string, rowIndex: number, patch: Partial<StoryboardShotPlan>) => void;
     config: AiConfig;
+    promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" };
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, config }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, config, promptProgress }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -284,7 +285,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             />
                         ) : null}
                         {view === "prompts" ? (
-                            <PromptStepToolbar node={node} actionKey={actionKey} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} pendingPromptCount={pendingPromptCount} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onRecomposeAll={confirmRecomposeAllPrompts} onStopPromptGeneration={onStopPromptGeneration} />
+                            <PromptStepToolbar node={node} actionKey={actionKey} promptProgress={promptProgress} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} pendingPromptCount={pendingPromptCount} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onRecomposeAll={confirmRecomposeAllPrompts} onStopPromptGeneration={onStopPromptGeneration} />
                         ) : null}
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
@@ -349,6 +350,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             row={promptEditorRow}
                             rowIndex={promptEditorRowIndex}
                             detail={promptEditorDetail}
+                            promptProgress={promptProgress}
                             config={config}
                             actionKey={actionKey}
                             model={node.metadata?.model || config.textModel || config.model}
@@ -764,7 +766,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
     );
 }
 
-function PromptComposeModal({ node, row, rowIndex, detail, config, model, actionKey, onModelChange, onSave, onRegenerate, onGenerateImage, onGenerateVideo, onClose }: { node: CanvasNodeData; row: string[]; rowIndex: number; detail: StoryboardPromptDetail | null; config: AiConfig; model: string; actionKey?: string | null; onModelChange: (model: string) => void; onSave: (detail: StoryboardPromptDetail) => void; onRegenerate: () => void; onGenerateImage: () => void; onGenerateVideo: () => void; onClose: () => void }) {
+function PromptComposeModal({ node, row, rowIndex, detail, config, model, actionKey, promptProgress, onModelChange, onSave, onRegenerate, onGenerateImage, onGenerateVideo, onClose }: { node: CanvasNodeData; row: string[]; rowIndex: number; detail: StoryboardPromptDetail | null; config: AiConfig; model: string; actionKey?: string | null; promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" }; onModelChange: (model: string) => void; onSave: (detail: StoryboardPromptDetail) => void; onRegenerate: () => void; onGenerateImage: () => void; onGenerateVideo: () => void; onClose: () => void }) {
     const [draft, setDraft] = useState<StoryboardPromptDetail>(() => initialPromptDetail(detail, row));
     const loading = actionKey === `prompt:${rowIndex}` || actionKey === "prompt:all";
 
@@ -798,6 +800,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                         <div className="mt-1 flex items-center gap-2 text-xs text-[#9f9f9f]">
                             <span className="truncate">{row[2] || node.title}</span>
                             {draft.promptSource ? <span title={draft.promptSkillRoot || STORYBOARD_PROMPT_SOURCE_TEXT[draft.promptSource]} className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${draft.promptSource === "skill" ? "bg-emerald-500/15 text-emerald-200" : draft.promptSource === "fallback" ? "bg-amber-500/15 text-amber-200" : "bg-white/10 text-[#cfcfcf]"}`}>{STORYBOARD_PROMPT_SOURCE_TEXT[draft.promptSource]}</span> : null}
+                            {promptProgress?.status === "running" ? <span className="shrink-0 text-cyan-200"><LoaderCircle className="mr-1 inline-block size-3 animate-spin" />{promptProgress.phase}{promptProgress.attempt && promptProgress.attempt > 1 ? `（第 ${promptProgress.attempt} 次尝试）` : ""}</span> : null}
                         </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1137,9 +1140,10 @@ function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount
     );
 }
 
-function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCount, pendingPromptCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onRecomposeAll, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; dynamicPromptCount: number; dynamicShotCount: number; pendingPromptCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onRecomposeAll: () => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
+function PromptStepToolbar({ node, actionKey, promptProgress, dynamicPromptCount, dynamicShotCount, pendingPromptCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onRecomposeAll, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" }; dynamicPromptCount: number; dynamicShotCount: number; pendingPromptCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onRecomposeAll: () => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
     const remaining = pendingPromptCount;
     const generating = actionKey === "prompt:all";
+    const progressText = promptProgress?.status === "running" ? `第 ${promptProgress.current}/${promptProgress.total} 镜：${promptProgress.phase}${promptProgress.attempt && promptProgress.attempt > 1 ? `（第 ${promptProgress.attempt} 次尝试）` : ""}` : promptProgress?.status === "completed" ? "本轮合成已完成" : promptProgress?.status === "paused" ? "合成已暂停，已保留已完成结果" : promptProgress?.status === "error" ? "合成遇到错误，可继续重试" : "";
     return (
         <div className="flex shrink-0 items-center gap-4">
             {generating ? (
@@ -1150,6 +1154,7 @@ function PromptStepToolbar({ node, actionKey, dynamicPromptCount, dynamicShotCou
                 </Button>
             )}
             <div className="text-sm font-semibold">{dynamicPromptCount}/{dynamicShotCount} 个视频片段完成</div>
+            {progressText ? <div className={`max-w-[300px] text-xs ${promptProgress?.status === "error" ? "text-red-300" : promptProgress?.status === "running" ? "text-cyan-200" : "text-[#9f9f9f]"}`}>{promptProgress?.status === "running" ? <LoaderCircle className="mr-1 inline-block size-3.5 animate-spin" /> : null}{progressText}</div> : null}
             {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount}</div> : null}
             {staticShotCount ? <div className="text-xs text-[#8f8f8f]">{staticShotCount} 个静态片段暂不调用模型</div> : null}
         </div>

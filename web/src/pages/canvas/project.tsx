@@ -714,6 +714,7 @@ function InfiniteCanvasPage() {
     const [promptAssistantLoading, setPromptAssistantLoading] = useState(false);
     const [promptAssistantModel, setPromptAssistantModel] = useState("");
     const [storyboardActionKey, setStoryboardActionKey] = useState<string | null>(null);
+    const [storyboardPromptProgress, setStoryboardPromptProgress] = useState<{ current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" } | undefined>();
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -3323,6 +3324,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey(rowIndex === undefined ? "prompt:all" : `prompt:${rowIndex}`);
+            setStoryboardPromptProgress({ current: 0, total: indexes.length, phase: "准备读取导演规则", status: "running" });
             setRunningNodeId(scriptNode.id);
             const targetId = `storyboard-prompts:${scriptNode.id}`;
             const controller = startGenerationRequest(targetId, scriptNode.id, scriptNode.id);
@@ -3332,7 +3334,10 @@ function InfiniteCanvasPage() {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
                 let conservativeFallback = false;
                 for (const index of indexes) {
+                    const currentIndex = indexes.indexOf(index) + 1;
+                    setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "准备当前片段", status: "running" });
                     if (conservativeFallback) {
+                        setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "生成保守兜底提示词", status: "running" });
                         updateStoryboardPromptDetail(scriptNode.id, index, buildStoryboardConservativePromptDetail(scriptNode, rows, index));
                         completed += 1;
                         continue;
@@ -3341,12 +3346,14 @@ function InfiniteCanvasPage() {
                     let lastError = "合成提示词失败";
                     let safetyRejects = 0;
                     for (let attempt = 0; attempt < 3 && !detail; attempt += 1) {
+                        setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "请求文本模型", attempt: attempt + 1, status: "running" });
                         let answer = "";
                         try {
                             const source = buildStoryboardPromptComposeSource(scriptNode, rows, index, attempt > 0);
                             answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction.content}\n\n${source}` }], () => {}, { signal: controller.signal });
                             detail = parseStoryboardPromptDetailAnswer(answer, scriptNode.metadata?.storyboardAssets || []);
                             const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
+                            setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "校验提示词结构与动作", attempt: attempt + 1, status: "running" });
                             detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
                             assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
                             assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
@@ -3387,6 +3394,7 @@ function InfiniteCanvasPage() {
                         }
                     }
                     if (detail) {
+                        setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "保存当前片段", status: "running" });
                         updateStoryboardPromptDetail(scriptNode.id, index, detail.promptSource ? detail : { ...detail, promptSource: promptInstruction.source, promptSkillRoot: promptInstruction.skillRoot });
                         completed += 1;
                     } else {
@@ -3396,9 +3404,15 @@ function InfiniteCanvasPage() {
                 }
                 if (failed) message.warning(`本轮完成 ${completed} 个视频片段，${failed} 个重试后仍失败，可再次点击重试`);
                 else message.success(rowIndex === undefined ? `${replaceExisting ? "已重新合成" : "已合成"}当前集 ${completed} 个视频片段提示词` : "合成提示词已生成");
+                setStoryboardPromptProgress({ current: indexes.length, total: indexes.length, phase: failed ? `完成，失败 ${failed} 个` : "全部完成", status: failed ? "error" : "completed" });
             } catch (error) {
-                if (isGenerationCanceled(error)) message.info(`已暂停合成，本轮完成 ${completed} 个，已生成结果均已保留`);
-                else message.error(friendlyGenerationError(error, completed ? `合成中断，本轮已保留 ${completed} 个结果` : "合成提示词失败"));
+                if (isGenerationCanceled(error)) {
+                    message.info(`已暂停合成，本轮完成 ${completed} 个，已生成结果均已保留`);
+                    setStoryboardPromptProgress({ current: completed, total: indexes.length, phase: "已暂停，已保留已完成结果", status: "paused" });
+                } else {
+                    message.error(friendlyGenerationError(error, completed ? `合成中断，本轮已保留 ${completed} 个结果` : "合成提示词失败"));
+                    setStoryboardPromptProgress({ current: completed, total: indexes.length, phase: "发生错误，可继续重试", status: "error" });
+                }
             } finally {
                 finishGenerationRequest(targetId, controller);
                 setRunningNodeId(null);
@@ -3411,6 +3425,7 @@ function InfiniteCanvasPage() {
     const stopStoryboardPromptGeneration = useCallback(
         (node: CanvasNodeData) => {
             stopGenerationByRunningId(node.id);
+            setStoryboardPromptProgress((current) => current ? { ...current, phase: "正在暂停，等待当前请求结束", status: "paused" } : current);
             setStoryboardActionKey(null);
         },
         [stopGenerationByRunningId],
@@ -5565,6 +5580,7 @@ function InfiniteCanvasPage() {
                     node={scriptNode ? alignStoryboardNodeAssetsWithCurrentStyle(scriptNode) : null}
                     open={Boolean(scriptNode)}
                     actionKey={storyboardActionKey}
+                    promptProgress={storyboardPromptProgress}
                     onClose={() => setScriptNodeId(null)}
                     onRowsChange={updateStoryboardRows}
                     onPrepareAssets={(node) => void prepareStoryboardAssets(node)}
@@ -6131,12 +6147,13 @@ async function resolveStoryboardVideoReferences(references?: StoryboardVideoRefe
     return items.filter((item): item is ReferenceImage => Boolean(item));
 }
 
-function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[]) {
+function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoReference[], prompt?: string) {
     if (!references?.length) return "";
-    const firstFrames = references.filter((item) => item.role === "firstFrame");
-    const sceneLocks = references.filter((item) => item.role === "sceneLock");
-    const subjectReferences = references.filter((item) => (item.role || "reference") === "reference");
-    const lastFrames = references.filter((item) => item.role === "lastFrame");
+    const relevantReferences = prompt?.trim() ? references.filter((item) => prompt.includes(item.mention) || item.role === "firstFrame" || item.role === "sceneLock" || item.role === "lastFrame") : references;
+    const firstFrames = relevantReferences.filter((item) => item.role === "firstFrame");
+    const sceneLocks = relevantReferences.filter((item) => item.role === "sceneLock");
+    const subjectReferences = relevantReferences.filter((item) => (item.role || "reference") === "reference");
+    const lastFrames = relevantReferences.filter((item) => item.role === "lastFrame");
     if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
@@ -7161,10 +7178,11 @@ function storyboardVideoFinalPromptWithAudio(prompt: string, audioReferences?: S
 }
 
 function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[]) {
-    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
-    if (!continuityPrompt) return prompt;
+    const basePrompt = stripStoryboardVideoFrameContinuityPrompt(prompt);
+    const continuityPrompt = storyboardVideoFrameContinuityPrompt(references, basePrompt);
+    if (!continuityPrompt) return basePrompt;
     const marker = "【连续性与稳定约束】";
-    return prompt.includes(marker) ? prompt.replace(marker, `${marker}\n${continuityPrompt}`).trim() : `${prompt}\n\n${continuityPrompt}`.trim();
+    return basePrompt.includes(marker) ? basePrompt.replace(marker, `${marker}\n${continuityPrompt}`).trim() : `${basePrompt}\n\n${continuityPrompt}`.trim();
 }
 
 function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
@@ -7178,6 +7196,15 @@ function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioRefere
 
 function stripStoryboardVideoAudioContinuityPrompt(text: string) {
     return text.replace(/\n{0,2}视频声音一致性要求：[\s\S]*?(?=\n{2,}\S|$)/g, "").trim();
+}
+
+function stripStoryboardVideoFrameContinuityPrompt(text: string) {
+    return text
+        .split(/\n\n视频连续性要求：/)[0]
+        .split("\n")
+        .filter((line) => !/^\s*-\s*(?:以首帧参考图|以场景锁定参考图|以主体参考图|视频动作和镜头运动需要自然过渡到尾帧参考图|保持人物身份、服装、场景、光影和空间关系连续)/.test(line))
+        .join("\n")
+        .trim();
 }
 
 function storyboardPromptDetailUsesAsset(scriptNode: CanvasNodeData, rowIndex: number | undefined, asset: StoryboardAsset) {
