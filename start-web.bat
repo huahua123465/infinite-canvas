@@ -9,7 +9,6 @@ set "VOICEBOX_START_SCRIPT=%~dp0start-voicebox.ps1"
 set "JELLYFISH_DIR=%~dp0Jellyfish"
 set "JELLYFISH_FRONT_DIR=%JELLYFISH_DIR%\front"
 set "JELLYFISH_BACKEND_DIR=%JELLYFISH_DIR%\backend"
-set "JELLYFISH_REDIS_CONTAINER=infinite-canvas-jellyfish-redis"
 set "WEB_PORT=3000"
 set "CANVAS_URL=http://127.0.0.1:%WEB_PORT%/"
 
@@ -106,23 +105,7 @@ if exist "%VOICEBOX_START_SCRIPT%" (
 )
 
 echo Checking Jellyfish backend...
-echo Checking Jellyfish Redis broker...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $client = [System.Net.Sockets.TcpClient]::new('127.0.0.1',6379); $client.Dispose(); exit 0 } catch { exit 1 }"
-if errorlevel 1 (
-  docker ps --format "{{.Names}}" 2>nul | findstr /x /c:"%JELLYFISH_REDIS_CONTAINER%" >nul
-  if errorlevel 1 (
-    docker ps -a --format "{{.Names}}" 2>nul | findstr /x /c:"%JELLYFISH_REDIS_CONTAINER%" >nul
-    if errorlevel 1 (
-      echo Starting Jellyfish Redis container...
-      docker run -d --name "%JELLYFISH_REDIS_CONTAINER%" -p 6379:6379 redis:7-alpine >nul
-    ) else (
-      echo Starting existing Jellyfish Redis container...
-      docker start "%JELLYFISH_REDIS_CONTAINER%" >nul
-    )
-  )
-)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $client = [System.Net.Sockets.TcpClient]::new('127.0.0.1',6379); $client.Dispose(); exit 0 } catch { exit 1 }"
-if errorlevel 1 echo Redis is unavailable. Jellyfish async tasks will remain queued until Redis is running.
+echo Jellyfish uses a project-local background worker by default; Docker/Redis is optional.
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
 if errorlevel 1 (
@@ -133,14 +116,7 @@ if errorlevel 1 (
   ) else echo Jellyfish backend files not found.
 ) else echo Jellyfish backend is already running.
 
-echo Checking Jellyfish Celery worker...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$found = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'infinite-canvas.*Jellyfish.*celery.*app.core.celery_app' }; if ($found) { exit 0 } else { exit 1 }"
-if errorlevel 1 (
-  if exist "%JELLYFISH_BACKEND_DIR%\pyproject.toml" (
-    echo Starting Jellyfish Celery worker...
-    start "Jellyfish Celery Worker" /D "%JELLYFISH_BACKEND_DIR%" cmd /k "uv sync&&uv run celery -A app.core.celery_app:celery_app worker -l info --pool=solo"
-  ) else echo Jellyfish backend files not found.
-) else echo Jellyfish Celery worker is already running.
+echo Jellyfish local task worker runs inside the backend process.
 
 echo Checking Jellyfish frontend...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://localhost:7788' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"

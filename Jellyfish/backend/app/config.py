@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str | None = None
-    celery_broker_url: str | None = None
+    # 本地开发默认使用项目内文件队列，不要求安装 Docker/Redis；部署时可用 CELERY_BROKER_URL 切换到 Redis。
+    celery_broker_url: str | None = "filesystem://"
+    task_executor_mode: str = "local"
 
     # CORS：环境变量中建议使用逗号分隔（更贴近 docker-compose 用法）
     # 也兼容 JSON 数组：'["http://a","http://b"]'

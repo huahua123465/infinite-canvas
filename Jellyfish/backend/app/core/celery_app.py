@@ -6,6 +6,8 @@
 - 第一阶段不依赖 Celery result backend。
 """
 
+from pathlib import Path
+
 from celery import Celery
 from celery.signals import worker_process_init
 
@@ -13,9 +15,23 @@ from app.config import settings
 from app.core.db import reset_db_runtime
 
 
+_runtime_root = Path(__file__).resolve().parents[2] / ".runtime" / "celery"
+_runtime_root.mkdir(parents=True, exist_ok=True)
+_broker_url = settings.celery_broker_url or "filesystem://"
+_broker_options = (
+    {
+        "data_folder_in": str(_runtime_root),
+        "data_folder_out": str(_runtime_root),
+        "control_folder": str(_runtime_root),
+        "store_processed": True,
+    }
+    if _broker_url.startswith("filesystem://")
+    else {}
+)
+
 celery_app = Celery(
     "jellyfish",
-    broker=settings.celery_broker_url,
+    broker=_broker_url,
     include=["app.tasks.execute_task"],
 )
 
@@ -26,6 +42,7 @@ celery_app.conf.update(
     task_ignore_result=True,
     timezone="Asia/Shanghai",
     enable_utc=False,
+    broker_transport_options=_broker_options,
 )
 
 
