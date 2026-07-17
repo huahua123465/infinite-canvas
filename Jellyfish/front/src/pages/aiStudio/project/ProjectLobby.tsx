@@ -414,8 +414,9 @@ const ProjectLobby: React.FC = () => {
       setCreateModalOpen(false)
       setProjects((prev) => (Array.isArray(prev) ? [...prev, ui] : [ui]))
       navigate(`/projects/${ui.id}`)
-    } catch {
-      message.error('创建失败')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '请检查 Jellyfish 后端是否已启动'
+      message.error(`创建失败：${detail}`)
     }
   }
 
