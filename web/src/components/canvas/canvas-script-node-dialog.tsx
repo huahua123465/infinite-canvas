@@ -813,16 +813,12 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                         title="分镜提示词"
                         hint="用于首帧图、分镜图和画面生成"
                         value={draft.storyboardPrompt}
-                        mentions={mentions}
-                        links={mentionLinks}
                         onChange={(storyboardPrompt) => updateDraft({ storyboardPrompt })}
                     />
                     <PromptBlock
                         title="视频运动提示词"
                         hint="用于待审核视频节点的运动初稿；最终发送内容在视频节点确认页确认"
                         value={draft.videoMotionPrompt}
-                        mentions={mentions}
-                        links={mentionLinks}
                         tall
                         onChange={(videoMotionPrompt) => updateDraft({ videoMotionPrompt })}
                     />
@@ -856,7 +852,7 @@ function AssetMentionStrip({ mentions, links }: { mentions: string[]; links: Non
     );
 }
 
-function PromptBlock({ title, hint, value, mentions, links, tall, onChange }: { title: string; hint: string; value: string; mentions: string[]; links: NonNullable<StoryboardPromptDetail["assetMentionLinks"]>; tall?: boolean; onChange: (value: string) => void }) {
+function PromptBlock({ title, hint, value, tall, onChange }: { title: string; hint: string; value: string; tall?: boolean; onChange: (value: string) => void }) {
     return (
         <section className="mb-5 rounded-lg border border-[#363636] bg-[#202020]">
             <div className="flex items-center justify-between border-b border-[#343434] px-4 py-3">
@@ -864,36 +860,8 @@ function PromptBlock({ title, hint, value, mentions, links, tall, onChange }: { 
                 <div className="text-xs text-[#8f8f8f]">{hint}</div>
             </div>
             <textarea className={`block w-full resize-none bg-transparent px-4 py-4 text-sm leading-7 text-[#ededed] outline-none ${tall ? "h-72" : "h-44"}`} value={value} onChange={(event) => onChange(event.target.value)} />
-            <div className="border-t border-[#343434] px-4 py-3">
-                <div className="mb-2 text-[11px] font-semibold text-[#9f9f9f]">高亮预览</div>
-                <div className="min-h-10 whitespace-pre-wrap rounded-lg bg-black/20 px-3 py-2 text-xs leading-6 text-[#dcdcdc]">
-                    {value.trim() ? renderPromptMentionPreview(value, mentions, links) : "这里会显示 @资产 的高亮效果，方便确认视频模型会拿到哪些参考资产。"}
-                </div>
-            </div>
         </section>
     );
-}
-
-function renderPromptMentionPreview(text: string, mentions: string[], links: StoryboardAssetMentionLink[]) {
-    const allMentions = Array.from(new Set([...mentions, ...Array.from(text.matchAll(/@([^\s@，,、。；;：:）)】\]]+)/g)).map((match) => `@${match[1]}`)])).filter(Boolean).sort((a, b) => b.length - a.length);
-    if (!allMentions.length) return text;
-    const linkByMention = new Map(links.map((link) => [link.mention, link]));
-    const parts: ReactNode[] = [];
-    let index = 0;
-    while (index < text.length) {
-        const next = allMentions
-            .map((mention) => ({ mention, at: text.indexOf(mention, index) }))
-            .filter((item) => item.at >= 0)
-            .sort((a, b) => a.at - b.at || b.mention.length - a.mention.length)[0];
-        if (!next) {
-            parts.push(text.slice(index));
-            break;
-        }
-        if (next.at > index) parts.push(text.slice(index, next.at));
-        parts.push(<PromptAssetChip key={`${next.mention}-${next.at}`} link={linkByMention.get(next.mention) || { mention: next.mention, name: next.mention.replace(/^@/, ""), status: "missing" }} inline />);
-        index = next.at + next.mention.length;
-    }
-    return parts;
 }
 
 function PromptAssetChip({ link, inline }: { link: StoryboardAssetMentionLink; inline?: boolean }) {

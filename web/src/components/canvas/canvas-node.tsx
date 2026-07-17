@@ -1753,12 +1753,6 @@ function StoryboardVideoPromptPreviewModal({
                     </div>
                 </section>
                 <section>
-                    <div className="mb-2 text-sm font-semibold">原始视频运动提示词</div>
-                    <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-500 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-400">
-                        原始提示词已作为初稿填入下方；请直接修改“最终生成提示词”，视频生成只以下方内容为准。
-                    </div>
-                </section>
-                <section>
                     <div className="mb-2 flex items-center justify-between">
                         <div className="text-sm font-semibold">参考资产</div>
                         <span className="text-xs text-stone-500">本次实际提交 {orderedReferences.length} 张 · 首帧 → 场景锁定 → 参考 → 尾帧</span>
@@ -1814,6 +1808,7 @@ function StoryboardVideoPromptPreviewModal({
                         value={draftFinalPrompt}
                         references={mentionReferences}
                         onChange={updateDraftFinalPrompt}
+                        highlightLabels={false}
                         className="thin-scrollbar h-40 w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200"
                         placeholder="请输入最终发送给视频模型的提示词"
                         data-canvas-no-zoom
@@ -1821,10 +1816,6 @@ function StoryboardVideoPromptPreviewModal({
                         onMouseDown={(event) => event.stopPropagation()}
                         onWheel={(event) => event.stopPropagation()}
                     />
-                    <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200">
-                        <div className="mb-1 text-[11px] font-semibold text-stone-500">高亮预览</div>
-                        <div className="whitespace-pre-wrap">{draftFinalPrompt ? renderStoryboardPromptMentions(draftFinalPrompt, draftAssetLinks, theme) : <span className="text-stone-400">暂无最终提示词</span>}</div>
-                    </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                         {draftAssetLinks.length ? draftAssetLinks.map((link) => <StoryboardAssetChip key={link.mention} link={link} compact theme={theme} />) : <span className="text-xs text-stone-500">暂未识别到 @ 资产</span>}
                     </div>
@@ -2023,14 +2014,16 @@ function storyboardVideoConfigPatch(config: AiConfig, prompt: string, finalPromp
 function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[], audioReferences?: StoryboardAudioReference[]) {
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
     const audioPrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
-    return [prompt, continuityPrompt, audioPrompt].filter(Boolean).join("\n\n").trim();
+    const additions = [continuityPrompt, audioPrompt].filter(Boolean).join("\n");
+    if (!additions) return prompt;
+    const marker = "【连续性与稳定约束】";
+    return prompt.includes(marker) ? prompt.replace(marker, `${marker}\n${additions}`).trim() : `${prompt}\n\n${additions}`.trim();
 }
 
 function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
     const voiceLocks = (references || []).filter((item) => item.role === "voiceLock");
     if (!voiceLocks.length) return "";
     return [
-        "视频声音一致性要求：",
         `- 参考角色声音样本锁定音色、年龄感、气息、语速和情绪强度：${voiceLocks.map((item) => item.mention).join("、")}。`,
         "- 同一角色在不同镜头中不要突然改变音色、口音、语速或情绪强度；背景音乐和环境音不要盖过对白。",
     ].join("\n");
@@ -2044,7 +2037,6 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
     const lastFrames = references.filter((item) => item.role === "lastFrame");
     if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
-        "视频连续性要求：",
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
         sceneLocks.length ? `- 以场景锁定参考图统一同一地点的空间结构、门窗位置、材质、道具摆放、光线方向和时代质感：${sceneLocks.map((item) => item.mention).join("、")}；如果参考图是多角度 sheet，只用于理解空间关系，不要生成分屏、拼图或多宫格画面。` : "",
         subjectReferences.length ? `- 以主体参考图锁定对应角色的脸型、发型、年龄状态、体态、服装和画风，以及关键道具外观：${subjectReferences.map((item) => item.mention).join("、")}；每张图只控制对应主体，不要混合身份或互换外观。` : "",

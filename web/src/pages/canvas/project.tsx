@@ -309,6 +309,34 @@ JSON 格式必须为：
   "assetMentions": ["@人物名", "@场景名", "@道具名"]
 }
 
+videoMotionPrompt 必须严格按以下模板输出，栏目名称和顺序不得改变；方括号小节是视频导演执行信息，不是解释性标题：
+【生成规格】
+[视频约束]
+当前片段时长、单一连续镜头、画幅/分辨率、生成声音；严格保留已锁定台词或旁白，不增加、不删减，不生成字幕、文字、Logo 或水印。
+【参考资产绑定】
+[场景设定]
+唯一场景资产及其空间职责。
+[人物设定]
+逐个列出当前可见人物的 @资产名、叙事身份、年龄/时期和动作职责；被抱持者、婴儿、道具必须明确对象关系。
+[站位设定]
+逐个写清人物相对位置、面向方向、与场景/道具的关系。
+【叙事目标】
+只写当前片段一个主要可见事实、失败代价、策略、阻力反作用、动作转折和可见结果。
+【起始画面】
+写清起始构图、人物/物体位置、姿态和光线。
+【N秒时间轴】
+[画面时序]
+0-N 秒必须是四段连续时间；每段写清“谁 + 身体部位/物体 + 动作 + 对象 + 物理结果”，第二、三段必须推进场景卡动作链，最后 1-2 秒只保留结果和稳定落点。
+【镜头运动】
+只指定一个主运镜，写清起幅、速度、主体关系和落幅。
+【光线与画面质感】
+[光影与氛围]
+写清主光源、方向、色温、材质、时代和画风。
+【声音时间轴】
+写全程环境声、动作音效、台词/旁白精确时间；台词用 { }，音效用 < >，音乐用（ ）。
+【连续性与稳定约束】
+保持人物身份、服装、年龄状态、场景结构、道具位置和镜头运动稳定。
+
 要求：
 1. 先判断本片段的生成模式：无资产时按 T2V 写完整画面；有角色/场景/道具资产时按 R2V/I2V 思路写，明确每个 @资产名 的作用是角色身份、场景空间、道具或首帧参考，不要让参考资产互相抢控制权。
 2. 按 Seedance 2.0 导演公式组织：主体 + 主叙事目标 + 2-4 个顺序动作节拍 + 场景 + 单一主运镜 + 物理光源/风格 + 音频 + 稳定约束。主体和起始动作必须放在前半句，避免模型抓错重点。
@@ -6111,7 +6139,6 @@ function storyboardVideoFrameContinuityPrompt(references?: StoryboardVideoRefere
     const lastFrames = references.filter((item) => item.role === "lastFrame");
     if (!firstFrames.length && !sceneLocks.length && !subjectReferences.length && !lastFrames.length) return "";
     return [
-        "视频连续性要求：",
         firstFrames.length ? `- 以首帧参考图作为视频开始时的画面、角色站位、场景光线和构图基础：${firstFrames.map((item) => item.mention).join("、")}` : "",
         sceneLocks.length ? `- 以场景锁定参考图统一同一地点的空间结构、门窗位置、材质、道具摆放、光线方向和时代质感：${sceneLocks.map((item) => item.mention).join("、")}；如果参考图是多角度 sheet，只用于理解空间关系，不要生成分屏、拼图或多宫格画面。` : "",
         subjectReferences.length ? `- 以主体参考图锁定对应角色的脸型、发型、年龄状态、体态、服装和画风，以及关键道具外观：${subjectReferences.map((item) => item.mention).join("、")}；每张图只控制对应主体，不要混合身份或互换外观。` : "",
@@ -7129,19 +7156,21 @@ function storyboardVideoFinalPromptWithAudio(prompt: string, audioReferences?: S
     const voicePrompt = storyboardVideoAudioContinuityPrompt(audioReferences);
     if (!voicePrompt) return prompt;
     const base = stripStoryboardVideoAudioContinuityPrompt(prompt);
-    return `${base}\n\n${voicePrompt}`.trim();
+    const marker = "【声音时间轴】";
+    return base.includes(marker) ? base.replace(marker, `${marker}\n${voicePrompt}`).trim() : `${base}\n\n${voicePrompt}`.trim();
 }
 
 function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoReference[]) {
     const continuityPrompt = storyboardVideoFrameContinuityPrompt(references);
-    return continuityPrompt ? `${prompt}\n\n${continuityPrompt}`.trim() : prompt;
+    if (!continuityPrompt) return prompt;
+    const marker = "【连续性与稳定约束】";
+    return prompt.includes(marker) ? prompt.replace(marker, `${marker}\n${continuityPrompt}`).trim() : `${prompt}\n\n${continuityPrompt}`.trim();
 }
 
 function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
     const voiceLocks = (references || []).filter((item) => item.role === "voiceLock");
     if (!voiceLocks.length) return "";
     return [
-        "视频声音一致性要求：",
         `- 参考角色声音样本锁定音色、年龄感、气息、语速和情绪强度：${voiceLocks.map((item) => item.mention).join("、")}。`,
         "- 同一角色在不同镜头中不要突然改变音色、口音、语速或情绪强度；背景音乐和环境音不要盖过对白。",
     ].join("\n");
@@ -7845,18 +7874,25 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const assetBinding = assets.length
         ? assets.map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n")
         : "本片段无参考资产，按当前文字描述生成，并保持主体、场景和道具连续。";
+    const sceneSetting = `${sceneAsset ? `@${sceneAsset.name}` : scene}：唯一场景空间参考，只控制地点结构、陈设、环境和光线关系。`;
+    const characterSetting = assets.filter((asset) => asset.kind === "character").map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n") || "当前画面无可识别人物资产。";
+    const positionSetting = `${subject}位于${scene}的画面主体区域，按照当前分镜站位保持与场景和道具的相对位置不变。`;
+    const generationConstraint = `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。严格保留当前镜头已锁定的台词/旁白，不增加、不删减，不生成字幕、文字、Logo 或水印。`;
+    const narrativeGoal = `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${subject}尝试${dramaticGoal}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`;
+    const startFrame = `${sceneAsset ? `@${sceneAsset.name}` : scene}，${framing}。${subject}处于${startState}。`;
     const speech = storyboardSpeechParts(storyboardSafetyComposeText(row[5] || "", true));
     const narrationEnd = speech.dialogues.length ? actionEnd : changeEnd;
     const dialogue = storyboardLockedSpeechForRow(node, rows, rowIndex)?.narration || storyboardNarrationWithinBudget(speech.narration, narrationEnd);
     const [establishVoiceover, actionVoiceover, changeVoiceover] = storyboardSplitNarrationByLimits(dialogue, [establishEnd * 4, (actionEnd - establishEnd) * 4, ...(speech.dialogues.length ? [] : [(changeEnd - actionEnd) * 4])]);
     const voiceoverTimeline = [establishVoiceover ? `0-${establishEnd}秒 VO：${establishVoiceover}` : "", actionVoiceover ? `${establishEnd}-${actionEnd}秒 VO：${actionVoiceover}` : "", changeVoiceover ? `${actionEnd}-${changeEnd}秒 VO：${changeVoiceover}` : "", speech.dialogues.length ? `${actionEnd}-${changeEnd}秒 对白：${speech.dialogues.map((item) => `{${item}}`).join("；")}` : ""].filter(Boolean).join("\n");
+    const soundLine = `0-${duration}秒：<${sound}>。${videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"}`;
     return {
         storyboardPrompt: [assetBinding.replace(/\n/g, "；"), [timeStage, sceneAsset ? `@${sceneAsset.name}` : scene, framing].filter(Boolean).join("，"), `${subject}处于${startState}，正准备${dramaticGoal}，身体保持即将执行“${tactic}”的起始姿态`, `画面承担${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}功能，预示${valueShift}`, lighting, style, "静态单场景构图，人物身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
         videoMotionPrompt: [
-            "【生成规格】", "【视频约束】", `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。严格保留当前镜头已锁定的台词/旁白，不增加、不删减，不生成字幕、文字、Logo 或水印。",
-            "【参考资产绑定】", "【场景设定】", `${sceneAsset ? `@${sceneAsset.name}` : scene}：唯一场景空间参考，只控制地点结构、陈设、环境和光线关系。`, "【人物设定】", assets.filter((asset) => asset.kind === "character").map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n") || "当前画面无可识别人物资产。", "【站位设定】", `${subject}位于${scene}的画面主体区域，按照当前分镜站位保持与场景和道具的相对位置不变。`,
-            "【叙事目标】", `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${subject}尝试${dramaticGoal}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`,
-            "【起始画面】", `${sceneAsset ? `@${sceneAsset.name}` : scene}，${framing}。${subject}处于${startState}。`,
+            "【生成规格】", "【视频约束】", generationConstraint,
+            "【参考资产绑定】", "【场景设定】", sceneSetting, "【人物设定】", characterSetting, "【站位设定】", positionSetting,
+            "【叙事目标】", narrativeGoal,
+            "【起始画面】", startFrame,
             `【${duration}秒时间轴】`, "【画面时序】",
             `0-${establishEnd}秒：以${framing}建立当前场景，${subject}保持起始状态，镜头确认人物、道具和空间关系。`,
             `${establishEnd}-${actionEnd}秒：${actionBeats[0]}；${actionBeats.slice(1, -1).join("；") || tactic}。动作从停顿自然启动，身体重心和手部运动连续；${camera}开始执行。`,
@@ -7864,7 +7900,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
             `${changeEnd}-${duration}秒：动作停止并落在${endState}，明确呈现${valueShift}；镜头到达终点后保持稳定，不再增加新动作，为下一片段保留连续性落点。`,
             "【镜头运动】", `${camera}。全程只使用这一种主运镜，不改变机位逻辑，不叠加推拉摇移、环绕、手持或突然变焦。`,
             "【光线与画面质感】", "【光影与氛围】", `${lighting}。${style || "保持当前项目画风、自然曝光和真实材质"}，光源方向和人物画风全程一致。`,
-            "【声音时间轴】", `0-${duration}秒：<${sound}>。${videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"}`,
+            "【声音时间轴】", soundLine,
             "【连续性与稳定约束】", "保持当前地点不变，不使用蒙太奇或跨场景转场；人物脸型、年龄状态、服装、身体比例、手指和场景结构稳定；资产不得变形、替换或凭空消失；无闪烁、跳帧、穿模、字幕、文字、Logo 或水印。",
         ].join("\n"),
         assetMentions,
@@ -7938,10 +7974,12 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
     const episodeAssets = assets.filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
     const relevant = storyboardRelevantPromptAssets(episodeAssets, storyboardVisualSourceBeats(sourceBeats, shotPlan), rows[rowIndex] || [], shotPlan);
     const characterNames = new Set<string>();
+    const evidence = [rows[rowIndex]?.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.event, beat.emotion, ...beat.characters])].filter(Boolean).join(" ");
+    const allowsMultiStageSamePerson = /(同框|同时|出生|女婴|婴儿|新生儿|接生|抱持|照护|多个时期|回忆|对照)/.test(evidence);
     const requiredCharacters = relevant.filter((asset) => {
         if (asset.kind !== "character") return false;
         const name = asset.baseName || asset.name;
-        if (characterNames.has(name)) return false;
+        if (characterNames.has(name) && !allowsMultiStageSamePerson) return false;
         characterNames.add(name);
         return true;
     });
@@ -7975,7 +8013,7 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
     const locations = sourceBeats.map((beat) => beat.location).filter(Boolean);
-    return assets
+    const ranked = assets
         .map((asset) => {
             const identityMatch = asset.kind === "character" && [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
             const sceneMatch = asset.kind === "scene" && (evidence.includes(asset.name) || locations.some((location) => asset.name.includes(location) || location.includes(asset.name) || asset.description.includes(location)));
@@ -7986,8 +8024,19 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
         })
         .filter((item) => item.score > 1)
         .sort((first, second) => second.score - first.score)
-        .slice(0, 6)
         .map((item) => item.asset);
+    const selectedCharacterBases = new Set<string>();
+    const allowsMultiStageSamePerson = /(同框|同时|出生|女婴|婴儿|新生儿|接生|抱持|照护|多个时期|回忆|对照)/.test(evidence);
+    return ranked
+        .filter((asset) => {
+            if (asset.kind !== "character") return true;
+            if (allowsMultiStageSamePerson) return true;
+            const baseName = asset.baseName || asset.name;
+            if (selectedCharacterBases.has(baseName)) return false;
+            selectedCharacterBases.add(baseName);
+            return true;
+        })
+        .slice(0, 6);
 }
 
 function storyboardSingleScenePromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[]) {
@@ -8060,6 +8109,9 @@ function assertStoryboardVideoPromptFormat(prompt: string, duration: number, det
     const missing = sections.filter((section) => !prompt.includes(`【${section}】`));
     if (missing.length) throw new Error(`视频运动提示词格式不完整：缺少${missing.join("、")}`);
     if (sections.some((section, index) => index > 0 && prompt.indexOf(`【${section}】`) <= prompt.indexOf(`【${sections[index - 1]}】`))) throw new Error("视频运动提示词格式不完整：栏目顺序不符合导演提示词模板");
+    const directorSubsections = ["视频约束", "场景设定", "人物设定", "站位设定", "画面时序", "光影与氛围"];
+    const missingSubsections = directorSubsections.filter((section) => !prompt.includes(`[${section}]`) && !prompt.includes(`【${section}】`));
+    if (missingSubsections.length) throw new Error(`视频运动提示词格式不完整：导演脚本缺少${missingSubsections.join("、")}`);
     if (prompt.length > 2000) throw new Error("视频运动提示词格式不完整：正文超过2000字，需要压缩重复描述");
     const timeline = prompt.match(new RegExp(`【${duration}秒时间轴】([\\s\\S]*?)【镜头运动】`))?.[1] || "";
     const ranges = Array.from(timeline.matchAll(/(?:^|\n)\s*(\d+(?:\.\d+)?)\s*[-—–~至]\s*(\d+(?:\.\d+)?)\s*秒\s*[：:]/g)).map((item) => [Number(item[1]), Number(item[2])]);
@@ -8082,6 +8134,35 @@ function assertStoryboardVideoPromptFormat(prompt: string, duration: number, det
     if (!/稳定|保持|停住|静止|落点|不再/.test(finalLine)) throw new Error("视频运动提示词格式不完整：最后1-2秒必须只保持稳定落点，不得继续增加剧情");
     const sceneMentions = assets.filter((asset) => asset.kind === "scene" && ((detail?.assetMentions || []).includes(`@${asset.name}`) || prompt.includes(`@${asset.name}`)));
     if (new Set(sceneMentions.map((asset) => asset.id)).size > 1) throw new Error("视频运动提示词格式不完整：普通片段最多只能绑定一个主要场景资产");
+    assertStoryboardAssetRoleConsistency(prompt, detail, assets);
+}
+
+function assertStoryboardAssetRoleConsistency(prompt: string, detail: StoryboardPromptDetail | undefined, assets: StoryboardAsset[]) {
+    const mentions = new Set([...(detail?.assetMentions || []), ...assets.filter((asset) => prompt.includes(`@${asset.name}`)).map((asset) => `@${asset.name}`)]);
+    const characterAssets = assets.filter((asset) => asset.kind === "character" && mentions.has(`@${asset.name}`));
+    const byBaseName = new Map<string, StoryboardAsset[]>();
+    characterAssets.forEach((asset) => {
+        const baseName = asset.baseName || asset.name;
+        byBaseName.set(baseName, [...(byBaseName.get(baseName) || []), asset]);
+    });
+    for (const [baseName, candidates] of byBaseName) {
+        const stages = new Set(candidates.map((asset) => asset.lifeStage || asset.name));
+        const hasInfantRole = candidates.some((asset) => /(出生|婴儿|新生儿|宝宝|幼儿|幼年)/.test(`${asset.name} ${asset.lifeStage || ""}`));
+        if (stages.size > 1 && !/回忆|对照|同框|出生与成长|多个时期/.test(prompt) && !(hasInfantRole && /被抱|被照护|接生|婴儿|新生儿|女婴/.test(prompt))) {
+            throw new Error(`视频运动提示词格式不完整：人物“${baseName}”同时绑定了多个年龄/时期资产，当前镜头必须只选择一个时期`);
+        }
+    }
+    const infantAssets = characterAssets.filter((asset) => /(出生|婴儿|新生儿|宝宝|幼儿|幼年)/.test(`${asset.name} ${asset.lifeStage || ""}`));
+    infantAssets.forEach((asset) => {
+        const mention = `@${asset.name}`;
+        if (!new RegExp(`${escapeRegExp(mention)}[^\n]{0,120}(?:婴儿|新生儿|宝宝|被抱|被照护|被放置|被安置)`).test(prompt)) {
+            throw new Error(`视频运动提示词格式不完整：${mention}必须明确作为婴儿/被照护对象绑定，不能只写成人物身份参考`);
+        }
+    });
+    const timeline = prompt.match(/【\d+秒时间轴】([\s\S]*?)【镜头运动】/)?.[1] || "";
+    if (characterAssets.length && !/(双手|手臂|肩膀|身体|脚步|头部|目光|嘴唇|托住|抱住|放入|移动|挪动|站在|坐在|靠近)/.test(timeline)) {
+        throw new Error("视频运动提示词格式不完整：画面时序缺少可执行的身体部位、站位或物理动作");
+    }
 }
 
 function assertStoryboardPromptActionCoverage(prompt: string, plan?: StoryboardShotPlan) {
