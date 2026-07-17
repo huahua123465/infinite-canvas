@@ -11,6 +11,17 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     audioMaxBytes: 15 * 1024 * 1024,
 };
 
+export const CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS = {
+    images: 9,
+    videos: 3,
+    audios: 3,
+} as const;
+
+export function isCangyuanSd5SeedanceModel(model: string) {
+    const name = modelOptionName(model).toLowerCase();
+    return name === "sd5-seedance-2.0" || name === "sd5-seedance-2.0-fast";
+}
+
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },

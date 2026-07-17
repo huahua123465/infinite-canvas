@@ -1,4 +1,4 @@
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, isCangyuanSd5SeedanceModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 export type VideoReferenceLimits = Readonly<{
@@ -17,6 +17,7 @@ const SORA_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0
 
 export function videoReferenceLimits(model: string) {
     const name = modelOptionName(model).toLowerCase();
+    if (isCangyuanSd5SeedanceModel(name)) return CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS;
     if (name.startsWith("seedance-2.0")) return seedanceModelFixedResolution(name) ? SEEDANCE_FIXED_REFERENCE_LIMITS : SEEDANCE_STANDARD_REFERENCE_LIMITS;
     if (name.startsWith("grok-video-1.5")) return GROK_VIDEO_15_REFERENCE_LIMITS;
     if (name.startsWith("grok-video")) return GROK_VIDEO_REFERENCE_LIMITS;

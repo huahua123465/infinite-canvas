@@ -3,6 +3,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { isCangyuanSd5SeedanceModel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -52,10 +53,28 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
-    const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) ? 1200 : 5000;
+    const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 1200 : 5000;
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
-    if (model.startsWith("seedance-2.0")) {
+    if (isCangyuanSd5SeedanceModel(model)) {
+        const limits = videoReferenceLimits(model)!;
+        if (duration < 4 || duration > 15) issues.push(blocked("sd5_seedance_duration", "沧元 SD5 Seedance 视频时长必须为 4-15 秒", "请修改当前镜头时长"));
+        if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("sd5_seedance_ratio", "沧元 SD5 Seedance 仅支持 16:9 或 9:16", "请选择横屏或竖屏"));
+        if (!["480p", "720p"].includes(resolution)) issues.push(blocked("sd5_seedance_resolution", "沧元 SD5 Seedance 仅支持 480p 或 720p", "请选择 480p 或 720p"));
+        if (input.references.length > limits.images) issues.push(blocked("sd5_seedance_images", `当前模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图"));
+        if (input.videoReferences.length > limits.videos) issues.push(blocked("sd5_seedance_videos", `当前模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频"));
+        if (input.audioReferences.length > limits.audios) issues.push(blocked("sd5_seedance_audios", `当前模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频"));
+        if ((input.videoReferences.length || input.audioReferences.length) && !input.references.length) issues.push(blocked("sd5_seedance_primary_image", "参考视频或音频必须同时提供至少一张参考图", "请添加主参考图"));
+        let totalVideoDuration = 0;
+        input.videoReferences.forEach((item, index) => {
+            if (item.durationMs && (item.durationMs < 1_000 || item.durationMs > 15_000)) issues.push(blocked(`sd5_seedance_video_${index}`, `参考视频 ${index + 1} 单条时长必须为 1-15 秒`, "请裁剪或更换参考视频"));
+            totalVideoDuration += item.durationMs || 0;
+        });
+        if (totalVideoDuration > 45_000) issues.push(blocked("sd5_seedance_video_duration", "参考视频总时长不能超过 45 秒", "请裁剪或移除参考视频"));
+        input.audioReferences.forEach((item, index) => {
+            if (item.durationMs && item.durationMs > 15_000) issues.push(blocked(`sd5_seedance_audio_${index}`, `参考音频 ${index + 1} 不能超过 15 秒`, "请裁剪或更换参考音频"));
+        });
+    } else if (model.startsWith("seedance-2.0")) {
         const fixedResolution = seedanceModelFixedResolution(model);
         const limits = videoReferenceLimits(model)!;
         const minReferenceVideoMs = fixedResolution ? 2_000 : 4_000;

@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, findSeedanceModelOptionByResolution, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, findSeedanceModelOptionByResolution, isCangyuanSd5SeedanceModel, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -123,14 +123,16 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
     const selectedModel = config.model || config.videoModel;
     const model = modelOptionName(selectedModel);
     const isCangyuanStandard = isCangyuanSeedanceStandardModel(config, selectedModel);
+    const isCangyuanSd5 = isCangyuanSd5SeedanceModel(model);
     const rawResolution = normalizeSeedanceResolution(config.vquality, model);
-    const resolution = isCangyuanStandard && rawResolution !== "480p" ? "720p" : rawResolution;
+    const resolution = (isCangyuanStandard || isCangyuanSd5) && !["480p", "720p"].includes(rawResolution) ? "720p" : rawResolution;
     const fixedResolution = seedanceModelFixedResolution(model);
     const ratio = normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
-    const availableResolutionOptions = isCangyuanStandard ? cangyuanSeedanceStandardResolutionOptions : seedanceResolutionOptions;
+    const availableResolutionOptions = isCangyuanStandard || isCangyuanSd5 ? cangyuanSeedanceStandardResolutionOptions : seedanceResolutionOptions;
+    const availableRatioOptions = isCangyuanSd5 ? seedanceRatioOptions.filter((item) => item.value === "16:9" || item.value === "9:16") : seedanceRatioOptions;
     const updateResolution = (value: string) => {
         const matchedModel = findSeedanceModelOptionByResolution(config, selectedModel, value);
         if (matchedModel && matchedModel !== selectedModel) onModelChange?.(matchedModel);
@@ -159,7 +161,7 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {seedanceRatioOptions.map((item) => (
+                        {availableRatioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -188,7 +190,7 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
                         <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
-                        <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
+                        {isCangyuanSd5 ? null : <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />}
                     </div>
                 </SettingGroup>
             </div>
