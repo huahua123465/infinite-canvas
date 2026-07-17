@@ -51,8 +51,9 @@ export default function JellyfishPage() {
                     <span className="hidden text-xs text-muted-foreground md:inline">已嵌入当前画布</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <button type="button" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-stone-200 hover:text-foreground dark:hover:bg-stone-800" onClick={() => navigate(returnPath)} aria-label="返回画布" title="返回画布">
+                    <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-cyan-400/70 bg-cyan-50 px-3 text-xs font-medium text-cyan-700 shadow-sm transition hover:border-cyan-500 hover:bg-cyan-100 dark:border-cyan-500/60 dark:bg-cyan-950/40 dark:text-cyan-200 dark:hover:bg-cyan-950/70" onClick={() => navigate(returnPath)} aria-label="返回当前画布" title="返回当前画布">
                         <ArrowLeft className="size-4" />
+                        <span>返回当前画布</span>
                     </button>
                     <button type="button" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-stone-200 hover:text-foreground dark:hover:bg-stone-800" onClick={() => window.open(jellyfishUrl, "_blank", "noopener,noreferrer")} aria-label="在新窗口打开 Jellyfish" title="在新窗口打开 Jellyfish">
                         <ExternalLink className="size-4" />
