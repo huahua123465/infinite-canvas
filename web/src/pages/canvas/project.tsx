@@ -334,7 +334,13 @@ JSON 格式必须为：
 22. 如素材包含不适合直观呈现的脆弱处境，只调整视觉表达：使用朴素服装、空镜、灯光变化、遗留物件、人物克制反应等间接画面，保留原始因果和关系变化，不得改写成相反结果。
 23. 四段时间轴必须分别写出：空间/站位确认、动作启动、阻力反作用与动作转折、结果和稳定落点；第二段和第三段必须明确引用 actionBeats 中的实际物理动作，第三段必须写出 obstacleReaction 如何触发 turningAction，第四段只能保持 result/endState，不能添加新剧情。
 24. 【声音时间轴】必须同时写全程环境声、动作音效、对白或旁白的精确起止段；生成声音默认开启，除非当前视频设置明确写了关闭。VO 只允许使用第一步已提供的旁白原文，不得把导演说明、同步要求、栏目名或资产绑定说明写成声音。
-25. 输出前执行保守自检：是否只有一个主要场景资产、一个人物时期、一个主动作和一个主运镜；每句 VO 是否与同时间段可见动作对应；VO 是否超过 N×4 个汉字；最后 1-2 秒是否只稳定停留；资产是否真实存在；声音是否明确。任一不满足都先重写再输出。`;
+25. videoMotionPrompt 必须在九个主栏目内部使用以下导演脚本小节，并且小节内容只服务当前镜头：
+【生成规格】下写[视频约束]；【参考资产绑定】下写[场景设定]、[人物设定]、[站位设定]；【N秒时间轴】下写[画面时序]；【光线与画面质感】下写[光影与氛围]。小节不重复整段资产描述，而是明确资产职责、站位、起始状态、动作顺序和可见结果。
+26. [人物设定] 必须逐个写出当前画面可见人物的精确资产、叙事身份和可执行职责，例如“@角色A：接生人，负责托住并移动@角色B”；婴儿、被抱持者、被放置物体不能只写成泛称，必须绑定准确资产或明确说明为无资产的不可识别局部。
+27. [站位设定] 必须写清人物相对位置、面向方向、主体与道具的空间关系；[画面时序] 每一段都必须回答“谁在什么位置用哪个身体部位对什么对象做什么，产生什么物理变化”，禁止只写情绪、氛围或抽象叙事。
+28. 同一人物本名存在多个年龄/时期资产时，当前镜头只能选择一个时期；除非事实明确要求回忆对照或同框，不得同时把两个时期资产写成同一种人物身份参考。资产名称含“出生、婴儿、新生儿、幼年”等状态时，必须明确其为被抱持/被照护对象，不得让其承担成人动作。
+29. 资产、道具、场景和人物关系必须来自当前片段事实与第二步资产清单；不得把“新成员用品”等抽象词当作可执行道具，信息不足时使用资产清单中最具体的已知名称或省略该动作，不得编造新道具。
+30. 输出前执行保守自检：是否只有一个主要场景资产、一个人物时期、一个主动作和一个主运镜；每句 VO 是否与同时间段可见动作对应；VO 是否超过 N×4 个汉字；最后 1-2 秒是否只稳定停留；资产是否真实存在；声音是否明确；是否存在同一人物多个时期冲突；每个主要动作是否有执行者、对象和物理结果。任一不满足都先重写再输出。`;
 const STORYBOARD_ASSET_PROMPT = `你是短剧资产规划师。请根据原始剧本和分镜表，提炼第二步“准备资产”需要的统一资产。
 
 只输出 JSON，不要 Markdown，不要解释。
@@ -4903,9 +4909,11 @@ function InfiniteCanvasPage() {
             }
 
             const existingVideoTask = shouldResumeVideoTask ? videoTaskFromMetadata(node.metadata, generationConfig) : null;
-            const context = hasSavedImageMetadata || existingVideoTask ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
-            const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
             const storyboardVideoFinalPrompt = node.type === CanvasNodeType.Video ? node.metadata?.storyboardVideoFinalPrompt?.trim() || "" : "";
+            const savedVideoPrompt = node.type === CanvasNodeType.Video ? storyboardVideoFinalPrompt || node.metadata?.prompt?.trim() || "" : "";
+            const context = hasSavedImageMetadata || existingVideoTask ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
+            // Keep the exact prompt submitted by the failed video node; context is still rebuilt for references.
+            const prompt = (savedImageMetadata?.prompt || savedVideoPrompt || context?.prompt || "").trim();
             if (!existingVideoTask && !prompt && !storyboardVideoFinalPrompt) {
                 message.warning("找不到提示词，无法重试");
                 return;
@@ -7835,7 +7843,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const obstacleReaction = storyboardSafetyComposeText(shotPlan?.obstacleReaction || `${dramaticObstacle}迫使${subject}改变动作节奏`, true);
     const turningAction = storyboardSafetyComposeText(shotPlan?.turningAction || actionBeats.at(-1) || tactic, true);
     const assetBinding = assets.length
-        ? assets.map((asset) => `@${asset.name}：${asset.kind === "character" ? "作为人物身份参考，只控制脸型、年龄状态、发型、体态、服装和画风" : asset.kind === "scene" ? "作为唯一场景空间参考，只控制地点结构、陈设、环境和光线关系" : "作为核心道具参考，只控制外观、材质、尺寸和使用连续性"}`).join("\n")
+        ? assets.map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n")
         : "本片段无参考资产，按当前文字描述生成，并保持主体、场景和道具连续。";
     const speech = storyboardSpeechParts(storyboardSafetyComposeText(row[5] || "", true));
     const narrationEnd = speech.dialogues.length ? actionEnd : changeEnd;
@@ -7845,17 +7853,17 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     return {
         storyboardPrompt: [assetBinding.replace(/\n/g, "；"), [timeStage, sceneAsset ? `@${sceneAsset.name}` : scene, framing].filter(Boolean).join("，"), `${subject}处于${startState}，正准备${dramaticGoal}，身体保持即将执行“${tactic}”的起始姿态`, `画面承担${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}功能，预示${valueShift}`, lighting, style, "静态单场景构图，人物身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
         videoMotionPrompt: [
-            "【生成规格】", `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。`,
-            "【参考资产绑定】", assetBinding,
+            "【生成规格】", "【视频约束】", `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。严格保留当前镜头已锁定的台词/旁白，不增加、不删减，不生成字幕、文字、Logo 或水印。",
+            "【参考资产绑定】", "【场景设定】", `${sceneAsset ? `@${sceneAsset.name}` : scene}：唯一场景空间参考，只控制地点结构、陈设、环境和光线关系。`, "【人物设定】", assets.filter((asset) => asset.kind === "character").map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n") || "当前画面无可识别人物资产。", "【站位设定】", `${subject}位于${scene}的画面主体区域，按照当前分镜站位保持与场景和道具的相对位置不变。`,
             "【叙事目标】", `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${subject}尝试${dramaticGoal}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`,
             "【起始画面】", `${sceneAsset ? `@${sceneAsset.name}` : scene}，${framing}。${subject}处于${startState}。`,
-            `【${duration}秒时间轴】`,
+            `【${duration}秒时间轴】`, "【画面时序】",
             `0-${establishEnd}秒：以${framing}建立当前场景，${subject}保持起始状态，镜头确认人物、道具和空间关系。`,
             `${establishEnd}-${actionEnd}秒：${actionBeats[0]}；${actionBeats.slice(1, -1).join("；") || tactic}。动作从停顿自然启动，身体重心和手部运动连续；${camera}开始执行。`,
             `${actionEnd}-${changeEnd}秒：${obstacleReaction}；紧接着${turningAction}，让${dramaticResult}成为清楚可见的物理结果；人物通过姿态、呼吸和视线变化外化情绪，镜头保持同一运动方向。`,
             `${changeEnd}-${duration}秒：动作停止并落在${endState}，明确呈现${valueShift}；镜头到达终点后保持稳定，不再增加新动作，为下一片段保留连续性落点。`,
             "【镜头运动】", `${camera}。全程只使用这一种主运镜，不改变机位逻辑，不叠加推拉摇移、环绕、手持或突然变焦。`,
-            "【光线与画面质感】", `${lighting}。${style || "保持当前项目画风、自然曝光和真实材质"}，光源方向和人物画风全程一致。`,
+            "【光线与画面质感】", "【光影与氛围】", `${lighting}。${style || "保持当前项目画风、自然曝光和真实材质"}，光源方向和人物画风全程一致。`,
             "【声音时间轴】", `0-${duration}秒：<${sound}>。${videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"}`,
             "【连续性与稳定约束】", "保持当前地点不变，不使用蒙太奇或跨场景转场；人物脸型、年龄状态、服装、身体比例、手指和场景结构稳定；资产不得变形、替换或凭空消失；无闪烁、跳帧、穿模、字幕、文字、Logo 或水印。",
         ].join("\n"),
@@ -7955,6 +7963,14 @@ function requiredAssetPriority(asset: StoryboardAsset) {
     return (asset.sceneSheetUrl || asset.sceneSheetStorageKey ? 2 : 0) + (asset.imageUrl || asset.storageKey ? 1 : 0);
 }
 
+function storyboardAssetRoleHint(asset: StoryboardAsset) {
+    if (asset.kind === "scene") return "唯一场景空间参考，只控制地点结构、陈设、环境和光线关系，不承担人物身份。";
+    if (asset.kind === "prop") return "核心道具参考，只控制外观、材质、尺寸、摆放位置和使用连续性。";
+    const state = `${asset.name} ${asset.lifeStage || ""}`;
+    if (/(出生|婴儿|新生儿|宝宝|幼儿|幼年)/.test(state)) return "被抱持或被照护的婴儿/幼年人物主体，只控制该年龄状态的外观，不执行成人动作。";
+    return "当前镜头可见人物主体，负责执行场景卡中的主要动作；只控制脸型、年龄状态、发型、体态、服装和画风。";
+}
+
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
@@ -7987,7 +8003,7 @@ function storyboardAssetHasSafetyRisk(asset: StoryboardAsset) {
 
 function storyboardPromptAssetLine(asset: StoryboardAsset, strictSafety = false) {
     const state = asset.kind === "character" ? [asset.baseName ? `本名：${asset.baseName}` : "", asset.lifeStage ? `状态：${storyboardSafetyComposeText(asset.lifeStage, strictSafety)}` : ""].filter(Boolean).join("，") : "";
-    const description = strictSafety ? `${ASSET_KIND_TEXT[asset.kind]}身份与画风参考` : storyboardSafetyComposeText(asset.description || asset.prompt || "无描述");
+    const description = `${storyboardAssetRoleHint(asset)} ${strictSafety ? "保持参考图中的身份、年龄状态、体态、服装和画风，不要重绘成其他角色。" : storyboardSafetyComposeText(asset.description || asset.prompt || "无描述")}`;
     return `- @${asset.name}｜${ASSET_KIND_TEXT[asset.kind]}${state ? `｜${state}` : ""}｜${description}`;
 }
 
