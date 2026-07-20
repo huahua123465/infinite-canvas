@@ -46,7 +46,7 @@ export function useVideoGenerationPreflight() {
 
 function ReferenceSummary({ input }: { input: VideoPreflightInput }) {
     const model = modelOptionName(input.config.model || input.config.videoModel) || "未选择模型";
-    const fields = requestReferenceFields(input.config, model);
+    const fields = actualReferenceFields(input.config, model, input);
     const hasReferences = input.references.length || input.videoReferences.length || input.audioReferences.length;
     return (
         <div className="mb-3 rounded-lg border border-blue-500/25 bg-blue-500/[0.06] px-3 py-2.5 text-sm leading-5">
@@ -65,15 +65,15 @@ function ReferenceSummary({ input }: { input: VideoPreflightInput }) {
     );
 }
 
-function requestReferenceFields(config: AiConfig, model: string) {
+function actualReferenceFields(config: AiConfig, model: string, input: VideoPreflightInput) {
     const normalized = model.toLowerCase();
-    if (isCangyuanSd5SeedanceModel(model)) return ["images", "reference_videos", "reference_audios"];
-    if (isOmniImageVideoModel(model)) return ["input_reference（multipart）"];
-    if (isSoraVideoModel(model) || isVeoVideoModel(model)) return ["images"];
-    if (normalized.startsWith("grok-video")) return ["image_urls", "video_url"];
-    if (config.apiFormat === "cangyuan") return ["image_url", "reference_image_urls", "reference_videos", "reference_audios"];
+    if (isCangyuanSd5SeedanceModel(model)) return [input.references.length ? "images" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
+    if (isOmniImageVideoModel(model)) return input.references.length ? ["input_reference（multipart）"] : [];
+    if (isSoraVideoModel(model) || isVeoVideoModel(model)) return input.references.length ? ["images"] : [];
+    if (normalized.startsWith("grok-video")) return [input.references.length ? "image_urls" : "", input.videoReferences.length ? "video_url" : ""].filter(Boolean);
+    if (config.apiFormat === "cangyuan") return [input.references.length ? "image_url" : "", input.references.length > 1 ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
     if (config.apiFormat === "ark") return ["content（文本 + 多模态素材）"];
-    return ["input_reference[]"];
+    return input.references.length ? ["input_reference[]"] : [];
 }
 
 function IssueList({ issues }: { issues: VideoPreflightIssue[] }) {
