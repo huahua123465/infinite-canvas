@@ -206,9 +206,22 @@ export function buildSeedancePromptText(prompt: string, images: ReferenceImage[]
         ...videos.map((item, index) => `${seedanceReferenceLabel("video", index)} = ${seedanceReferenceName(item.name)}`),
         ...audios.map((item, index) => `${seedanceReferenceLabel("audio", index)} = ${seedanceReferenceName(item.name)}`),
     ];
-    const text = prompt.trim();
+    const text = normalizeSeedanceReferenceMentions(prompt, images.length, videos.length, audios.length);
     if (!mappings.length) return text;
-    return `参考素材映射：${mappings.join("；")}。提示词中的 @资产名 与这里的图片、视频、音频编号一一对应，每个素材只控制对应主体、场景、道具、动作或声音。\n\n${text}`;
+    const bindings = [
+        ...images.map((_, index) => `@${seedanceReferenceLabel("image", index)}`),
+        ...videos.map((_, index) => `@${seedanceReferenceLabel("video", index)}`),
+        ...audios.map((_, index) => `@${seedanceReferenceLabel("audio", index)}`),
+    ];
+    return `参考素材映射：${mappings.map((mapping, index) => `${bindings[index]} = ${mapping.slice(mapping.indexOf("=") + 1).trim()}`).join("；")}。已绑定素材：${bindings.join("、")}。提示词中的 @资产名 与这里的图片、视频、音频编号一一对应，每个素材只控制对应主体、场景、道具、动作或声音。\n\n${text}`;
+}
+
+function normalizeSeedanceReferenceMentions(prompt: string, imageCount: number, videoCount: number, audioCount: number) {
+    let text = prompt.trim();
+    for (let index = 1; index <= imageCount; index += 1) text = text.replace(new RegExp(`(^|[^@])图片${index}(?!\\d)`, "g"), `$1@图片${index}`);
+    for (let index = 1; index <= videoCount; index += 1) text = text.replace(new RegExp(`(^|[^@])视频${index}(?!\\d)`, "g"), `$1@视频${index}`);
+    for (let index = 1; index <= audioCount; index += 1) text = text.replace(new RegExp(`(^|[^@])音频${index}(?!\\d)`, "g"), `$1@音频${index}`);
+    return text;
 }
 
 function seedanceReferenceName(name: string) {
