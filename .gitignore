@@ -11,3 +11,17 @@ data/
 .obsidian/
 project-notes/
 voicebox/
+
+# Local build/runtime artifacts for the bundled ToonFlow desktop app
+Toonflow-app-master/node_modules/
+Toonflow-app-master/data/oss/
+Toonflow-app-master/data/logs/
+Toonflow-app-master/data/*.sqlite*
+Toonflow-app-master/data/*.db*
+Toonflow-app-master/data/test.sqlite*
+
+# Local workspace caches and generated audit output
+.cursor/
+.tmp-video-audit/
+web/.npm-cache/
+web/dist/

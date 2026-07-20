@@ -5,10 +5,8 @@ import copyToClipboard from "copy-to-clipboard";
 import { Copy, FolderOpen, History, KeyRound, Link2, LoaderCircle, PlugZap, Plus, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { readImageMeta } from "@/lib/image-utils";
-import { randomId } from "@/lib/utils";
 import { uploadImage } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -97,7 +95,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
     const connectedRef = useRef(false);
     const errorLoggedRef = useRef(false);
     const attachmentUrlsRef = useRef(new Set<string>());
-    const clientIdRef = useRef(randomId());
+    const clientIdRef = useRef(typeof crypto === "undefined" ? `${Date.now()}-${Math.random()}` : crypto.randomUUID());
     const loadThreadsSequenceRef = useRef(0);
     const endpoint = useMemo(() => url.trim().replace(/\/$/, ""), [url]);
     const urlAgentAutoConnect = searchParams.has("agentUrl") && searchParams.has("agentToken");
@@ -354,7 +352,578 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         if (confirmToolsRef.current && isCanvasWriteTool(payload.name)) {
             if (pendingToolRef.current) {
                 await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, error: "仍有待确认的画布工具调用" });
-          …7381 tokens truncated…onRefresh,
+                return;
+            }
+            pendingToolRef.current = payload;
+            setAgentState({ pendingTool: payload });
+            addEventLog("等待确认", payload, payload);
+            return;
+        }
+        await runToolCall(endpoint, token, payload);
+    };
+
+    const runToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
+        if (isSiteTool(payload.name)) {
+            try {
+                addEventLog(toolName(payload.name), payload, payload);
+                const result = await runSiteTool(payload.name, payload.input || {}, navigate, { canvasSnapshot: canvasContextRef.current?.snapshot || null });
+                await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
+                addEventLog(`${toolName(payload.name)}完成`, result, result);
+                addMessage({ role: "tool", title: `${toolName(payload.name)}完成`, text: siteToolSummary(payload.name, result), detail: { requestId: payload.requestId, name: payload.name, input: payload.input, result } });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "工具执行失败";
+                addMessage({ role: "tool", title: "工具失败", text: message, detail: payload });
+                await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, error: message });
+            }
+            return;
+        }
+        try {
+            const input: { ops?: CanvasAgentOp[]; path?: string } = payload.input || {};
+            addEventLog(toolName(payload.name), payload, payload);
+            let result: unknown;
+            let appliedOps = input.ops || [];
+            if (payload.name === "site_navigate") {
+                const path = input.path || "/";
+                navigate(path);
+                result = { ok: true, path };
+            } else if (payload.name === "canvas_apply_ops") {
+                const context = canvasContextRef.current;
+                if (!context) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
+                result = context.applyOps(appliedOps);
+                void postState(endpoint, token, clientIdRef.current, result as CanvasAgentSnapshot);
+            } else if (payload.name === "canvas_create_attachment_nodes") {
+                const context = canvasContextRef.current;
+                if (!context) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
+                appliedOps = await attachmentNodeOps(endpoint, token, clientIdRef.current, payload.input?.nodes);
+                result = context.applyOps(appliedOps);
+                await postState(endpoint, token, clientIdRef.current, result as CanvasAgentSnapshot);
+            } else {
+                const snapshot = canvasContextRef.current?.snapshot;
+                if (!snapshot) throw new Error("当前不在画布页，请先用 site_navigate 打开画布");
+                result = snapshot;
+            }
+            await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, result });
+            addEventLog(`${toolName(payload.name)}完成`, result, result);
+            addMessage({
+                role: "tool",
+                title: `${toolName(payload.name)}完成`,
+                text: appliedOps.length ? summarizeCanvasAgentOps(appliedOps) || "画布操作" : payload.name === "site_navigate" ? `已跳转到 ${input.path || "/"}` : "已完成",
+                detail: { requestId: payload.requestId, name: payload.name, input, result },
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "画布操作失败";
+            addMessage({ role: "tool", title: "工具失败", text: message, detail: payload });
+            await postToolResult(endpoint, token, clientIdRef.current, { requestId: payload.requestId, error: message });
+        }
+    };
+
+    const rejectPendingTool = async () => {
+        if (!pendingTool) return;
+        await postToolResult(endpoint, token, clientIdRef.current, { requestId: pendingTool.requestId, error: "用户取消了画布工具调用" });
+        addMessage({ role: "tool", title: "拒绝执行", text: toolName(pendingTool.name), detail: { requestId: pendingTool.requestId, name: pendingTool.name, input: pendingTool.input } });
+        pendingToolRef.current = null;
+        setAgentState({ pendingTool: null });
+    };
+
+    const approvePendingTool = async () => {
+        if (!pendingTool) return;
+        const tool = pendingTool;
+        pendingToolRef.current = null;
+        setAgentState({ pendingTool: null });
+        await runToolCall(endpoint, token, tool);
+    };
+
+    const toggleAgentConnection = async ({ silent = false }: { silent?: boolean } = {}) => {
+        if (enabled) {
+            clearAgentSession({ enabled: false, connected: false, activity: "离线", connectError: "" });
+            return;
+        }
+        const urlToken = searchParams.get("agentToken") || "";
+        const urlEndpoint = searchParams.get("agentUrl") || "";
+        const discovered = urlToken ? null : await discoverAgentConfig(endpoint || DEFAULT_AGENT_URL);
+        const nextEndpoint = (urlEndpoint || discovered?.url || endpoint || DEFAULT_AGENT_URL).trim().replace(/\/$/, "");
+        const nextToken = (urlToken || token.trim() || discovered?.token || "").trim();
+        if (!nextEndpoint) {
+            const text = "请填写本地 Agent 地址";
+            if (!silent) {
+                setAgentState({ connectError: text });
+                if (!headless) message.warning(text);
+            }
+            return;
+        }
+        if (!nextToken) {
+            const text = "没有发现本地 Agent，请先在 Codex 使用插件或手动启动 Canvas Agent";
+            if (!silent) {
+                setAgentState({ connectError: text });
+                if (!headless) message.warning(text);
+            }
+            return;
+        }
+        try {
+            const parsed = new URL(nextEndpoint);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("invalid protocol");
+        } catch {
+            const text = "本地 Agent 地址格式不正确";
+            if (!silent) {
+                setAgentState({ connectError: text });
+                if (!headless) message.warning(text);
+            }
+            return;
+        }
+        errorLoggedRef.current = false;
+        setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, activity: "连接中", connectError: "", activeTab: "setup" });
+    };
+
+    useEffect(() => {
+        if (urlAgentAutoConnect && confirmTools) setAgentState({ confirmTools: false });
+    }, [confirmTools, setAgentState, urlAgentAutoConnect]);
+
+    useEffect(() => {
+        if (!autoConnect || autoConnectRef.current || enabled || connected) return;
+        autoConnectRef.current = true;
+        void toggleAgentConnection({ silent: true });
+    }, [autoConnect, connected, enabled]);
+
+    function clearAgentSession(patch: Parameters<typeof setAgentState>[0] = {}) {
+        loadThreadsSequenceRef.current += 1;
+        setAgentState({
+            messages: [],
+            threads: [],
+            activeThreadId: "",
+            workspacePath: "",
+            loadingThreads: false,
+            waiting: false,
+            sending: false,
+            pendingTool: null,
+            ...patch,
+        });
+        pendingToolRef.current = null;
+    }
+
+    const startNewThread = async () => {
+        if (!connected || sending || waiting) return;
+        setAgentState({ loadingThreads: true });
+        try {
+            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+            setAgentState({ activeThreadId: data.thread?.id || data.workspace?.activeThreadId || "", messages: [], activeTab: "chat", activity: "新对话" });
+        } catch (error) {
+            addEventLog("新建对话失败", error);
+            message.error(error instanceof Error ? error.message : "新建对话失败");
+        } finally {
+            setAgentState({ loadingThreads: false });
+        }
+    };
+
+    const resumeThread = async (threadId: string) => {
+        if (!connected || !threadId || sending || waiting) return;
+        setAgentState({ loadingThreads: true });
+        try {
+            const data = await fetchAgentJson<AgentThreadResponse>(endpoint, token, `/agent/codex/threads/${encodeURIComponent(threadId)}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+            setAgentState({ activeThreadId: data.thread?.id || threadId, messages: normalizeHistoryMessages(data.messages || []), activeTab: "chat", activity: "已恢复会话" });
+        } catch (error) {
+            addEventLog("恢复对话失败", error);
+            message.error(error instanceof Error ? error.message : "恢复对话失败");
+        } finally {
+            setAgentState({ loadingThreads: false });
+        }
+    };
+
+    const deleteThread = async (threadId: string) => {
+        if (!connected || !threadId || sending || waiting) return;
+        setAgentState({ loadingThreads: true });
+        try {
+            await fetchAgentJson(endpoint, token, `/agent/codex/threads/${encodeURIComponent(threadId)}/delete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+            const current = useAgentStore.getState();
+            setAgentState({
+                threads: current.threads.filter((thread) => thread.id !== threadId),
+                activeThreadId: current.activeThreadId === threadId ? "" : current.activeThreadId,
+                messages: current.activeThreadId === threadId ? [] : current.messages,
+            });
+            message.success("记录已删除");
+        } catch (error) {
+            addEventLog("删除对话失败", error);
+            message.error(error instanceof Error ? error.message : "删除对话失败");
+        } finally {
+            setAgentState({ loadingThreads: false });
+        }
+    };
+
+    const confirmDeleteThread = (thread: AgentThreadSummary) => {
+        const label = thread.name || thread.preview || "未命名对话";
+        modal.confirm({
+            title: "删除对话记录",
+            content: `确定删除「${label.length > 48 ? `${label.slice(0, 48)}...` : label}」吗？`,
+            okText: "删除",
+            okType: "danger",
+            cancelText: "取消",
+            onOk: () => deleteThread(thread.id),
+        });
+    };
+
+    const addMessage = (item: Omit<AgentChatItem, "id"> & { id?: string }) => {
+        const text = normalizeText(item.text);
+        if (!text && !item.attachments?.length) return;
+        const next = { ...item, id: item.id || `${Date.now()}-${Math.random()}`, text } as AgentChatItem;
+        const currentMessages = useAgentStore.getState().messages;
+        if (currentMessages.some((message) => message.id === next.id)) return;
+        if (next.streamId) {
+            const index = currentMessages.findIndex((message) => message.streamId === next.streamId);
+            if (index >= 0) {
+                setAgentState({ messages: currentMessages.map((message, i) => (i === index ? { ...message, ...next, id: message.id, text: next.text || message.text } : message)) });
+                return;
+            }
+        }
+        const last = currentMessages.at(-1);
+        if (last?.role === "assistant" && next.role === "assistant" && last.title === next.title) {
+            const merged = mergeAgentText(last.text, next.text);
+            if (merged === last.text) return;
+            setAgentState({ messages: [...useAgentStore.getState().messages.slice(0, -1), { ...last, text: merged, meta: next.meta || last.meta }] });
+            return;
+        }
+        pushMessage(next);
+    };
+
+    const addEventLog = (title: string, text: unknown, raw?: unknown) => {
+        pushEventLog({ id: `${Date.now()}-${Math.random()}`, time: new Date().toLocaleTimeString(), title, text: normalizeText(text) || title, raw });
+    };
+
+    const handleAgentEvent = (event: AgentEventPayload) => {
+        if (shouldLogAgentEvent(event)) addEventLog(eventTitle(event), event, event);
+        if (event.type === "thread.started" && event.thread_id) setAgentState({ activeThreadId: event.thread_id });
+        const item = formatAgentEvent(event);
+        if (item) addMessage(item);
+    };
+
+    const content = (
+        <>
+            <AgentPanelTabs
+                value={activeTab}
+                theme={theme}
+                items={[
+                    { value: "setup", label: "连接", icon: <PlugZap className="size-3.5" /> },
+                    { value: "chat", label: "对话" },
+                    { value: "history", label: "历史", icon: <History className="size-3.5" />, count: threads.length },
+                    { value: "log", label: "日志", icon: <Terminal className="size-3.5" />, count: eventLogs.length },
+                ]}
+                onChange={(activeTab) => {
+                    setAgentState({ activeTab });
+                    if (activeTab === "history") void loadThreads();
+                }}
+                right={
+                    <>
+                        <Button size="small" type="text" disabled={!connected || loadingThreads || sending || waiting} icon={<Plus className="size-3.5" />} onClick={startNewThread}>
+                            新对话
+                        </Button>
+                    </>
+                }
+            />
+
+            {activeTab === "setup" ? (
+                <AgentConnectView
+                    theme={theme}
+                    url={url}
+                    token={token}
+                    enabled={enabled}
+                    connected={connected}
+                    activity={activity}
+                    connectError={connectError}
+                    onUrlChange={(url) => setAgentState({ url, connectError: "" })}
+                    onTokenChange={(token) => setAgentState({ token, connectError: "" })}
+                    onToggleEnabled={toggleAgentConnection}
+                />
+            ) : activeTab === "history" ? (
+                <AgentHistoryView
+                    theme={theme}
+                    threads={threads}
+                    activeThreadId={activeThreadId}
+                    workspacePath={workspacePath}
+                    loading={loadingThreads}
+                    busy={sending || waiting}
+                    connected={connected}
+                    onRefresh={() => void loadThreads()}
+                    onNewThread={() => void startNewThread()}
+                    onResumeThread={(threadId) => void resumeThread(threadId)}
+                    onDeleteThread={confirmDeleteThread}
+                />
+            ) : activeTab === "log" ? (
+                <AgentLogView
+                    logs={eventLogs}
+                    theme={theme}
+                    context={{ endpoint, connected, enabled, activity, waiting, sending, messages: messages.length, pendingTool: pendingTool?.name }}
+                    onClear={clearEventLogs}
+                    onCopied={(text) => message.success(text)}
+                    onCopyBlocked={(text) => message.warning(text)}
+                />
+            ) : (
+                <>
+                    <div ref={listRef} className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                        {messages.map((item) => (
+                            <AgentChatMessage key={item.id} item={agentMessageToChatMessage(item)} theme={theme} user={user} />
+                        ))}
+                        {pendingTool ? (
+                            <AgentPendingToolCard
+                                summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)}
+                                detail={{ requestId: pendingTool.requestId, name: pendingTool.name, input: pendingTool.input }}
+                                theme={theme}
+                                onReject={rejectPendingTool}
+                                onApprove={approvePendingTool}
+                            />
+                        ) : null}
+                        {waiting && !pendingTool ? <AgentWorkingMessage theme={theme} /> : null}
+                    </div>
+                    <AgentChatComposer
+                        prompt={prompt}
+                        attachments={attachments.map(agentAttachmentToChatAttachment)}
+                        disabled={!connected}
+                        sending={sending || waiting}
+                        placeholder="询问 Codex，或让它操作网站/画布"
+                        theme={theme}
+                        onPromptChange={(prompt) => setAgentState({ prompt })}
+                        onSubmit={sendPrompt}
+                        onStop={stopTurn}
+                        onAddFiles={addAttachments}
+                        onRemoveAttachment={removeAttachment}
+                        left={
+                            attachments.length ? (
+                                <span className="text-[11px]" style={{ color: theme.node.muted }}>
+                                    {formatBytes(attachmentPayloadBytes(attachments))} / 30MB
+                                </span>
+                            ) : null
+                        }
+                    />
+                </>
+            )}
+        </>
+    );
+
+    if (headless) return null;
+    return embedded ? content : null;
+}
+
+function AgentLogView({
+    logs,
+    theme,
+    context,
+    onClear,
+    onCopied,
+    onCopyBlocked,
+}: {
+    logs: AgentEventLog[];
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    context: AgentLogContext;
+    onClear: () => void;
+    onCopied: (text: string) => void;
+    onCopyBlocked: (text: string) => void;
+}) {
+    const [mode, setMode] = useState<"text" | "json">("text");
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const content = mode === "text" ? formatLogText(logs, context) : formatLogJson(logs, context);
+    const lastError = [...logs].reverse().find((item) => /错误|失败|error/i.test(`${item.title}\n${item.text}`));
+    const copy = async (value = content, tip = "日志已复制") => {
+        if (await copyToClipboard(value)) {
+            onCopied(tip);
+            return;
+        }
+        textareaRef.current?.focus();
+        textareaRef.current?.select();
+        onCopyBlocked("已选中日志，请手动复制");
+    };
+    return (
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="flex min-h-full flex-col gap-3">
+                <div>
+                    <div className="text-base font-semibold leading-6">运行日志</div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Segmented
+                        size="small"
+                        value={mode}
+                        onChange={(value) => setMode(value as "text" | "json")}
+                        options={[
+                            { label: "排查日志", value: "text" },
+                            { label: "原始 JSON", value: "json" },
+                        ]}
+                    />
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs" style={{ color: theme.node.muted }}>
+                            {logs.length} 条
+                        </span>
+                        <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void copy()}>
+                            复制
+                        </Button>
+                        <Button size="small" disabled={!lastError} onClick={() => lastError && void copy(formatLogText([lastError], context), "最近错误已复制")}>
+                            最近错误
+                        </Button>
+                        <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} disabled={!logs.length} onClick={onClear}>
+                            清空
+                        </Button>
+                    </div>
+                </div>
+                <textarea
+                    ref={textareaRef}
+                    readOnly
+                    value={content}
+                    className="thin-scrollbar min-h-[360px] flex-1 resize-none rounded-lg border bg-transparent p-3 font-mono text-xs leading-5 outline-none"
+                    style={{ borderColor: theme.node.stroke, color: theme.node.text }}
+                    onFocus={(event) => event.currentTarget.select()}
+                />
+            </div>
+        </div>
+    );
+}
+
+function AgentConnectView({
+    theme,
+    url,
+    token,
+    enabled,
+    connected,
+    activity,
+    connectError,
+    onUrlChange,
+    onTokenChange,
+    onToggleEnabled,
+}: {
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    url: string;
+    token: string;
+    enabled: boolean;
+    connected: boolean;
+    activity: string;
+    connectError: string;
+    onUrlChange: (value: string) => void;
+    onTokenChange: (value: string) => void;
+    onToggleEnabled: () => void;
+}) {
+    const { message } = App.useApp();
+    const statusText = connectError ? "连接失败" : connected ? activity : enabled ? "连接中" : "未连接";
+    const statusColor = connectError ? "#dc2626" : connected ? "#16a34a" : enabled ? "#d97706" : theme.node.muted;
+    const copyCommand = (command: string) => {
+        copyToClipboard(command);
+        message.success("命令已复制");
+    };
+    const codexPluginReminder = (
+        <div className="rounded-lg border px-3 py-2.5 text-xs leading-5" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
+            <div className="font-medium" style={{ color: theme.node.text }}>
+                Codex 插件提醒
+            </div>
+            <div className="mt-1">只有安装 Codex 插件或手动添加 MCP 后，工具列表才会进入 Codex 上下文并增加 token 消耗；仅运行 `npx -y @basketikun/canvas-agent` 启动本地 Agent 不会安装 MCP。</div>
+            <div className="mt-2 grid gap-1.5">
+                {[
+                    ["移除插件", AGENT_PLUGIN_REMOVE_COMMAND],
+                    ["移除手动 MCP", AGENT_MCP_REMOVE_COMMAND],
+                ].map(([label, command]) => (
+                    <div key={command} className="flex items-center gap-2 rounded-md border bg-transparent px-2 py-1.5" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
+                        <span className="shrink-0 text-[11px]" style={{ color: theme.node.muted }}>
+                            {label}
+                        </span>
+                        <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[11px] leading-5">{command}</code>
+                        <Tooltip title="复制命令">
+                            <Button size="small" type="text" className="!h-6 !w-6 !min-w-6" icon={<Copy className="size-3.5" />} onClick={() => copyCommand(command)} />
+                        </Tooltip>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+    return (
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="space-y-4">
+                <div>
+                    <div className="text-base font-semibold leading-6">连接本地 Agent</div>
+                    <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                        按使用场景选择一种连接方式。
+                    </div>
+                </div>
+                <div className="space-y-2">
+                    {AGENT_CONNECT_STEPS.map((step, index) => {
+                        const command = "command" in step ? step.command : "";
+                        return (
+                            <Fragment key={step.title}>
+                                <div className="rounded-lg px-3 py-2.5">
+                                    <div className="text-sm font-medium leading-5">{step.title}</div>
+                                    <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                                        {step.text}
+                                    </div>
+                                    {command ? (
+                                        <div className="mt-2 flex items-center gap-2 rounded-md border bg-transparent px-2 py-1.5" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
+                                            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-[11px] leading-5">{command}</code>
+                                            <Tooltip title="复制命令">
+                                                <Button size="small" type="text" className="!h-6 !w-6 !min-w-6" icon={<Copy className="size-3.5" />} onClick={() => copyCommand(command)} />
+                                            </Tooltip>
+                                        </div>
+                                    ) : null}
+                                </div>
+                                {index === 0 ? codexPluginReminder : null}
+                            </Fragment>
+                        );
+                    })}
+                </div>
+                <div className="rounded-lg border p-3" style={{ borderColor: theme.node.stroke }}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <span className="shrink-0 text-sm font-medium leading-5">网页连接</span>
+                                <span
+                                    className="inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] leading-4"
+                                    style={{ borderColor: connected || enabled || connectError ? statusColor : theme.node.stroke, color: statusColor }}
+                                >
+                                    <span className="size-1.5 shrink-0 rounded-full" style={{ background: statusColor }} />
+                                    <span className="truncate">{statusText}</span>
+                                </span>
+                            </div>
+                            <div className="mt-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                                默认自动读取 Local URL 和 Connect token，失败时再手动填写。
+                            </div>
+                        </div>
+                        <Button className="!h-8 !px-3" type={enabled ? "default" : "primary"} icon={<PlugZap className="size-4" />} onClick={onToggleEnabled}>
+                            {enabled ? "断开" : "连接"}
+                        </Button>
+                    </div>
+                    <div className="mt-3 grid gap-2.5">
+                        <label className="grid gap-1.5">
+                            <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: theme.node.muted }}>
+                                <Link2 className="size-3.5" />
+                                本地地址
+                                <span className="font-normal opacity-70">Local URL</span>
+                            </span>
+                            <Input size="large" prefix={<Link2 className="mr-1 size-4" style={{ color: theme.node.faint }} />} value={url} onChange={(event) => onUrlChange(event.target.value)} placeholder="例如 http://127.0.0.1:17371" />
+                        </label>
+                        <label className="grid gap-1.5">
+                            <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: theme.node.muted }}>
+                                <KeyRound className="size-3.5" />
+                                连接 Token
+                                <span className="font-normal opacity-70">Connect token</span>
+                            </span>
+                            <Input.Password
+                                size="large"
+                                prefix={<KeyRound className="mr-1 size-4" style={{ color: theme.node.faint }} />}
+                                value={token}
+                                onChange={(event) => onTokenChange(event.target.value)}
+                                placeholder="自动发现，或手动填入 Connect token"
+                            />
+                        </label>
+                        {connectError ? (
+                            <div className="rounded-md border px-2.5 py-2 text-xs leading-5" style={{ borderColor: "rgba(220,38,38,.35)", color: "#dc2626" }}>
+                                {connectError}
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function AgentHistoryView({
+    theme,
+    threads,
+    activeThreadId,
+    workspacePath,
+    loading,
+    busy,
+    connected,
+    onRefresh,
     onNewThread,
     onResumeThread,
     onDeleteThread,
@@ -702,7 +1271,7 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
                 position: { x: Number(position.x) || 0, y: Number(position.y) || 0 },
                 width: size.width,
                 height: size.height,
-                metadata: imageMetadata(image),
+                metadata: { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType },
             };
         }),
     );
