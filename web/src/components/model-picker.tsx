@@ -40,7 +40,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             options.map((model) => {
                 const channel = resolveModelChannel(config, model);
                 const pricing = channel.apiFormat === "cangyuan" ? formatModelPricing(findModelPricing(pricingByBaseUrl[cangyuanPricingKey(channel.baseUrl)], modelOptionName(model)), estimateSeconds) : null;
-                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={pricing?.label} priceTitle={pricing?.title} /> };
+                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={pricing?.label} unitPrice={pricing?.unitLabel} priceTitle={pricing?.title} /> };
             }),
         [capability, config, estimateSeconds, options, pricingByBaseUrl],
     );
@@ -84,7 +84,7 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? `暂无匹配的${label}模型` : "请先到配置里添加渠道和模型";
 }
 
-function ModelLabel({ config, model, capability, price, priceTitle }: { config: AiConfig; model: string; capability?: ModelCapability; price?: string; priceTitle?: string }) {
+function ModelLabel({ config, model, capability, price, unitPrice, priceTitle }: { config: AiConfig; model: string; capability?: ModelCapability; price?: string; unitPrice?: string; priceTitle?: string }) {
     const showReferenceLimits = capability === "video";
     return (
         <span className="flex min-w-0 items-center gap-2">
@@ -96,8 +96,9 @@ function ModelLabel({ config, model, capability, price, priceTitle }: { config: 
                 </span>
             ) : null}
             {price ? (
-                <span title={priceTitle} className="shrink-0 rounded border border-emerald-200 bg-emerald-50 px-1.5 text-[11px] font-medium leading-5 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200">
-                    {price}
+                <span className="flex shrink-0 items-center gap-1">
+                    {unitPrice ? <span title={priceTitle} className="rounded border border-cyan-200 bg-cyan-50 px-1.5 text-[11px] font-medium leading-5 text-cyan-700 dark:border-cyan-900/70 dark:bg-cyan-950/40 dark:text-cyan-200">{unitPrice}</span> : null}
+                    <span title={priceTitle} className="rounded border border-emerald-200 bg-emerald-50 px-1.5 text-[11px] font-medium leading-5 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-200">{price}</span>
                 </span>
             ) : null}
         </span>

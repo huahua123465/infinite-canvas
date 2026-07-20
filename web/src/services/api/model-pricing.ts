@@ -57,9 +57,9 @@ export function formatModelPricing(item: ModelPricingItem | undefined, estimateS
     const unitText = `¥${formatMoney(price)}/${unit}`;
     const seconds = Number(estimateSeconds);
     if (perSecond && Number.isFinite(seconds) && seconds > 0) {
-        return { label: `约¥${formatMoney(price * seconds)}`, title: `${unitText}，按 ${seconds}s 估算` };
+        return { label: `约¥${formatMoney(price * seconds)}`, unitLabel: `${unitText}`, title: `${unitText}，按 ${seconds}s 估算` };
     }
-    return { label: unitText, title: unitText };
+    return { label: unitText, unitLabel: undefined, title: unitText };
 }
 
 function indexPricingItems(items: ModelPricingItem[]) {
