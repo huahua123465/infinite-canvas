@@ -118,8 +118,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 target.scrollTop += event.deltaY;
             }}
             onPointerDown={(event) => event.stopPropagation()}
-            className={`thin-scrollbar w-full cursor-text resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full min-h-0" : "pr-10 transition-[height] duration-150"}`}
-            style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, overflowY: large || promptExpanded ? "auto" : "hidden" }}
+            className={`thin-scrollbar w-full cursor-text resize-none rounded-xl px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full min-h-0" : "pr-10 transition-[height] duration-150"}`}
+            style={{ background: "transparent", color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, overflowY: large || promptExpanded ? "auto" : "hidden" }}
             placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击规划分集片段" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
         />
     );
