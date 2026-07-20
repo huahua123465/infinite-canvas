@@ -365,7 +365,7 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
     const imageUrls = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
     const referenceVideos = videoReferences.slice(0, limits.videos).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考视频 ${index + 1}`));
     const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
-    const requestPrompt = buildSeedancePromptText(prompt, references, videoReferences, audioReferences);
+    const requestPrompt = buildCangyuanSd5SeedancePrompt(prompt, references, videoReferences, audioReferences);
     if (requestPrompt.length > 1200) throw new Error(`${modelName} 视频提示词不能超过 1200 个字符，请精简提示词或参考素材名称`);
     const payload = {
         model: modelName,
@@ -388,6 +388,13 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
     } catch (error) {
         throw new Error(readAxiosError(error, "SD5 Seedance 视频任务创建失败", modelName));
     }
+}
+
+function buildCangyuanSd5SeedancePrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
+    return buildSeedancePromptText(prompt, images, videos, audios)
+        .replace(/@?(?:图片|image)(\d+)/gi, "@image$1")
+        .replace(/@?(?:视频|video)(\d+)/gi, "@video$1")
+        .replace(/@?(?:音频|audio)(\d+)/gi, "@audio$1");
 }
 
 async function createCangyuanVeoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
