@@ -4,7 +4,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 ---
 
 # 待测试
-- ToonFlow 沧元供应商导入文件：上传 `Toonflow-app-master/cangyuan-vendor.ts` 后，应出现独立的“沧元算力”供应商；填写同一 API Key 后，文本模型可调用 OpenAI 兼容接口，图片模型走 `/v1/images/generations` / `/v1/images/edits`，视频模型走 `/v1/videos` 并轮询 `/v1/videos/{task_id}`。该配置与 Infinite Canvas 画布渠道彼此独立，需分别选择模型；视频参考素材和不同模型限制仍需用真实任务验证。
+- ToonFlow 沧元供应商导入文件：上传 `Toonflow-app-master/cangyuan-vendor.ts` 后，应出现独立的“沧元算力 API”供应商；分别填写文本、图片、视频三个 API Key 后，三类请求必须使用对应 Key。文本模型调用 OpenAI 兼容接口，图片模型走 `/v1/images/generations` / `/v1/images/edits`，视频模型走 `/v1/videos` 并轮询 `/v1/videos/{task_id}`。该配置与 Infinite Canvas 画布渠道彼此独立，视频参考素材和不同模型限制仍需用真实任务验证。
 
 - 画布文本节点与分镜最终提示词的 `@` 资产菜单：在长文本中间输入 `@` 后，候选菜单应贴近当前光标显示，不得固定漂到输入框外或遮挡无关正文；输入区滚动、窗口尺寸变化和弹窗边界变化后仍应保持在可视区域内，鼠标点击候选项应能正常插入引用，键盘上下键和回车选择仍可用。
 - 画布资源引用范围：未连线的文本/提示词节点输入 `@` 时，应显示当前画布已有的图片、视频、音频和文本资源；已连线节点优先显示连线资源。浏览器刷新后仅保留 `storageKey` 的图片资源也应出现在候选菜单并可点击插入。
