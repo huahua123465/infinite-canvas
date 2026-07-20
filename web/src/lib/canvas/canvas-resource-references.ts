@@ -24,16 +24,33 @@ export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connectio
 }
 
 export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+    const contextNodes = getMentionResourceNodes(node.id, nodes, connections).filter((item) => item.id !== node.id);
+    // 未连线的文本/提示词节点也应能引用画布中已有的资源；有连线时仍优先使用当前上下文。
+    return labelResourceNodes(contextNodes.length ? contextNodes : nodes.filter((item) => item.id !== node.id && isResourceNode(item)), true);
 }
 
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const configInputs = getConnectedConfigResourceNodes(nodeId, nodes, connections);
-    if (configInputs.length) return configInputs;
-    const ownInputs = getContextResourceNodes(nodeId, nodes, connections);
-    if (ownInputs.length) return ownInputs;
-    const node = nodes.find((item) => item.id === nodeId);
-    return node && isResourceNode(node) ? [node] : [];
+    const related = new Map<string, CanvasNodeData>();
+    const visited = new Set<string>();
+    const addResource = (candidate?: CanvasNodeData) => {
+        if (candidate && candidate.id !== nodeId && isResourceNode(candidate)) related.set(candidate.id, candidate);
+    };
+
+    const visit = (currentId: string) => {
+        if (visited.has(currentId)) return;
+        visited.add(currentId);
+        connections.forEach((connection) => {
+            const nextId = connection.fromNodeId === currentId ? connection.toNodeId : connection.toNodeId === currentId ? connection.fromNodeId : null;
+            if (!nextId) return;
+            const next = nodes.find((item) => item.id === nextId);
+            if (!next) return;
+            if (next.type === CanvasNodeType.Config) visit(next.id);
+            else addResource(next);
+        });
+    };
+    visit(nodeId);
+
+    return Array.from(related.values());
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -72,7 +89,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: pluginResource?.url || node.metadata?.content,
+                previewUrl: pluginResource?.url || node.metadata?.content || node.metadata?.storageKey,
                 text: pluginResource?.text || (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? node.metadata?.content || node.metadata?.prompt : undefined),
                 active,
             },
@@ -94,9 +111,9 @@ function isResourceNode(node: CanvasNodeData) {
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
     const pluginResource = readPluginResource(node);
     if (pluginResource) return pluginResource.kind;
-    if (node.type === CanvasNodeType.Image && node.metadata?.content) return "image";
-    if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
-    if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";
+    if (node.type === CanvasNodeType.Image && (node.metadata?.content || node.metadata?.storageKey)) return "image";
+    if (node.type === CanvasNodeType.Video && (node.metadata?.content || node.metadata?.storageKey)) return "video";
+    if (node.type === CanvasNodeType.Audio && (node.metadata?.content || node.metadata?.storageKey)) return "audio";
     if ((node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) && (node.metadata?.content || node.metadata?.prompt)) return "text";
     return null;
 }

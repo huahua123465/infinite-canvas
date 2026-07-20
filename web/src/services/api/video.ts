@@ -305,7 +305,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isVeoVideoModel(model)) return createCangyuanVeoVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isCangyuanSd5SeedanceModel(model)) return createCangyuanSd5SeedanceVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
-    const modelName = modelOptionName(model);
+    const modelName = cangyuanSeedanceMiniModelName(model);
     const fixedResolution = seedanceModelFixedResolution(modelName);
     if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
@@ -322,7 +322,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     const extraImageUrls = imageUrls.slice(1);
     const payload = {
         model: modelName,
-        prompt: buildSeedancePromptText(prompt, references, videoReferences, audioReferences),
+        prompt: buildCangyuanSeedanceMiniPrompt(prompt, references, videoReferences, audioReferences),
         aspect_ratio: normalizeCangyuanVideoRatio(config.size),
         duration: normalizeCangyuanVideoDuration(config.videoSeconds),
         ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
@@ -340,6 +340,19 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
+}
+
+function buildCangyuanSeedanceMiniPrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
+    const text = buildSeedancePromptText(prompt, images, videos, audios);
+    return text
+        .replace(/@?图片(\d+)/g, "@image$1")
+        .replace(/@?视频(\d+)/g, "@video$1")
+        .replace(/@?音频(\d+)/g, "@audio$1");
+}
+
+function cangyuanSeedanceMiniModelName(model: string) {
+    const name = modelOptionName(model);
+    return /^seedance-2\.0-mini(?:-8s)?$/i.test(name) ? "seedance-2.0-mini" : name;
 }
 
 async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {

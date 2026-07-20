@@ -55,7 +55,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const [prompt, setPrompt] = useState(hasTextContent ? "" : node.metadata?.prompt || "");
     const [promptExpanded, setPromptExpanded] = useState(false);
     const [promptComposerOpen, setPromptComposerOpen] = useState(false);
-    const promptEditorHeight = promptExpanded ? estimatePromptEditorHeight(prompt) : 96;
+    const promptEditorHeight = promptExpanded ? 220 : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : mode === "audio" ? audioModelPatch(config, model) : { model });
     const activeImageReferences = mentionReferences.filter((item) => item.kind === "image" && item.active);
@@ -118,8 +118,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 target.scrollTop += event.deltaY;
             }}
             onPointerDown={(event) => event.stopPropagation()}
-            className={`thin-scrollbar w-full cursor-text resize-none rounded-xl px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full min-h-0" : "pr-10 transition-[height] duration-150"}`}
-            style={{ background: "transparent", color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, overflowY: large || promptExpanded ? "auto" : "hidden" }}
+            className={`thin-scrollbar w-full min-h-0 cursor-text resize-none rounded-xl px-3 py-2 text-sm leading-5 outline-none ${large ? "h-full" : "pr-10 transition-[height] duration-150"}`}
+            style={{ background: "transparent", color: theme.node.text, caretColor: theme.toolbar.activeText, height: large ? "100%" : promptEditorHeight, maxHeight: large ? "100%" : 220, overflowY: large || promptExpanded ? "auto" : "hidden" }}
             placeholder={isScriptNode ? "脚本节点会优先读取连入的剧本文本；这里可留空，点击规划分集片段" : promptPlaceholder(mode, hasImageContent, hasTextContent)}
         />
     );
@@ -293,7 +293,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         <>
             <div
                 ref={panelRef}
-                className="relative rounded-2xl border p-3 shadow-2xl backdrop-blur"
+                className="relative max-h-[min(70vh,640px)] overflow-hidden rounded-2xl border p-3 shadow-2xl backdrop-blur"
                 style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -316,7 +316,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                             onWheel={(event) => event.stopPropagation()}
                         >
                             <Button type="text" className="!absolute !right-4 !top-4 z-10 !grid !size-8 !place-items-center !rounded-lg !p-0" style={{ color: theme.node.muted }} title="收起提示词编辑器" icon={<Minimize2 className="size-4" />} onClick={() => setPromptComposerOpen(false)} />
-                            <div className="min-h-0 flex-1 pr-10">
+                            <div className="min-h-0 flex-1 overflow-hidden pr-10">
                                 {renderPromptTextarea(true)}
                             </div>
                             {renderReferenceHint()}
