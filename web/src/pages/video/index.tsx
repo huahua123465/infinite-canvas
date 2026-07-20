@@ -12,8 +12,8 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { boolConfig, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { classifyVideoFailure, createVideoGenerationTask, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
@@ -101,11 +101,13 @@ export default function VideoPage() {
     const [autoRunToken, setAutoRunToken] = useState(0);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
     const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
+    const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
     const processedCommandRef = useRef(0);
+    const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const referenceLimits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
-    const referenceImageMaxBytes = isOmniImageVideoModel(model) ? 5 * 1024 * 1024 : SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
+    const referenceImageMaxBytes = isOmniImageVideoModel(model) ? 5 * 1024 * 1024 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 10 * 1024 * 1024 : SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -176,13 +178,20 @@ export default function VideoPage() {
         }
     };
     const generate = async () => {
+        const agentTaskId = agentTaskIdRef.current;
+        agentTaskIdRef.current = undefined;
         const snapshot = buildRequestSnapshot();
-        if (!snapshot) return;
+        if (!snapshot) {
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "视频生成参数无效" });
+            return;
+        }
         setRunning(true);
         if (!(await confirmVideoGeneration({ config: snapshot.config, prompt: snapshot.text, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences }))) {
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "视频生成已取消或未通过预检" });
             setRunning(false);
             return;
         }
+        if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setElapsedMs(0);
         setPreviewLog(null);
         setResults([{ id: nanoid(), status: "pending" }]);
@@ -200,11 +209,12 @@ export default function VideoPage() {
                 task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
             }
             const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
-            await saveLog(log);
-            void pollGenerationLog(log, snapshot.config);
+            await saveLog(log, false);
+            void pollGenerationLog(log, snapshot.config, agentTaskId);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: performance.now() - batchStartedAt, status: "失败", error: errorMessage }));
             message.error(errorMessage);
             setRunning(false);
@@ -216,8 +226,15 @@ export default function VideoPage() {
         processedCommandRef.current = videoCommand.nonce;
         clearVideoCommand();
         if (typeof videoCommand.prompt === "string") setPrompt(videoCommand.prompt);
-        if (videoCommand.run && !running) setAutoRunToken((value) => value + 1);
-    }, [videoCommand, clearVideoCommand, running]);
+        if (videoCommand.run && running) {
+            if (videoCommand.taskId) updateAgentTask(videoCommand.taskId, { status: "failed", error: "视频工作台已有任务正在运行" });
+            return;
+        }
+        if (videoCommand.run) {
+            agentTaskIdRef.current = videoCommand.taskId;
+            setAutoRunToken((value) => value + 1);
+        }
+    }, [videoCommand, clearVideoCommand, running, updateAgentTask]);
 
     useEffect(() => {
         if (!autoRunToken) return;
@@ -294,7 +311,7 @@ export default function VideoPage() {
             .filter((log) => selectedLogIds.includes(log.id))
             .map((log) => log.video?.storageKey)
             .filter((key): key is string => Boolean(key));
-        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -303,15 +320,15 @@ export default function VideoPage() {
         setDeleteConfirmOpen(false);
     };
 
-    const saveLog = async (log: GenerationLog) => {
+    const saveLog = async (log: GenerationLog, resumePending = true) => {
         await logStore.setItem(log.id, serializeLog(log));
-        await refreshLogs();
+        await refreshLogs(resumePending);
     };
 
-    const refreshLogs = async () => {
+    const refreshLogs = async (resumePending = true) => {
         const nextLogs = await readStoredLogs();
         setLogs(nextLogs);
-        resumePendingLogs(nextLogs);
+        if (resumePending) resumePendingLogs(nextLogs);
         return nextLogs;
     };
 
@@ -321,7 +338,7 @@ export default function VideoPage() {
         }
     };
 
-    const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig) => {
+    const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
         if (!log.task || activeLogIdsRef.current.has(log.id)) return;
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
@@ -357,11 +374,13 @@ export default function VideoPage() {
                 mimeType: stored.mimeType,
             };
             setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
             await saveLog({ ...currentLog, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
             message.success("视频已生成");
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: currentLog.id, status: "failed", error: errorMessage }]);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...currentLog, status: "失败", durationMs: Date.now() - currentLog.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
@@ -593,6 +612,17 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
         if (isSoraVideoModel(value)) {
             updateConfig("videoSeconds", "8");
             updateConfig("size", "16:9");
+            return;
+        }
+        if (isVeoVideoModel(value)) {
+            updateConfig("vquality", "1080p");
+            updateConfig("videoSeconds", "8");
+            updateConfig("size", "16:9");
+            return;
+        }
+        if (isSeedanceMini8sModel(value)) {
+            updateConfig("vquality", "720p");
+            updateConfig("videoSeconds", "8");
             return;
         }
         const fixedResolution = seedanceModelFixedResolution(value);

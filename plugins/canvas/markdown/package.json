@@ -1,6 +1,6 @@
 {
     "name": "canvas-plugin-markdown",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "private": true,
     "type": "module",
     "description": "Infinite Canvas Markdown 节点插件",
@@ -12,8 +12,7 @@
     "devDependencies": {
         "@infinite-canvas/plugin-sdk": "file:../sdk",
         "@types/react": "19.1.12",
-        "dompurify": "^3.4.12",
-        "marked": "^17.0.6",
         "typescript": "^5"
     }
 }
+

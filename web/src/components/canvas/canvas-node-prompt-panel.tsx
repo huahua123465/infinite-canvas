@@ -8,13 +8,13 @@ import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
+import { isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
-import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardProductionMode, type StoryboardProductionScope } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -33,15 +33,16 @@ type CanvasNodePromptPanelProps = {
     onPromptAssistant?: (node: CanvasNodeData) => void;
     onApplyPromptAssistantPending?: (node: CanvasNodeData, mode: "append" | "replace") => void;
     onDiscardPromptAssistantPending?: (nodeId: string) => void;
+    modeOverride?: CanvasNodeGenerationMode;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant, onApplyPromptAssistantPending, onDiscardPromptAssistantPending }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant, onApplyPromptAssistantPending, onDiscardPromptAssistantPending, modeOverride }: CanvasNodePromptPanelProps) {
     const { message } = App.useApp();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const updateGlobalConfig = useConfigStore((state) => state.updateConfig);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const mode = defaultMode(node.type);
+    const mode = modeOverride ?? defaultMode(node.type);
     const config = buildNodeConfig(globalConfig, node, mode);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
@@ -101,7 +102,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     if (isStoryboardVideo) return null;
 
     const renderPromptTextarea = (large = false) => (
-        <CanvasResourceMentionTextarea
+        <CanvasPromptChipInput
             value={prompt}
             references={mentionReferences}
             onChange={updatePrompt}
@@ -353,6 +354,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model: node.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : globalConfig.model || defaultConfig.model),
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        background: node.metadata?.background ?? globalConfig.background ?? defaultConfig.background,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
@@ -401,6 +403,8 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
 function videoModelPatch(model: string) {
     if (isOmniImageVideoModel(model)) return { model, vquality: "720p", seconds: "10", size: "16:9" };
     if (isSoraVideoModel(model)) return { model, seconds: "8", size: "16:9" };
+    if (isVeoVideoModel(model)) return { model, vquality: "1080p", seconds: "8", size: "16:9" };
+    if (isSeedanceMini8sModel(model)) return { model, vquality: "720p", seconds: "8" };
     const fixedResolution = seedanceModelFixedResolution(model);
     return fixedResolution ? { model, vquality: fixedResolution } : { model };
 }

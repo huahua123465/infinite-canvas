@@ -327,6 +327,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     size?: string;
     quality?: string;
+    background?: string;
     count?: number;
     seconds?: string;
     vquality?: string;
@@ -348,6 +349,7 @@ export type CanvasNodeMetadata = {
     batchRootId?: string;
     batchChildIds?: string[];
     groupId?: string;
+    interactive?: boolean;
     batchUsesReferenceImages?: boolean;
     primaryImageId?: string;
     imageBatchExpanded?: boolean;

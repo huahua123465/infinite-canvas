@@ -89,6 +89,12 @@ async function fetchPluginSource(url: string) {
     return response.text();
 }
 
+function withCacheBust(url: string) {
+    const next = new URL(url, window.location.href);
+    next.searchParams.set("plugin_t", String(Date.now()));
+    return next.href;
+}
+
 async function restorePlugin(record?: InstalledPlugin) {
     if (!record?.enabled) return;
     try {
@@ -98,9 +104,9 @@ async function restorePlugin(record?: InstalledPlugin) {
     }
 }
 
-export async function installPluginFromUrl(inputUrl: string, options?: { official?: boolean; bundled?: boolean; expectedId?: string }) {
+export async function installPluginFromUrl(inputUrl: string, options?: { official?: boolean; bundled?: boolean; expectedId?: string; bustCache?: boolean }) {
     const url = normalizePluginUrl(inputUrl);
-    const source = options?.bundled ? "" : await fetchPluginSource(url);
+    const source = options?.bundled ? "" : await fetchPluginSource(options?.bustCache ? withCacheBust(url) : url);
     const plugin = options?.bundled ? await evaluatePluginUrl(url) : await evaluatePluginSource(source);
     if (options?.expectedId && plugin.id !== options.expectedId) throw new Error(`插件更新后的 id 必须保持为 ${options.expectedId}`);
     const previous = usePluginStore.getState().plugins.find((item) => item.id === plugin.id);
@@ -116,7 +122,7 @@ export async function installPluginFromUrl(inputUrl: string, options?: { officia
 }
 
 export async function updatePlugin(record: InstalledPlugin) {
-    return installPluginFromUrl(record.url, { official: record.official, bundled: record.bundled, expectedId: record.id });
+    return installPluginFromUrl(record.url, { official: record.official, bundled: record.bundled, expectedId: record.id, bustCache: true });
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
@@ -178,8 +184,8 @@ async function discoverLocalPlugins() {
                 const url = normalizePluginUrl(value);
                 const source = await fetchPluginSource(url);
                 const plugin = await evaluatePluginSource(source);
-                if (usePluginStore.getState().plugins.some((item) => item.id === plugin.id)) continue;
-                usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: false, local: true });
+                const existing = usePluginStore.getState().plugins.find((item) => item.id === plugin.id);
+                usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: existing?.enabled ?? false, local: true });
             } catch (error) {
                 console.error(`[plugin] 本地插件发现失败: ${String(value)}`, error);
             }

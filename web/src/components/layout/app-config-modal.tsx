@@ -3,6 +3,7 @@ import { CircleAlert, Cloud, Code2, Plus, RefreshCw, Trash2, Wifi } from "lucide
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { VolcengineVoiceLibraryModal } from "@/components/volcengine-voice-library-modal";
 import { fetchChannelModels } from "@/services/api/image";
 import { invalidateCangyuanModelPricing } from "@/services/api/model-pricing";
@@ -399,6 +400,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </Form.Item>
                             </Form>
                         ),
+                    },
+                    {
+                        key: "prompt-sources",
+                        label: "提示词来源",
+                        children: <ConfigPromptSources />,
                     },
                     {
                         key: "webdav",

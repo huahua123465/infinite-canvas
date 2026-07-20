@@ -41,6 +41,7 @@ export type AiConfig = {
     audioModels: string[];
     quality: string;
     size: string;
+    background: string;
     count: string;
     canvasImageCount: string;
 };
@@ -52,7 +53,7 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "models" | "preferences" | "webdav";
+export type ConfigTabKey = "channels" | "models" | "preferences" | "prompt-sources" | "webdav";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -118,6 +119,7 @@ export const defaultConfig: AiConfig = {
     audioModels: ["default::gpt-4o-mini-tts", VOXCPM_MODEL_OPTION, VOICEBOX_MODEL_OPTION],
     quality: "auto",
     size: "1:1",
+    background: "",
     count: "1",
     canvasImageCount: "3",
 };

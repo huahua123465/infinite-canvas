@@ -11,6 +11,3 @@ data/
 .obsidian/
 project-notes/
 voicebox/
-Jellyfish/backend/*.db
-Jellyfish/backend/.runtime/
-Jellyfish/front/dist/

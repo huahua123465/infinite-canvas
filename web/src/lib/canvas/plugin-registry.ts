@@ -35,3 +35,17 @@ export async function fetchBundledPlugins(catalogUrl = "/plugins/catalog.json"):
         return [{ id: entry.id, name: entry.name || entry.id, version: entry.version || "0.0.0", description: entry.description, icon: entry.icon, url: new URL(entry.url || entry.entry!, manifestUrl).toString() }];
     });
 }
+
+function compareSemver(a: string, b: string) {
+    const parse = (value: string) => value.split(".").map((part) => parseInt(part, 10) || 0);
+    const [left, right] = [parse(a), parse(b)];
+    for (let index = 0; index < 3; index += 1) {
+        const difference = (left[index] || 0) - (right[index] || 0);
+        if (difference) return difference;
+    }
+    return 0;
+}
+
+export function hasUpgrade(installedVersion: string, remoteVersion: string) {
+    return compareSemver(remoteVersion, installedVersion) > 0;
+}

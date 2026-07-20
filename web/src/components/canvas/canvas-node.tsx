@@ -10,8 +10,8 @@ import { getNodeDefinition, useNodeRegistryVersion } from "@/lib/canvas/node-reg
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
-import { isSoraVideoModel } from "@/lib/video-model-capabilities";
+import { isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { resolveImageUrl } from "@/services/image-storage";
 import { classifyVideoFailure } from "@/services/api/video";
 import { defaultConfig, modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -156,7 +156,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const registryVersion = useNodeRegistryVersion((state) => state.version);
     const definition = getNodeDefinition(data.type);
-    const pluginContext = useMemo(() => (definition && pluginHost ? buildNodeContext(pluginHost, data, theme, scale) : null), [data, definition, pluginHost, registryVersion, scale, theme]);
+    const pluginContext = useMemo(() => (definition && pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [data, definition, isSelected, pluginHost, registryVersion, scale, theme]);
     const [hovered, setHovered] = useState(false);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -167,7 +167,11 @@ export const CanvasNode = React.memo(function CanvasNode({
     const isGroup = data.type === CanvasNodeType.Group;
     const isWorkspace = data.type === CanvasNodeType.Workspace;
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
+    const supportsInteractionToggle = Boolean(definition?.interactionToggle);
+    const forceInteractive = supportsInteractionToggle ? Boolean(definition?.forceInteractive?.(data)) : false;
+    const contentInteractive = !supportsInteractionToggle || forceInteractive || !data.metadata?.content ? true : Boolean(data.metadata?.interactive);
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
+    const transparentBg = Boolean(definition?.transparentBackground);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : "transparent";
     const nodeLayerClass = isWorkspace ? "z-0" : isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10";
@@ -344,7 +348,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             }}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            {(isSelected || hovered || isEditingTitle) ? <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                 {isEditingTitle ? (
                     <input
                         ref={titleInputRef}
@@ -376,13 +380,13 @@ export const CanvasNode = React.memo(function CanvasNode({
                         {data.title || "未命名节点"}
                     </button>
                 )}
-            </div>
+            </div> : null}
 
             <div
                 className="relative h-full w-full overflow-visible rounded-3xl border-2"
                 style={{
-                    background: isWorkspace ? "transparent" : isGroup ? `${theme.toolbar.panel}66` : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
-                    borderColor: isGroup ? (isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke) : hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
+                    background: isWorkspace ? "transparent" : isGroup ? `${theme.toolbar.panel}66` : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
+                    borderColor: isGroup ? (isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke) : hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : transparentBg ? "transparent" : theme.node.stroke,
                     borderStyle: isGroup ? "dashed" : "solid",
                     boxShadow: isWorkspace ? `inset 0 0 0 1px ${theme.node.stroke}66` : isGroupDropTarget ? `0 0 0 2px ${selectionBlue}66, inset 0 0 0 999px ${selectionBlue}10` : isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
@@ -433,7 +437,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                     }}
                     style={
                         {
-                            background: isWorkspace || isGroup ? "transparent" : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                            background: isWorkspace || isGroup ? "transparent" : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
+                            pointerEvents: contentInteractive ? undefined : "none",
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -1667,6 +1672,14 @@ function StoryboardVideoPromptPreviewModal({
     const updateDraftModel = (model: string) => {
         if (isSoraVideoModel(model)) {
             updateDraftConfig({ model, videoSeconds: "8", size: "16:9" });
+            return;
+        }
+        if (isVeoVideoModel(model)) {
+            updateDraftConfig({ model, vquality: "1080p", videoSeconds: "8", size: "16:9" });
+            return;
+        }
+        if (isSeedanceMini8sModel(model)) {
+            updateDraftConfig({ model, vquality: "720p", videoSeconds: "8" });
             return;
         }
         const fixedResolution = seedanceModelFixedResolution(model);

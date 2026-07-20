@@ -7,8 +7,8 @@ import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
+import { isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
@@ -161,6 +161,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model: node.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : globalConfig.model || defaultConfig.model),
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
+        background: node.metadata?.background ?? globalConfig.background ?? defaultConfig.background,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
@@ -183,6 +184,8 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
 function videoModelPatch(model: string) {
     if (isOmniImageVideoModel(model)) return { model, vquality: "720p", seconds: "10", size: "16:9" };
     if (isSoraVideoModel(model)) return { model, seconds: "8", size: "16:9" };
+    if (isVeoVideoModel(model)) return { model, vquality: "1080p", seconds: "8", size: "16:9" };
+    if (isSeedanceMini8sModel(model)) return { model, vquality: "720p", seconds: "8" };
     const fixedResolution = seedanceModelFixedResolution(model);
     return fixedResolution ? { model, vquality: fixedResolution } : { model };
 }

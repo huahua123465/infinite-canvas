@@ -2,9 +2,9 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, findSeedanceModelOptionByResolution, isCangyuanSd5SeedanceModel, isSeedanceFastModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, findSeedanceModelOptionByResolution, isCangyuanSd5SeedanceModel, isSeedanceFastModel, isSeedanceMini8sModel, isSeedanceVideoConfig, isSeedanceVideoModel, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedanceModelFixedResolution, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionLabel, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { isOmniImageVideoModel, isSoraVideoModel } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
@@ -49,6 +49,9 @@ export function VideoSettingsPanel({ config, onConfigChange, onModelChange, them
     }
     if (isSoraVideoModel(config.model || config.videoModel)) {
         return <SoraVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
+    if (isVeoVideoModel(config.model || config.videoModel)) {
+        return <VeoVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} onModelChange={onModelChange} theme={theme} showTitle={showTitle} className={className} smartDurationLabel={smartDurationLabel} smartDurationHint={smartDurationHint} />;
@@ -131,6 +134,8 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
+    const maxDuration = isSeedanceMini8sModel(model) ? 8 : 15;
+    const availableDurationOptions = seedanceDurationOptions.filter((value) => value === -1 || value <= maxDuration);
     const availableResolutionOptions = isCangyuanStandard || isCangyuanSd5 ? cangyuanSeedanceStandardResolutionOptions : seedanceResolutionOptions;
     const availableRatioOptions = isCangyuanSd5 ? seedanceRatioOptions.filter((item) => item.value === "16:9" || item.value === "9:16") : seedanceRatioOptions;
     const updateResolution = (value: string) => {
@@ -179,13 +184,13 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, onModelChange, the
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {seedanceDurationOptions.map((value) => (
+                        {availableDurationOptions.map((value) => (
                             <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                 {value === -1 ? smartDurationLabel : `${value}s`}
                             </OptionPill>
                         ))}
                     </div>
-                    {duration === -1 ? <div className="text-[11px] leading-4 opacity-55">{smartDurationHint}</div> : <NumberInput value={String(duration)} min={4} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />}
+                    {duration === -1 ? <div className="text-[11px] leading-4 opacity-55">{smartDurationHint}</div> : <NumberInput value={String(duration)} min={4} max={maxDuration} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />}
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
@@ -262,17 +267,55 @@ function SoraVideoSettingsPanel({ config, onConfigChange, theme, showTitle, clas
     );
 }
 
+function VeoVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const model = config.model || config.videoModel;
+    const ratio = normalizeSeedanceRatio(config.size) === "9:16" ? "9:16" : "16:9";
+    const duration = Number(config.videoSeconds) || 8;
+    const resolution = ["720p", "1080p"].includes(config.vquality.toLowerCase()) ? config.vquality.toLowerCase() : "1080p";
+    const generateAudio = boolConfig(config.videoGenerateAudio, true);
+    const imageLimit = isVeoReferenceVideoModel(model) ? 3 : 2;
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="分辨率" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {["720p", "1080p"].map((value) => <OptionPill key={value} selected={resolution === value} theme={theme} onClick={() => onConfigChange("vquality", value)}>{value}</OptionPill>)}
+                    </div>
+                    <div className="text-[11px] leading-4 opacity-55">最多 {imageLimit} 张{isVeoReferenceVideoModel(model) ? "主体或素材" : "首尾帧"}参考图，不支持参考视频或音频。</div>
+                </SettingGroup>
+                <SettingGroup title="比例" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {["16:9", "9:16"].map((value) => <OptionPill key={value} selected={ratio === value} theme={theme} onClick={() => onConfigChange("size", value)}>{value === "16:9" ? "横屏" : "竖屏"} · {value}</OptionPill>)}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="时长" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {[4, 6, 8].map((value) => <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="输出" color={theme.node.muted}>
+                    <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
+                        <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
 function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
     const requestConfig = resolveModelRequestConfig(config, model);
     const name = modelOptionName(model).toLowerCase();
     const baseUrl = requestConfig.baseUrl.toLowerCase();
-    return (requestConfig.apiFormat === "cangyuan" || baseUrl.includes("ai.cangyuansuanli.cn")) && (name === "seedance-2.0" || name === "seedance-2.0-fast");
+    return (requestConfig.apiFormat === "cangyuan" || baseUrl.includes("ai.cangyuansuanli.cn")) && name.startsWith("seedance-2.0") && !seedanceModelFixedResolution(name);
 }
 
 export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
     if (isOmniImageVideoModel(modelName)) return "720p";
     if (isSoraVideoModel(modelName)) return "模型自适应";
+    if (isVeoVideoModel(modelName)) return ["720", "1080"].includes(normalizeVideoResolutionValue(value)) ? `${normalizeVideoResolutionValue(value)}p` : "1080p";
     if (isSeedanceVideoModel(modelName)) {
         const resolution = normalizeSeedanceResolution(value, modelName);
         return seedanceResolutionLabel(config && isCangyuanSeedanceStandardModel(config, model) && resolution !== "480p" ? "720p" : resolution);

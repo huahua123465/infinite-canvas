@@ -4,7 +4,7 @@ import { AlertTriangle, Download, Puzzle, RefreshCw, Trash2 } from "lucide-react
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
-import { fetchBundledPlugins, fetchOfficialPlugins, type BundledPluginEntry, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
+import { fetchBundledPlugins, fetchOfficialPlugins, hasUpgrade, type BundledPluginEntry, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -108,18 +108,25 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         }
     };
 
-    const controls = (record: InstalledPlugin) => (
+    const controls = (record: InstalledPlugin, upgradable = false) => (
         <>
             <Switch size="small" checked={record.enabled} loading={busyId === record.id} onChange={(enabled) => runAction(record, () => setPluginEnabled(record, enabled), enabled ? "已启用" : "已禁用")} />
             {!record.local ? (
                 <>
-                    <Button type="text" size="small" icon={<RefreshCw className="size-4" />} loading={busyId === record.id} title="从来源更新" onClick={() => runAction(record, async () => void (await updatePlugin(record)), "已更新")} />
+                    <Button type={upgradable ? "primary" : "text"} size="small" icon={<RefreshCw className="size-4" />} loading={busyId === record.id} title={upgradable ? "有新版本，点击升级" : "从来源更新"} onClick={() => runAction(record, async () => void (await updatePlugin(record)), "已更新")} />
                     <Popconfirm title="卸载该插件？" okText="卸载" cancelText="取消" onConfirm={() => uninstallPlugin(record.id)}>
                         <Button type="text" size="small" danger icon={<Trash2 className="size-4" />} title="卸载" />
                     </Popconfirm>
                 </>
             ) : null}
         </>
+    );
+
+    const withUpgradeDot = (icon: ReactNode) => (
+        <span className="relative inline-flex">
+            {icon}
+            <span className="absolute -right-1 -top-1 size-2 rounded-full bg-green-500" style={{ boxShadow: `0 0 0 2px ${theme.node.fill}` }} title="有新版本可升级" />
+        </span>
     );
 
     const row = (key: string, icon: ReactNode, name: string, version: string, description: string | undefined, action: ReactNode) => (
@@ -162,7 +169,9 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         <div className="thin-scrollbar max-h-[46vh] space-y-2 overflow-auto">
             {official.map((entry) => {
                 const record = installedById.get(entry.id);
-                return row(entry.id, entry.icon || <Puzzle className="size-4" />, entry.name, entry.version, entry.description, record ? controls(record) : <Button type="primary" size="small" icon={<Download className="size-4" />} loading={busyId === entry.id} onClick={() => installOfficial(entry)}>安装</Button>);
+                const upgradable = Boolean(record && hasUpgrade(record.version, entry.version));
+                const icon = entry.icon || <Puzzle className="size-4" />;
+                return row(entry.id, upgradable ? withUpgradeDot(icon) : icon, entry.name, upgradable && record ? `${record.version} → ${entry.version}` : entry.version, entry.description, record ? controls(record, upgradable) : <Button type="primary" size="small" icon={<Download className="size-4" />} loading={busyId === entry.id} onClick={() => installOfficial(entry)}>安装</Button>);
             })}
         </div>
     ) : empty("暂无官方插件");

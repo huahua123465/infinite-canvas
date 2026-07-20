@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { BookOpen, Bot, Clapperboard, FileInput, FileText, Fish, FolderOpen, Grid2x2, Group, Home, ImageIcon, Images, List, Menu, Music2, Plus, Puzzle, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
+import { BookOpen, Bot, Clapperboard, Download, FileInput, FileText, FolderOpen, Grid2x2, Group, Hand, Home, ImageIcon, Images, List, Menu, Move, Music2, PanelLeftClose, PanelLeftOpen, Plus, Puzzle, Redo2, Settings2, Trash2, Type, Undo2, Upload, Video, X } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
@@ -9,7 +9,7 @@ import { requestStoredAudioGeneration, type StoredAudioFile } from "@/services/a
 import { separateVideoAudio } from "@/services/audio-separation";
 import { requestVideoGeneration, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
-import { defaultConfig, resolveModelRequestConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { decodeChannelModel, defaultConfig, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig, type ModelCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -30,7 +30,7 @@ import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryb
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
-import { App, Button, Dropdown, Modal } from "antd";
+import { App, Button, Dropdown, Modal, Tooltip } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -57,6 +57,8 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
+import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition, getPluginNodeSpec, isBuiltinNodeType, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -88,7 +90,7 @@ import {
     type SelectionBox,
     type ViewportTransform,
 } from "@/types/canvas";
-import type { CanvasNodeToolbarItem, CanvasPluginHost } from "@/types/canvas-plugin";
+import type { CanvasNodeToolbarItem, CanvasPluginAi, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio } from "@/types/media";
 
@@ -1124,7 +1126,8 @@ function InfiniteCanvasPage() {
             setConnections(nextConnections);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            const definition = getNodeDefinition(type);
+            if (!definition?.hidePanel && (definition?.Panel || definition?.useBuiltinPanel || (!definition && type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio))) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
         },
@@ -1354,7 +1357,7 @@ function InfiniteCanvasPage() {
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             const definition = getNodeDefinition(type);
-            if (definition?.Panel || (!definition && type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio)) setDialogNodeId(newNode.id);
+            if (!definition?.hidePanel && (definition?.Panel || definition?.useBuiltinPanel || (!definition && type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio))) setDialogNodeId(newNode.id);
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, effectiveConfig.textModel, getCanvasCenter],
     );
@@ -1784,6 +1787,21 @@ function InfiniteCanvasPage() {
         cleanupAssetImages();
         navigate("/canvas");
     }, [cleanupAssetImages, deleteProjects, projectId, navigate]);
+
+    const exportCurrentProject = useCallback(async () => {
+        const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+        if (!project) return message.error("未找到当前画布");
+        const hide = message.loading("正在导出当前画布…", 0);
+        try {
+            await exportCanvasProjects([project], project.title || "无限画布");
+            message.success("已导出当前画布");
+        } catch (error) {
+            console.error(error);
+            message.error("导出失败，请重试");
+        } finally {
+            hide();
+        }
+    }, [message, projectId]);
 
     const handleCanvasMouseDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4440,12 +4458,6 @@ function InfiniteCanvasPage() {
                             navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
                         },
                     },
-                    {
-                        id: "open-jellyfish",
-                        label: "Jellyfish",
-                        icon: <Fish className="size-4" />,
-                        onClick: () => navigate(`/jellyfish?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`),
-                    },
                 ],
             },
             { id: "undo", label: "撤销", shortcut: "⌘Z", disabled: !historyState.canUndo, dividerBefore: true, onClick: undoCanvas },
@@ -4472,6 +4484,39 @@ function InfiniteCanvasPage() {
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
+                return;
+            }
+
+            const builtinPanel = sourceNode ? getNodeDefinition(sourceNode.type)?.useBuiltinPanel : undefined;
+            if (sourceNode && builtinPanel?.writeBackToSelf && builtinPanel.mode === "image") {
+                const scene = prompt.trim();
+                if (!scene) return;
+                setRunningNodeId(nodeId);
+                const controller = startGenerationRequest(nodeId, nodeId, nodeId);
+                setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt: scene, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
+                try {
+                    const fullPrompt = `${builtinPanel.promptPrefix || ""}${scene}`;
+                    const references = connectionsRef.current
+                        .filter((connection) => connection.toNodeId === nodeId)
+                        .map((connection) => nodesRef.current.find((node) => node.id === connection.fromNodeId))
+                        .filter((node): node is CanvasNodeData => Boolean(node?.metadata?.content && node.type !== sourceNode.type))
+                        .map((node) => ({ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata?.mimeType || "image/png", dataUrl: node.metadata?.content || "", storageKey: node.metadata?.storageKey }));
+                    const image = references.length
+                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, references, undefined, { signal: controller.signal }).then((items) => items[0])
+                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
+                    const uploaded = await uploadImage(image.dataUrl);
+                    setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
+                    setDialogNodeId(null);
+                } catch (error) {
+                    if (!isGenerationCanceled(error)) {
+                        const errorDetails = error instanceof Error ? error.message : "生成失败";
+                        message.error(errorDetails);
+                        setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                    }
+                } finally {
+                    finishGenerationRequest(nodeId, controller);
+                    setRunningNodeId(null);
+                }
                 return;
             }
 
@@ -4937,6 +4982,7 @@ function InfiniteCanvasPage() {
                           model: savedImageMetadata.model || effectiveConfig.imageModel || effectiveConfig.model,
                           quality: savedImageMetadata.quality || effectiveConfig.quality,
                           size: savedImageMetadata.size || effectiveConfig.size,
+                          background: savedImageMetadata.background ?? effectiveConfig.background,
                           count: "1",
                       }
                     : { ...buildGenerationConfig(effectiveConfig, node.type === CanvasNodeType.Video ? node : sourceNode, node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
@@ -5075,7 +5121,7 @@ function InfiniteCanvasPage() {
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
-                    ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, size: generationConfig.size, quality: generationConfig.quality, count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
+                    ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, size: generationConfig.size, quality: generationConfig.quality, ...(generationConfig.background ? { background: generationConfig.background } : {}), count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -5200,6 +5246,39 @@ function InfiniteCanvasPage() {
     );
 
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
+    const pluginAi = useMemo<CanvasPluginAi>(() => {
+        const toReferences = (references?: string[]): ReferenceImage[] => (references || []).filter(Boolean).map((src, index) => ({ id: `plugin-ref-${index}`, name: `ref-${index}.png`, type: "image/png", dataUrl: src }));
+        const ensureReady = (config: AiConfig) => {
+            if (isAiConfigReady(config, config.model)) return;
+            openConfigDialog(true);
+            throw new Error("AI 配置未就绪，请先配置模型与密钥");
+        };
+        return {
+            generateImage: async (prompt, options) => {
+                const config = { ...buildGenerationConfig(effectiveConfig, undefined, "image"), count: String(options?.count || 1), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}) };
+                ensureReady(config);
+                const references = toReferences(options?.references);
+                const items = references.length ? await requestEdit(config, prompt, references, undefined, { signal: options?.signal }) : await requestGeneration(config, prompt, { signal: options?.signal });
+                return { images: items.map((item) => item.dataUrl) };
+            },
+            generateVideo: async (prompt, options) => {
+                const config = { ...buildGenerationConfig(effectiveConfig, undefined, "video"), ...(options?.model ? { model: options.model } : {}), ...(options?.size ? { size: options.size } : {}), ...(options?.seconds ? { videoSeconds: options.seconds } : {}) };
+                ensureReady(config);
+                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), [], [], { signal: options?.signal }));
+                return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
+            },
+            generateText: async (prompt, options) => {
+                const config = { ...buildGenerationConfig(effectiveConfig, undefined, "text"), ...(options?.model ? { model: options.model } : {}) };
+                ensureReady(config);
+                const messages: AiTextMessage[] = [...(options?.system ? [{ role: "system" as const, content: options.system }] : []), { role: "user" as const, content: prompt }];
+                const text = await requestImageQuestion(config, messages, (delta) => options?.onDelta?.(delta), { signal: options?.signal });
+                return { text };
+            },
+            listModels: (capability) => selectableModelsByCapability(effectiveConfig, capability as ModelCapability | undefined).map((value) => ({ value, label: decodeChannelModel(value)?.model || value })),
+            defaultModel: (capability) => buildGenerationConfig(effectiveConfig, undefined, capability).model,
+        };
+    }, [effectiveConfig, isAiConfigReady, openConfigDialog]);
+
     const pluginHost = useMemo<CanvasPluginHost>(
         () => ({
             getNode: (id) => nodesRef.current.find((node) => node.id === id) || null,
@@ -5220,15 +5299,18 @@ function InfiniteCanvasPage() {
                     return next;
                 }),
             applyOps: (ops) => void applyAgentOps(ops),
+            ai: pluginAi,
+            openPanel: (nodeId) => setDialogNodeId(nodeId),
+            closePanel: () => setDialogNodeId(null),
         }),
-        [applyAgentOps],
+        [applyAgentOps, pluginAi],
     );
     const pluginToolbarTools = useMemo<CanvasNodeToolbarItem[]>(() => {
         if (!toolbarNode) return [];
         const definition = getNodeDefinition(toolbarNode.type);
-        if (!definition?.toolbar) return [];
+        if (!definition) return [];
         try {
-            return definition.toolbar(buildNodeContext(pluginHost, toolbarNode, theme, viewport.k)).map((item) => ({
+            const tools = (definition.toolbar?.(buildNodeContext(pluginHost, toolbarNode, theme, viewport.k, true)) || []).map((item) => ({
                 ...item,
                 onClick: () => {
                     try {
@@ -5238,6 +5320,19 @@ function InfiniteCanvasPage() {
                     }
                 },
             }));
+            if (!definition.interactionToggle || !toolbarNode.metadata?.content || definition.forceInteractive?.(toolbarNode)) return tools;
+            const interactive = Boolean(toolbarNode.metadata?.interactive);
+            return [
+                {
+                    id: "node-interaction-toggle",
+                    title: interactive ? "切换为移动节点" : "切换为操作节点内容",
+                    label: interactive ? "移动" : "交互",
+                    icon: interactive ? <Move className="size-4" /> : <Hand className="size-4" />,
+                    active: interactive,
+                    onClick: () => pluginHost.updateMetadata(toolbarNode.id, { interactive: !interactive }),
+                },
+                ...tools,
+            ];
         } catch (error) {
             console.error(`[plugin] 工具栏创建失败: ${toolbarNode.type}`, error);
             return [];
@@ -5278,6 +5373,7 @@ function InfiniteCanvasPage() {
                     onProjects={() => navigate("/canvas")}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
+                    onExportProject={exportCurrentProject}
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -5366,7 +5462,7 @@ function InfiniteCanvasPage() {
                             storyboardDurationSeconds={storyboardVideoRowSeconds(node, nodes)}
                             pluginHost={pluginHost}
                             renderPanel={(panelNode) =>
-                                renderPluginPanel(panelNode) || (isBuiltinNodeType(panelNode.type) ? (panelNode.type === CanvasNodeType.Config ? (
+                                renderPluginPanel(panelNode) || ((isBuiltinNodeType(panelNode.type) || Boolean(getNodeDefinition(panelNode.type)?.useBuiltinPanel)) ? (panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer
                                         value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
                                         inputs={configInputsById.get(panelNode.id) || []}
@@ -5376,6 +5472,7 @@ function InfiniteCanvasPage() {
                                 ) : (
                                     <CanvasNodePromptPanel
                                         node={panelNode}
+                                        modeOverride={getNodeDefinition(panelNode.type)?.useBuiltinPanel?.mode}
                                         isRunning={runningNodeId === panelNode.id}
                                         mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || []}
                                         onPromptChange={handleNodePromptChange}
@@ -5548,9 +5645,6 @@ function InfiniteCanvasPage() {
                         setLastDirectorDeskCanvasId(projectId);
                         navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
                     }}
-                    onOpenJellyfish={() => {
-                        navigate(`/jellyfish?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
-                    }}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={minimapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
@@ -5690,6 +5784,7 @@ function CanvasTopBar({
     onProjects,
     onCreateProject,
     onDeleteProject,
+    onExportProject,
     onImportImage,
     onUndo,
     onRedo,
@@ -5710,6 +5805,7 @@ function CanvasTopBar({
     onProjects: () => void;
     onCreateProject: () => void;
     onDeleteProject: () => void;
+    onExportProject: () => void;
     onImportImage: () => void;
     onUndo: () => void;
     onRedo: () => void;
@@ -5722,6 +5818,8 @@ function CanvasTopBar({
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+    const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
+    const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -5737,7 +5835,12 @@ function CanvasTopBar({
     return (
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
-                <div className="pointer-events-auto flex min-w-0 items-center gap-3">
+                <div className="pointer-events-auto flex min-w-0 items-center gap-2">
+                    <Tooltip title={sidePanelOpen ? "收起面板" : "展开面板"}>
+                        <button type="button" onClick={toggleSidePanel} aria-label={sidePanelOpen ? "收起面板" : "展开面板"} className="grid size-7 place-items-center transition hover:opacity-70" style={{ color: theme.node.text }}>
+                            {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
+                        </button>
+                    </Tooltip>
                     <Dropdown
                         trigger={["click"]}
                         menu={{
@@ -5750,6 +5853,7 @@ function CanvasTopBar({
                                 { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
+                                { key: "export", icon: <Download className="size-4" />, label: "导出当前画布", onClick: onExportProject },
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text="撤销" shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text="重做" shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
@@ -6091,6 +6195,7 @@ function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: A
         model: config.model,
         size: config.size,
         quality: config.quality,
+        ...(config.background ? { background: config.background } : {}),
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };
@@ -6446,6 +6551,7 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
         ...(mode === "video" ? { videoModel: model } : {}),
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
+        background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,

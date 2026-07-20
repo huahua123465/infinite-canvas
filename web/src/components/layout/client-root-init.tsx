@@ -3,8 +3,10 @@ import { useEffect, useRef } from "react";
 import { App } from "antd";
 
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
+    usePromptSourceScheduler();
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const updateConfig = useConfigStore((state) => state.updateConfig);

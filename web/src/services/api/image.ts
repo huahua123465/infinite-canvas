@@ -127,6 +127,10 @@ function normalizeQuality(quality: string) {
     return QUALITY_BASE[normalized] ? normalized : undefined;
 }
 
+function normalizeBackground(background: string | undefined) {
+    return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
+}
+
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
 function resolveSize(quality: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
@@ -823,8 +827,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
         try {
-            const result = await runModelScript({ capability: "image", script, config: requestConfig, prompt: withSystemPrompt(requestConfig, prompt), params: { size: requestSize, quality, count: n }, signal: options?.signal });
+            const result = await runModelScript({ capability: "image", script, config: requestConfig, prompt: withSystemPrompt(requestConfig, prompt), params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) }, signal: options?.signal });
             return normalizeModelScriptImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
@@ -846,6 +851,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const background = normalizeBackground(config.background);
     try {
         const response = await axios.post<ImageApiResponse>(
             aiApiUrl(requestConfig, "/images/generations"),
@@ -855,6 +861,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 n,
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
+                ...(background ? { background } : {}),
                 response_format: "b64_json",
                 output_format: IMAGE_OUTPUT_FORMAT,
             },
@@ -879,10 +886,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
+        const background = normalizeBackground(config.background);
         const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
         const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
         try {
-            const result = await runModelScript({ capability: "image", script, config: requestConfig, prompt: withSystemPrompt(requestConfig, requestPrompt), images, params: { size: requestSize, quality, count: n, mask: maskDataUrl }, signal: options?.signal });
+            const result = await runModelScript({ capability: "image", script, config: requestConfig, prompt: withSystemPrompt(requestConfig, requestPrompt), images, params: { size: requestSize, quality, count: n, mask: maskDataUrl, ...(background ? { background } : {}) }, signal: options?.signal });
             return normalizeModelScriptImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
@@ -905,6 +913,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const background = normalizeBackground(config.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
@@ -916,6 +925,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (requestSize) {
         formData.set("size", requestSize);
+    }
+    if (background) {
+        formData.set("background", background);
     }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append("image", file));

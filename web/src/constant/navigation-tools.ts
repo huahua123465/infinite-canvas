@@ -1,4 +1,4 @@
-import { Clapperboard, FileText, Fish, ImagePlus, Images, Maximize2, Video } from "lucide-react";
+import { Clapperboard, FileText, ImagePlus, Images, Maximize2, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -10,11 +10,6 @@ export const navigationTools = [
         slug: "director-desk",
         label: "3D导演台",
         icon: Clapperboard,
-    },
-    {
-        slug: "jellyfish",
-        label: "Jellyfish",
-        icon: Fish,
     },
     {
         slug: "image",

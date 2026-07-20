@@ -1,9 +1,8 @@
-import { seedanceModelFixedResolution } from "@/lib/seedance-video";
+import { CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { isOmniImageVideoModel, isSoraVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
-import { isCangyuanSd5SeedanceModel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -53,7 +52,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
-    const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 1200 : 5000;
+    const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 1200 : 5000;
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
     if (isCangyuanSd5SeedanceModel(model)) {
@@ -64,21 +63,24 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (input.references.length > limits.images) issues.push(blocked("sd5_seedance_images", `当前模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图"));
         if (input.videoReferences.length > limits.videos) issues.push(blocked("sd5_seedance_videos", `当前模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频"));
         if (input.audioReferences.length > limits.audios) issues.push(blocked("sd5_seedance_audios", `当前模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频"));
-        if ((input.videoReferences.length || input.audioReferences.length) && !input.references.length) issues.push(blocked("sd5_seedance_primary_image", "参考视频或音频必须同时提供至少一张参考图", "请添加主参考图"));
+        if (input.references.length + input.videoReferences.length + input.audioReferences.length > CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT) issues.push(blocked("sd5_seedance_total_references", `SD5 Seedance 三类参考素材合计不能超过 ${CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT} 个`, "请移除多余参考素材"));
         let totalVideoDuration = 0;
         input.videoReferences.forEach((item, index) => {
+            if (!isHttpsReferenceUrl(item.url)) issues.push(blocked(`sd5_seedance_video_url_${index}`, `参考视频 ${index + 1} 必须使用公网 HTTPS URL`, "请先上传到可公开访问的 HTTPS 地址"));
             if (item.durationMs && (item.durationMs < 1_000 || item.durationMs > 15_000)) issues.push(blocked(`sd5_seedance_video_${index}`, `参考视频 ${index + 1} 单条时长必须为 1-15 秒`, "请裁剪或更换参考视频"));
             totalVideoDuration += item.durationMs || 0;
         });
         if (totalVideoDuration > 45_000) issues.push(blocked("sd5_seedance_video_duration", "参考视频总时长不能超过 45 秒", "请裁剪或移除参考视频"));
         input.audioReferences.forEach((item, index) => {
+            if (!isHttpsReferenceUrl(item.url)) issues.push(blocked(`sd5_seedance_audio_url_${index}`, `参考音频 ${index + 1} 必须使用公网 HTTPS URL`, "请先上传到可公开访问的 HTTPS 地址"));
             if (item.durationMs && item.durationMs > 15_000) issues.push(blocked(`sd5_seedance_audio_${index}`, `参考音频 ${index + 1} 不能超过 15 秒`, "请裁剪或更换参考音频"));
         });
     } else if (model.startsWith("seedance-2.0")) {
         const fixedResolution = seedanceModelFixedResolution(model);
         const limits = videoReferenceLimits(model)!;
         const minReferenceVideoMs = fixedResolution ? 2_000 : 4_000;
-        if (duration < 4 || duration > 15) issues.push(blocked("seedance_duration", "Seedance 视频时长必须为 4–15 秒", "请修改当前镜头时长。"));
+        const maxDuration = isSeedanceMini8sModel(model) ? 8 : 15;
+        if (duration < 4 || duration > maxDuration) issues.push(blocked("seedance_duration", `当前 Seedance 模型时长必须为 4–${maxDuration} 秒`, "请修改当前镜头时长。"));
         if (!seedanceRatios.has(ratio)) issues.push(blocked("seedance_ratio", `Seedance 不支持当前画幅 ${ratio}`, "请选择 16:9、9:16、1:1、21:9、3:4 或 4:3。"));
         if (input.references.length > limits.images) issues.push(blocked("seedance_images", `当前 Seedance 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
         if (input.videoReferences.length > limits.videos) issues.push(blocked("seedance_videos", `当前 Seedance 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));
@@ -93,7 +95,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         input.audioReferences.forEach((item, index) => {
             if (item.durationMs && item.durationMs > 15_000) issues.push(blocked(`seedance_audio_duration_${index}`, `参考音频 ${index + 1} 不能超过 15 秒`, "请裁短参考音频。"));
         });
-        const standardModel = ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"].includes(model);
+        const standardModel = !fixedResolution;
         if (standardModel && !["480p", "720p"].includes(resolution)) issues.push(blocked("seedance_resolution", "当前 Seedance 标准模型仅支持 480p/720p", "请修改分辨率或切换固定分辨率模型。"));
         if (fixedResolution && resolution !== fixedResolution) issues.push(warning("seedance_fixed_resolution", `当前模型固定输出 ${fixedResolution}，设置中的 ${resolution} 不会生效`, "生成时会以模型档位为准。"));
     }
@@ -110,6 +112,15 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("sora_ratio", "Sora 2 只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
         if (input.references.length > 1) issues.push(blocked("sora_images", "Sora 2 最多支持 1 张帧参考图", "请移除多余参考图。"));
         if (input.videoReferences.length || input.audioReferences.length) issues.push(blocked("sora_media", "Sora 2 不支持参考视频或参考音频", "请只保留提示词和最多一张帧参考图。"));
+    }
+
+    if (isVeoVideoModel(model)) {
+        const limits = videoReferenceLimits(model)!;
+        if (![4, 6, 8].includes(duration)) issues.push(blocked("veo_duration", "Veo 3.1 视频时长只能选择 4、6 或 8 秒", "请修改当前视频时长。"));
+        if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("veo_ratio", "Veo 3.1 只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
+        if (!["720p", "1080p"].includes(resolution)) issues.push(blocked("veo_resolution", "Veo 3.1 只支持 720p 或 1080p", "请修改视频分辨率。"));
+        if (input.references.length > limits.images) issues.push(blocked("veo_images", `当前 Veo 模型最多支持 ${limits.images} 张参考图`, "请移除多余参考图。"));
+        if (input.videoReferences.length || input.audioReferences.length) issues.push(blocked("veo_media", "Veo 3.1 不支持参考视频或参考音频", "请只保留提示词和参考图。"));
     }
 
     if (model.startsWith("grok-video")) {
@@ -130,7 +141,7 @@ async function inspectReferenceImage(reference: ReferenceImage, index: number, t
         if (!dataUrl) return [blocked(`image_missing_${index}`, `${label} 无法读取`, "请重新选择参考图。")];
         const imageBytes = dataUrlToFile({ ...reference, dataUrl }).size;
         if (isOmniImageVideoModel(model) && imageBytes > 5 * 1024 * 1024) return [blocked(`omni_image_size_${index}`, `${label} 超过 Omni 单图 5MB 上限`, "请压缩图片后重试。")];
-        if (isSoraVideoModel(model) && imageBytes > 10 * 1024 * 1024) return [blocked(`sora_image_size_${index}`, `${label} 超过 Sora 2 单图 10MB 上限`, "请压缩图片后重试。")];
+        if ((isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model)) && imageBytes > 10 * 1024 * 1024) return [blocked(`video_image_size_${index}`, `${label} 超过当前视频模型单图 10MB 上限`, "请压缩图片后重试。")];
         const image = await loadImage(dataUrl);
         const issues: VideoPreflightIssue[] = [];
         const shortSide = Math.min(image.naturalWidth, image.naturalHeight);
@@ -207,6 +218,10 @@ function normalizedRatio(value: string) {
     const ratio = parseRatio(value);
     if (!ratio) return "16:9";
     return ratio < 1 ? "9:16" : "16:9";
+}
+
+function isHttpsReferenceUrl(value: string) {
+    return /^https:\/\//i.test(value || "");
 }
 
 function parseRatio(value: string) {

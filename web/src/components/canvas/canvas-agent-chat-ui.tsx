@@ -3,12 +3,11 @@ import { Button, Tooltip } from "antd";
 import { ArrowUp, CheckCircle2, CircleAlert, ImagePlus, LoaderCircle, Square, UserRound, Wrench, X, XCircle } from "lucide-react";
 import { Streamdown } from "streamdown";
 
-import { canvasThemes } from "@/lib/canvas-theme";
 import { isPlainEnterKey } from "@/lib/keyboard-event";
+import { canvasThemes } from "@/lib/canvas-theme";
 import type { LocalUser } from "@/stores/use-user-store";
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
-export type CanvasAgentMode = "online" | "local";
 export type CanvasAgentChatMessage = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -17,6 +16,7 @@ export type CanvasAgentChatMessage = {
     meta?: string;
     detail?: unknown;
     attachments?: CanvasAgentChatAttachment[];
+    /** Present while the message is actively streaming; cleared on completion. */
     streamId?: string;
 };
 
@@ -49,7 +49,11 @@ export function AgentChatMessage({ item, theme, user, onRejectTool, onApproveToo
         <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
             {!isUser ? <AgentAvatar theme={theme} /> : null}
             <div className={`min-w-0 max-w-[82%] text-sm leading-6 ${isUser ? "text-right" : "text-left"}`} style={{ color }}>
-                {isUser ? <div className="whitespace-pre-wrap break-words text-left">{item.text}</div> : <Streamdown animated isAnimating={Boolean(item.streamId)}>{item.text}</Streamdown>}
+                {isUser ? (
+                    <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
+                ) : (
+                    <Streamdown animated isAnimating={!!item.streamId}>{item.text}</Streamdown>
+                )}
                 {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} /> : null}
                 {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
             </div>
@@ -226,21 +230,15 @@ export function AgentChatComposer({
                         ) : null}
                         {left}
                     </div>
-                    <Button type="primary" shape="circle" className="!h-10 !w-10 !min-w-10" disabled={sending ? !onStop : !canSubmit} icon={sending ? <Square className="size-4 fill-current" /> : <ArrowUp className="size-4" />} onClick={() => void (sending ? onStop?.() : onSubmit())} aria-label={sending ? "停止" : "发送"} />
+                    <div className="flex shrink-0 items-center gap-1.5">
+                        {sending && onStop ? (
+                            <Button danger shape="circle" className="!h-10 !w-10 !min-w-10" icon={<Square className="size-4" />} onClick={() => void onStop()} aria-label="停止" />
+                        ) : (
+                            <Button type="primary" shape="circle" className="!h-10 !w-10 !min-w-10" disabled={!canSubmit} icon={sending ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} onClick={() => void onSubmit()} aria-label="发送" />
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
-    );
-}
-
-export function AgentModeSwitch({ value, theme, onChange }: { value: CanvasAgentMode; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onChange: (value: CanvasAgentMode) => void }) {
-    return (
-        <div className="inline-flex shrink-0 rounded-lg border p-0.5 text-xs" style={{ borderColor: theme.node.stroke }}>
-            {(["online", "local"] as const).map((item) => (
-                <button key={item} type="button" className="rounded-md px-2 py-1 transition" style={{ background: value === item ? theme.node.fill : "transparent", color: value === item ? theme.node.text : theme.node.muted }} onClick={() => onChange(item)}>
-                    {item === "online" ? "网站" : "本机"}
-                </button>
-            ))}
         </div>
     );
 }
@@ -305,7 +303,7 @@ function toolCardState(title: string, text: string, detail?: unknown) {
     if (objectField(detail, "status") === "noop" || /未生效|无需|没有找到|没有.*可|已存在/.test(raw)) return { label: "未生效", color: "#d97706", softBorder: "rgba(217,119,6,.22)", softBg: "rgba(217,119,6,.04)", icon: <CircleAlert className="size-4" />, isError: false };
     if (/拒绝|取消/.test(raw) || lower.includes("rejected")) return { label: "拒绝执行", color: "#dc2626", softBorder: "rgba(220,38,38,.20)", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
     if (/失败|错误/.test(raw) || lower.includes("failed") || lower.includes("error")) return { label: "执行失败", color: "#dc2626", softBorder: "rgba(220,38,38,.20)", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
-    if (/完成|成功/.test(raw) || lower.includes("completed") || lower.includes("succeeded")) return { label: tool === "canvas_apply_ops" || /画布操作/.test(title) ? "已批准执行" : "执行完成", color: "#16a34a", softBorder: "rgba(22,163,74,.20)", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
+    if (/完成|成功/.test(raw) || lower.includes("completed") || lower.includes("succeeded")) return { label: tool === "canvas_apply_ops" || /画布操作/.test(title) ? "已批准执行" : "工具完成", color: "#16a34a", softBorder: "rgba(22,163,74,.20)", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
     return { label: "工具调用", color: "#2563eb", softBorder: "rgba(37,99,235,.20)", softBg: "rgba(37,99,235,.04)", icon: <Wrench className="size-4" />, isError: false };
 }
 
@@ -319,3 +317,4 @@ function normalizeText(value: unknown) {
 function objectField(value: unknown, key: string) {
     return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
+

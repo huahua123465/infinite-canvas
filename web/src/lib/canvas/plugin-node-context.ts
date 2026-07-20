@@ -4,21 +4,28 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 
-export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, theme: CanvasTheme, scale: number): CanvasNodeContext {
+// 把宿主能力 + 节点 + 主题/缩放,组装成注入给插件节点的上下文
+export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, theme: CanvasTheme, scale: number, isSelected = false): CanvasNodeContext {
+    const storage = createPluginStorage(getNodePluginId(node.type));
     return {
         node,
         theme,
         scale,
+        isSelected,
         updateMetadata: (patch) => host.updateMetadata(node.id, patch),
         updateNode: (patch) => host.updateNode(node.id, patch),
-        getNode: host.getNode,
-        getNodes: host.getNodes,
-        getConnections: host.getConnections,
+        getNode: (id) => host.getNode(id),
+        getNodes: () => host.getNodes(),
+        getConnections: () => host.getConnections(),
         getUpstream: () => host.getUpstream(node.id),
         getDownstream: () => host.getDownstream(node.id),
-        applyOps: host.applyOps,
-        emit: emitCanvasEvent,
-        on: onCanvasEvent,
-        storage: createPluginStorage(getNodePluginId(node.type)),
+        applyOps: (ops) => host.applyOps(ops),
+        emit: (event, payload) => emitCanvasEvent(event, payload),
+        on: (event, handler) => onCanvasEvent(event, handler),
+        ai: host.ai,
+        openPanel: () => host.openPanel(node.id),
+        closePanel: () => host.closePanel(),
+        storage,
     };
 }
+

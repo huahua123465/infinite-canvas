@@ -17,9 +17,15 @@ export const CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS = {
     audios: 3,
 } as const;
 
+export const CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT = 12;
+
 export function isCangyuanSd5SeedanceModel(model: string) {
     const name = modelOptionName(model).toLowerCase();
     return name === "sd5-seedance-2.0" || name === "sd5-seedance-2.0-fast";
+}
+
+export function isSeedanceMini8sModel(model: string) {
+    return modelOptionName(model).toLowerCase() === "seedance-2.0-mini-8s";
 }
 
 export const seedanceResolutionOptions = [
