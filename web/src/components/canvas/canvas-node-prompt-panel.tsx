@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
 import { App, Button, InputNumber, Select } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { normalizeAudioVoiceForProvider } from "@/lib/audio-provider";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -58,7 +58,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const promptEditorHeight = promptExpanded ? 220 : 96;
     const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
     const updateModel = (model: string) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : mode === "audio" ? audioModelPatch(config, model) : { model });
-    const activeImageReferences = mentionReferences.filter((item) => item.kind === "image" && item.active);
+    const useApiReferenceLabels = mode === "video" && isCangyuanSeedanceConfig(config);
+    const promptMentionReferences = useMemo(() => (useApiReferenceLabels ? mentionReferences.map(toCangyuanReferenceLabel) : mentionReferences), [mentionReferences, useApiReferenceLabels]);
+    const activeImageReferences = promptMentionReferences.filter((item) => item.kind === "image" && item.active);
     const mentionedImageLabels = activeImageReferences.filter((item) => promptIncludesReferenceLabel(prompt, item.label)).map((item) => item.label);
     const promptAssistantPendingPrompt = node.metadata?.promptAssistantPendingPrompt?.trim() || "";
     const promptAssistantStatus = node.metadata?.promptAssistantStatus;
@@ -79,6 +81,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt(value);
         if (!hasTextContent) onPromptChange(node.id, value);
     };
+
+    useEffect(() => {
+        if (!useApiReferenceLabels) return;
+        const nextPrompt = normalizeCangyuanReferenceMentions(prompt);
+        if (nextPrompt === prompt) return;
+        setPrompt(nextPrompt);
+        if (!hasTextContent) onPromptChange(node.id, nextPrompt);
+    }, [hasTextContent, node.id, onPromptChange, prompt, useApiReferenceLabels]);
 
     const submit = () => {
         const text = prompt.trim();
@@ -104,7 +114,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const renderPromptTextarea = (large = false) => (
         <CanvasPromptChipInput
             value={prompt}
-            references={mentionReferences}
+            references={promptMentionReferences}
             onChange={updatePrompt}
             onSubmit={submit}
             onFocus={() => setPromptExpanded(true)}
@@ -132,7 +142,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     {mentionedImageLabels.length ? `；已 @ 引用：${mentionedImageLabels.join("、")}` : "；输入 @ 可点选图片标签来指定描述对象"}
                 </div>
             ) : null}
-            {mode === "video" && activeImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：图片1。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
+            {mode === "video" && activeImageReferences.length ? <div className="mt-1.5 text-[11px] opacity-60">主参考图：@{activeImageReferences[0].label}。第一张连入或 @ 引用的图片会作为视频主视觉参考。</div> : null}
         </>
     );
 
@@ -387,6 +397,25 @@ function estimatePromptEditorHeight(prompt: string) {
 
 function promptIncludesReferenceLabel(prompt: string, label: string) {
     return new RegExp(`(^|\\s|[，,。；;：:、])${escapeRegExp(label)}(?!\\d)`).test(prompt);
+}
+
+function isCangyuanSeedanceConfig(config: AiConfig) {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.videoModel);
+    return modelOptionName(requestConfig.model).toLowerCase().includes("seedance") && (requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn"));
+}
+
+function toCangyuanReferenceLabel(reference: CanvasResourceReference): CanvasResourceReference {
+    const prefixes = { image: "image", video: "video", audio: "audio" } as const;
+    if (reference.kind === "text") return reference;
+    const index = reference.label.match(/(\d+)$/)?.[1];
+    return index ? { ...reference, label: `${prefixes[reference.kind]}${index}` } : reference;
+}
+
+function normalizeCangyuanReferenceMentions(prompt: string) {
+    return prompt
+        .replace(/@?(?:图片|image)(\d+)/gi, "@image$1")
+        .replace(/@?(?:视频|video)(\d+)/gi, "@video$1")
+        .replace(/@?(?:音频|audio)(\d+)/gi, "@audio$1");
 }
 
 function escapeRegExp(value: string) {

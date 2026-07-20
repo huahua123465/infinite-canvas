@@ -286,12 +286,20 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
     wrapper.contentEditable = "false";
     wrapper.dataset.refLabel = reference.kind === "image" ? `@${reference.label.replace(/^@/, "")}` : reference.label;
     if (reference.kind === "image" && reference.previewUrl) {
+        const showApiLabel = /^image\d+$/i.test(reference.label);
         const image = document.createElement("img");
         image.src = reference.previewUrl;
         image.alt = reference.title;
-        image.className = "size-6 rounded object-cover";
-        wrapper.className = "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        image.className = `${showApiLabel ? "size-5" : "size-6"} shrink-0 rounded object-cover`;
+        wrapper.className = showApiLabel ? "mx-px inline-flex h-7 max-w-32 items-center gap-1 overflow-hidden rounded-md border px-1 align-middle text-xs leading-none" : "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        if (showApiLabel) Object.assign(wrapper.style, { background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.toolbar.activeText } as CSSProperties);
         wrapper.appendChild(image);
+        if (showApiLabel) {
+            const label = document.createElement("span");
+            label.className = "truncate font-medium";
+            label.textContent = `@${reference.label.replace(/^@/, "")}`;
+            wrapper.appendChild(label);
+        }
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
