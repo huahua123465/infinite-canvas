@@ -174,7 +174,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
             </div>
-            {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
+            {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, zIndex: 1400, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
 
