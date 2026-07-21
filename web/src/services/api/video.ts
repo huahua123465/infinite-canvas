@@ -326,21 +326,24 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         const requestUrl = aiApiUrl(config, "/videos");
         let created: VideoResponse;
         let requestFields: string[];
-        const useMultipartImage = !fixedResolution && imageUrls.length === 1 && imageUrls[0].startsWith("data:") && !referenceVideos.length && !referenceAudios.length;
+        const useMultipartImage = imageUrls.length === 1 && imageUrls[0].startsWith("data:") && !referenceVideos.length && !referenceAudios.length;
         if (useMultipartImage) {
             const body = new FormData();
             body.set("model", modelName);
             body.set("prompt", requestPrompt);
             body.set("aspect_ratio", normalizeCangyuanVideoRatio(config.size));
             body.set("duration", String(normalizeCangyuanVideoDuration(config.videoSeconds)));
-            body.set("resolution", normalizeCangyuanSeedanceResolution(config.vquality));
-            body.set("audio", String(boolConfig(config.videoGenerateAudio, true)));
+            if (!fixedResolution) {
+                body.set("resolution", normalizeCangyuanSeedanceResolution(config.vquality));
+                body.set("audio", String(boolConfig(config.videoGenerateAudio, true)));
+            }
             body.append("image", dataUrlToFile({ ...references[0], dataUrl: imageUrls[0] }), references[0].name || "reference.png");
             referenceVideos.forEach((url) => body.append("reference_videos", url));
             referenceAudios.forEach((url) => body.append("reference_audios", url));
             created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
-            requestFields = ["model", "prompt", "aspect_ratio", "duration", "resolution", "audio", "image", ...(referenceVideos.length ? ["reference_videos"] : []), ...(referenceAudios.length ? ["reference_audios"] : [])];
+            requestFields = ["model", "prompt", "aspect_ratio", "duration", ...(!fixedResolution ? ["resolution", "audio"] : []), "image"];
         } else {
+            if (fixedResolution && imageUrls.some((url) => !isPublicMediaUrl(url))) throw new Error(`${modelName} 的多张参考图必须使用公网 HTTP/HTTPS URL；本地图片只能单张通过 multipart image 上传`);
             const payload = {
                 model: modelName,
                 prompt: requestPrompt,
