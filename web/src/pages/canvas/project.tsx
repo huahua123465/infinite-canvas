@@ -4560,7 +4560,8 @@ function InfiniteCanvasPage() {
                     return;
                 }
             }
-            const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
+            const generatingFromCompletedVideo = mode === "video" && sourceNode?.type === CanvasNodeType.Video && Boolean(sourceNode.metadata?.content);
+            const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !generatingFromCompletedVideo && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                 finishGenerationRequest(nodeId, runController);
@@ -4860,7 +4861,7 @@ function InfiniteCanvasPage() {
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
-                    if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
+                    if (!isEmptyVideoNode) setConnections((prev) => addUniqueConnections(prev, nextVideoInputConnections(sourceNode, videoId, prev)));
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
                         const video = await storeGeneratedVideo(
@@ -6687,6 +6688,13 @@ function addUniqueConnections(current: CanvasConnection[], next: CanvasConnectio
         return true;
     });
     return additions.length ? [...current, ...additions] : current;
+}
+
+function nextVideoInputConnections(sourceNode: CanvasNodeData | undefined, targetNodeId: string, connections: CanvasConnection[]) {
+    if (!sourceNode) return [];
+    const incoming = sourceNode.type === CanvasNodeType.Video && sourceNode.metadata?.content ? connections.filter((connection) => connection.toNodeId === sourceNode.id) : [];
+    const sourceIds = incoming.length ? incoming.map((connection) => connection.fromNodeId) : [sourceNode.id];
+    return sourceIds.map((fromNodeId) => ({ id: nanoid(), fromNodeId, toNodeId: targetNodeId }));
 }
 
 function shouldUseMultiViewGrid(prompt: string, metadata?: CanvasNodeData["metadata"]) {
