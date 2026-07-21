@@ -13,13 +13,13 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useVideoGenerationPreflight } from "@/hooks/use-video-generation-preflight";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { classifyVideoFailure, createVideoGenerationTask, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -253,7 +253,9 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        const videoReferenceError = seedanceVideoReferenceError(videoReferences, seedanceModelFixedResolution(model) ? 2_000 : 4_000);
+        const seedanceModel = modelOptionName(model).toLowerCase().startsWith("seedance-2.0");
+        const fixedResolution = seedanceModelFixedResolution(model);
+        const videoReferenceError = seedanceModel ? seedanceVideoReferenceError(videoReferences, fixedResolution ? 2_000 : 4_000, fixedResolution ? { minSize: 300, maxSize: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 } : undefined) : "";
         if (videoReferenceError) {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
             return null;
@@ -603,7 +605,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const updateVideoModel = (value: string) => {
         updateConfig("videoModel", value);
-        if (isOmniImageVideoModel(value)) {
+        if (isOmniImageVideoModel(value) || isOmniVideoToVideoModel(value)) {
             updateConfig("vquality", "720p");
             updateConfig("videoSeconds", "10");
             updateConfig("size", "16:9");

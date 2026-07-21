@@ -2,7 +2,7 @@ import { CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel
 import { dataUrlToFile } from "@/lib/image-utils";
 import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
-import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -51,7 +51,8 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const duration = normalizedDuration(input.config.videoSeconds);
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
-    const isCangyuan = input.config.apiFormat === "cangyuan" || input.config.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
+    const requestConfig = resolveModelRequestConfig(input.config, input.config.model || input.config.videoModel);
+    const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
     if (/@(?:image|图片)\d+/i.test(prompt) && !input.references.length) issues.push(blocked("prompt_image_reference_missing", "提示词引用了图片，但实际没有提交参考图", "请确认参考图从输入端连入视频节点后再生成。"));
     if (/@(?:video|视频)\d+/i.test(prompt) && !input.videoReferences.length) issues.push(blocked("prompt_video_reference_missing", "提示词引用了视频，但实际没有提交参考视频", "请确认参考视频从输入端连入视频节点后再生成。"));
@@ -95,7 +96,10 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         input.videoReferences.forEach((item, index) => {
             if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_video_url_${index}`, `参考视频 ${index + 1} 必须使用公网 HTTPS URL`, "沧元该模型不支持直接上传本地参考视频，请先换成可公开访问的 HTTPS 地址。"));
             if (item.durationMs && (item.durationMs < minReferenceVideoMs || item.durationMs > 15_000)) issues.push(blocked(`seedance_video_${index}`, `参考视频 ${index + 1} 必须为 ${minReferenceVideoMs / 1000}–15 秒`, "请更换或裁剪参考视频。"));
-            if (item.width && item.height && (Math.min(item.width, item.height) < 720 || Math.max(item.width, item.height) > 2160)) issues.push(blocked(`seedance_video_size_${index}`, `参考视频 ${index + 1} 每边分辨率必须在 720–2160 px 范围内`, "请调整参考视频分辨率。"));
+            const minSize = fixedResolution ? 300 : 720;
+            const maxSize = fixedResolution ? 6000 : 2160;
+            if (item.width && item.height && (Math.min(item.width, item.height) < minSize || Math.max(item.width, item.height) > maxSize)) issues.push(blocked(`seedance_video_size_${index}`, `参考视频 ${index + 1} 每边分辨率必须在 ${minSize}–${maxSize} px 范围内`, "请调整参考视频分辨率。"));
+            if (fixedResolution && item.width && item.height && (item.width / item.height < 0.4 || item.width / item.height > 2.5)) issues.push(blocked(`seedance_video_ratio_${index}`, `参考视频 ${index + 1} 宽高比必须在 0.4–2.5 范围内`, "请裁剪或更换参考视频。"));
         });
         input.audioReferences.forEach((item, index) => {
             if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_audio_url_${index}`, `参考音频 ${index + 1} 必须使用公网 HTTPS URL`, "沧元该模型不支持直接上传本地参考音频，请先换成可公开访问的 HTTPS 地址。"));
@@ -105,7 +109,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (standardModel && !["480p", "720p"].includes(resolution)) issues.push(blocked("seedance_resolution", "当前 Seedance 标准模型仅支持 480p/720p", "请修改分辨率或切换固定分辨率模型。"));
         if (fixedResolution && resolution !== fixedResolution) issues.push(warning("seedance_fixed_resolution", `当前模型固定输出 ${fixedResolution}，设置中的 ${resolution} 不会生效`, "生成时会以模型档位为准。"));
         const localImageCount = input.references.filter((item) => !/^https?:\/\//i.test(item.url || item.dataUrl)).length;
-        if (fixedResolution && localImageCount && (input.references.length > 1 || input.videoReferences.length || input.audioReferences.length)) issues.push(blocked("seedance_fixed_local_images", "固定档位 Seedance 的多张参考图必须使用公网 HTTP/HTTPS URL", "本地图片只能单张通过 multipart image 上传；请只保留一张本地图，或改用公网图片地址。"));
+        if (fixedResolution && localImageCount && (input.references.length > 1 || input.videoReferences.length || input.audioReferences.length)) issues.push(blocked("seedance_fixed_local_images", "当前固定档位支持多图，但多图素材必须使用公网 HTTP/HTTPS URL", "本地图片只能单张通过 multipart image 上传；多张本地图可切换标准 seedance-2.0 并选择 720p（最多 4 张），或先取得公网图片地址。"));
     }
 
     if (isOmniImageVideoModel(model)) {
@@ -157,9 +161,13 @@ async function inspectReferenceImage(reference: ReferenceImage, index: number, t
         const imageBytes = dataUrlToFile({ ...reference, dataUrl }).size;
         if (isOmniImageVideoModel(model) && imageBytes > 5 * 1024 * 1024) return [blocked(`omni_image_size_${index}`, `${label} 超过 Omni 单图 5MB 上限`, "请压缩图片后重试。")];
         if ((isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model)) && imageBytes > 10 * 1024 * 1024) return [blocked(`video_image_size_${index}`, `${label} 超过当前视频模型单图 10MB 上限`, "请压缩图片后重试。")];
+        if (model.startsWith("seedance-2.0") && imageBytes > 30 * 1024 * 1024) return [blocked(`seedance_image_size_${index}`, `${label} 超过当前 Seedance 模型单图 30MB 上限`, "请压缩图片后重试。")];
         const image = await loadImage(dataUrl);
         const issues: VideoPreflightIssue[] = [];
         const shortSide = Math.min(image.naturalWidth, image.naturalHeight);
+        const fixedResolution = seedanceModelFixedResolution(model);
+        if (fixedResolution && (shortSide < 300 || Math.max(image.naturalWidth, image.naturalHeight) > 4000)) issues.push(blocked(`seedance_image_dimensions_${index}`, `${label} 每边至少 300 px 且长边不能超过 4000 px`, "请调整参考图尺寸。"));
+        if (fixedResolution && (image.naturalWidth / image.naturalHeight < 0.4 || image.naturalWidth / image.naturalHeight > 2.5)) issues.push(blocked(`seedance_image_aspect_${index}`, `${label} 宽高比必须在 0.4–2.5 范围内`, "请裁剪或更换参考图。"));
         if (shortSide < 256) issues.push(blocked(`image_too_small_${index}`, `${label} 分辨率过低（${image.naturalWidth}×${image.naturalHeight}）`, "请使用短边至少 256 px 的图片。"));
         else if (shortSide < 720) issues.push(warning(`image_small_${index}`, `${label} 清晰度较低（${image.naturalWidth}×${image.naturalHeight}）`, "建议使用短边 720 px 以上的图片。"));
         const targetRatio = parseRatio(targetSize);

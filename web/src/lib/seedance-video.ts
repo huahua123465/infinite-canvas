@@ -228,7 +228,9 @@ function seedanceReferenceName(name: string) {
     return name.replace(/\.(?:png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a|aac)$/i, "").trim() || "未命名素材";
 }
 
-export function seedanceVideoReferenceError(videos: ReferenceVideo[], minDurationMs = 4_000) {
+export function seedanceVideoReferenceError(videos: ReferenceVideo[], minDurationMs = 4_000, bounds: { minSize?: number; maxSize?: number; minAspectRatio?: number; maxAspectRatio?: number } = {}) {
+    const minSize = bounds.minSize ?? 720;
+    const maxSize = bounds.maxSize ?? 2160;
     let totalDurationMs = 0;
     for (let index = 0; index < videos.length; index += 1) {
         const video = videos[index];
@@ -239,7 +241,9 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[], minDuratio
             totalDurationMs += video.durationMs;
         }
         if (video.width && video.height) {
-            if (Math.min(video.width, video.height) < 720 || Math.max(video.width, video.height) > 2160) return `${label} 每边分辨率需要在 720-2160px 之间`;
+            if (Math.min(video.width, video.height) < minSize || Math.max(video.width, video.height) > maxSize) return `${label} 每边分辨率需要在 ${minSize}-${maxSize}px 之间`;
+            const ratio = video.width / video.height;
+            if ((bounds.minAspectRatio && ratio < bounds.minAspectRatio) || (bounds.maxAspectRatio && ratio > bounds.maxAspectRatio)) return `${label} 宽高比不符合当前模型要求`;
         }
     }
     if (totalDurationMs > 15000) return "Seedance 参考视频总时长不能超过 15 秒";

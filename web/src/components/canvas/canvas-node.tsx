@@ -11,7 +11,7 @@ import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
 import { isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
-import { isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { resolveImageUrl } from "@/services/image-storage";
 import { classifyVideoFailure } from "@/services/api/video";
 import { defaultConfig, modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -1665,6 +1665,10 @@ function StoryboardVideoPromptPreviewModal({
     };
 
     const updateDraftModel = (model: string) => {
+        if (isOmniImageVideoModel(model) || isOmniVideoToVideoModel(model)) {
+            updateDraftConfig({ model, vquality: "720p", videoSeconds: "10", size: "16:9" });
+            return;
+        }
         if (isSoraVideoModel(model)) {
             updateDraftConfig({ model, videoSeconds: "8", size: "16:9" });
             return;
