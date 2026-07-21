@@ -1,6 +1,6 @@
 import { CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { isOmniImageVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -51,7 +51,11 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const duration = normalizedDuration(input.config.videoSeconds);
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
+    const isCangyuan = input.config.apiFormat === "cangyuan" || input.config.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
+    if (/@(?:image|图片)\d+/i.test(prompt) && !input.references.length) issues.push(blocked("prompt_image_reference_missing", "提示词引用了图片，但实际没有提交参考图", "请确认参考图从输入端连入视频节点后再生成。"));
+    if (/@(?:video|视频)\d+/i.test(prompt) && !input.videoReferences.length) issues.push(blocked("prompt_video_reference_missing", "提示词引用了视频，但实际没有提交参考视频", "请确认参考视频从输入端连入视频节点后再生成。"));
+    if (/@(?:audio|音频)\d+/i.test(prompt) && !input.audioReferences.length) issues.push(blocked("prompt_audio_reference_missing", "提示词引用了音频，但实际没有提交参考音频", "请确认参考音频从输入端连入视频节点后再生成。"));
     const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 1200 : 5000;
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
@@ -89,10 +93,12 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         const totalVideoDuration = input.videoReferences.reduce((total, item) => total + (item.durationMs || 0), 0);
         if (totalVideoDuration > 15_000) issues.push(blocked("seedance_video_duration", "Seedance 参考视频总时长不能超过 15 秒", "请裁短或移除参考视频。"));
         input.videoReferences.forEach((item, index) => {
+            if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_video_url_${index}`, `参考视频 ${index + 1} 必须使用公网 HTTPS URL`, "沧元该模型不支持直接上传本地参考视频，请先换成可公开访问的 HTTPS 地址。"));
             if (item.durationMs && (item.durationMs < minReferenceVideoMs || item.durationMs > 15_000)) issues.push(blocked(`seedance_video_${index}`, `参考视频 ${index + 1} 必须为 ${minReferenceVideoMs / 1000}–15 秒`, "请更换或裁剪参考视频。"));
             if (item.width && item.height && (Math.min(item.width, item.height) < 720 || Math.max(item.width, item.height) > 2160)) issues.push(blocked(`seedance_video_size_${index}`, `参考视频 ${index + 1} 每边分辨率必须在 720–2160 px 范围内`, "请调整参考视频分辨率。"));
         });
         input.audioReferences.forEach((item, index) => {
+            if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_audio_url_${index}`, `参考音频 ${index + 1} 必须使用公网 HTTPS URL`, "沧元该模型不支持直接上传本地参考音频，请先换成可公开访问的 HTTPS 地址。"));
             if (item.durationMs && item.durationMs > 15_000) issues.push(blocked(`seedance_audio_duration_${index}`, `参考音频 ${index + 1} 不能超过 15 秒`, "请裁短参考音频。"));
         });
         const standardModel = !fixedResolution;
@@ -105,6 +111,13 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (input.references.length > limits.images) issues.push(blocked("omni_images", `当前 Omni 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
         if (input.videoReferences.length || input.audioReferences.length) issues.push(blocked("omni_media", "当前 Omni 模型只支持参考图，不支持参考视频或参考音频", "请移除参考视频和参考音频。"));
         if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("omni_ratio", "当前 Omni 模型只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
+    }
+
+    if (isOmniVideoToVideoModel(model)) {
+        if (input.videoReferences.length !== 1 || input.references.length || input.audioReferences.length) issues.push(blocked("omni_v2v_references", "Omni V2V 必须且只能提供 1 条源视频，不支持参考图或参考音频", "请只保留一条源视频。"));
+        if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("omni_v2v_ratio", "Omni V2V 只支持 16:9 或 9:16", "请选择横屏或竖屏。"));
+        const sourceVideo = input.videoReferences[0];
+        if (sourceVideo?.bytes && sourceVideo.bytes > 5 * 1024 * 1024) issues.push(blocked("omni_v2v_video_size", "Omni V2V 本地源视频不能超过 5MB", "请压缩或裁剪源视频后重试。"));
     }
 
     if (isSoraVideoModel(model)) {

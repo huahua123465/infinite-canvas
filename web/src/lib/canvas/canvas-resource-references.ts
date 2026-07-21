@@ -17,16 +17,16 @@ export type CanvasResourceReference = {
 };
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
-    const contextNodes = contextNodeId ? getMentionResourceNodes(contextNodeId, nodes, connections) : [];
+    const contextNodes = contextNodeId ? getGenerationResourceNodes(contextNodeId, nodes, connections) : [];
     const globalReferences = labelResourceNodes(nodes.filter(isResourceNode), false);
-    const activeByNodeId = new Map(labelResourceNodes(contextNodes, true).map((reference) => [reference.nodeId, reference]));
-    return globalReferences.map((reference) => activeByNodeId.get(reference.nodeId) || reference);
+    const activeReferences = labelResourceNodes(contextNodes, true);
+    const activeNodeIds = new Set(activeReferences.map((reference) => reference.nodeId));
+    return [...activeReferences, ...globalReferences.filter((reference) => !activeNodeIds.has(reference.nodeId))];
 }
 
 export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const contextNodes = getMentionResourceNodes(node.id, nodes, connections).filter((item) => item.id !== node.id);
-    // 未连线的文本/提示词节点也应能引用画布中已有的资源；有连线时仍优先使用当前上下文。
-    return labelResourceNodes(contextNodes.length ? contextNodes : nodes.filter((item) => item.id !== node.id && isResourceNode(item)), true);
+    const contextNodes = getGenerationResourceNodes(node.id, nodes, connections).filter((item) => item.id !== node.id);
+    return labelResourceNodes(contextNodes, true);
 }
 
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

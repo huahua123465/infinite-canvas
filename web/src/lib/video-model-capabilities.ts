@@ -35,6 +35,11 @@ export function isOmniImageVideoModel(model: string) {
     return name === "omni-fast" || name === "omni-fast-no-water";
 }
 
+export function isOmniVideoToVideoModel(model: string) {
+    const name = modelOptionName(model).toLowerCase();
+    return name === "omni-v2v" || name === "omni-v2v-no-water";
+}
+
 export function isSoraVideoModel(model: string) {
     const name = modelOptionName(model).toLowerCase();
     return name === "sora-2" || name === "sora-2-pro" || name === "sora2";
