@@ -347,7 +347,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
                 aspect_ratio: normalizeCangyuanVideoRatio(config.size),
                 duration: normalizeCangyuanVideoDuration(config.videoSeconds),
                 ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
-                ...(fixedResolution && imageUrls.length ? { reference_images: imageUrls.map((url, index) => ({ url, name: referenceDisplayName(references[index].name, index) })) } : {}),
+                ...(fixedResolution && imageUrls.length ? { image_url: imageUrls[0], ...(imageUrls.length > 1 ? { reference_image_urls: imageUrls.slice(1) } : {}) } : {}),
                 ...(!fixedResolution && primaryImageUrl ? { image_url: primaryImageUrl } : {}),
                 ...(!fixedResolution && extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
                 ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),

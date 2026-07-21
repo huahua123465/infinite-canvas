@@ -73,7 +73,7 @@ function actualReferenceFields(config: AiConfig, model: string, input: VideoPref
     if (isOmniVideoToVideoModel(model)) return input.videoReferences.length ? [/^https?:\/\//i.test(input.videoReferences[0].url) ? "video_url" : "input_video（multipart）"] : [];
     if (isSoraVideoModel(model) || isVeoVideoModel(model)) return input.references.length ? ["images"] : [];
     if (normalized.startsWith("grok-video")) return [input.references.length ? "image_urls" : "", input.videoReferences.length ? "video_url" : ""].filter(Boolean);
-    if (isCangyuan) return [input.references.length ? (seedanceModelFixedResolution(model) ? "reference_images" : input.references.length === 1 && !input.videoReferences.length && !input.audioReferences.length && !/^https?:\/\//i.test(input.references[0].url || input.references[0].dataUrl) ? "image（multipart）" : "image_url") : "", input.references.length > 1 && !seedanceModelFixedResolution(model) ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
+    if (isCangyuan) return [input.references.length ? (input.references.length === 1 && !input.videoReferences.length && !input.audioReferences.length && !seedanceModelFixedResolution(model) && !/^https?:\/\//i.test(input.references[0].url || input.references[0].dataUrl) ? "image（multipart）" : "image_url") : "", input.references.length > 1 ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
     if (config.apiFormat === "ark") return ["content（文本 + 多模态素材）"];
     return input.references.length ? ["input_reference[]"] : [];
 }
