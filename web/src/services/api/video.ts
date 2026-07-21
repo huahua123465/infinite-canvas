@@ -343,11 +343,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
 }
 
 function buildCangyuanSeedanceMiniPrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
-    const text = buildSeedancePromptText(prompt, images, videos, audios);
-    return text
-        .replace(/@?图片(\d+)/g, "@image$1")
-        .replace(/@?视频(\d+)/g, "@video$1")
-        .replace(/@?音频(\d+)/g, "@audio$1");
+    return buildCangyuanSeedancePrompt(prompt, images, videos, audios);
 }
 
 function cangyuanSeedanceMiniModelName(model: string) {
@@ -391,10 +387,50 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
 }
 
 function buildCangyuanSd5SeedancePrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
-    return buildSeedancePromptText(prompt, images, videos, audios)
+    return buildCangyuanSeedancePrompt(prompt, images, videos, audios);
+}
+
+function buildCangyuanSeedancePrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
+    let text = prompt.trim()
         .replace(/@?(?:图片|image)(\d+)/gi, "@image$1")
         .replace(/@?(?:视频|video)(\d+)/gi, "@video$1")
         .replace(/@?(?:音频|audio)(\d+)/gi, "@audio$1");
+    [
+        { prefix: "image", items: images },
+        { prefix: "video", items: videos },
+        { prefix: "audio", items: audios },
+    ].forEach(({ prefix, items }) => {
+        items.forEach((item, index) => {
+            referenceNameAliases(item.name).forEach((name) => {
+                text = text.replace(new RegExp(escapeRegExp(name), "gi"), `@${prefix}${index + 1}`);
+            });
+        });
+    });
+    const labels = [
+        ...images.map((_, index) => `@image${index + 1}`),
+        ...videos.map((_, index) => `@video${index + 1}`),
+        ...audios.map((_, index) => `@audio${index + 1}`),
+    ];
+    const missing = labels.filter((label) => !new RegExp(`${label}(?!\\d)`, "i").test(text));
+    return missing.length ? `已绑定参考素材：${missing.join("、")}。\n\n${text}` : text;
+}
+
+function referenceNameAliases(name: string) {
+    const aliases = new Set<string>();
+    let value = name.trim();
+    while (value) {
+        aliases.add(value);
+        const next = value.replace(/\.(?:png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a|aac)$/i, "");
+        if (next === value) break;
+        value = next;
+    }
+    return Array.from(aliases)
+        .filter((alias) => alias.length >= 3 && !/^(?:image|video|audio|图片|视频|音频)\d*$/i.test(alias))
+        .sort((left, right) => right.length - left.length);
+}
+
+function escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function createCangyuanVeoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {

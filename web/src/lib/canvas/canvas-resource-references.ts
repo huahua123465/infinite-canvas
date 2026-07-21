@@ -40,12 +40,13 @@ export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[],
         if (visited.has(currentId)) return;
         visited.add(currentId);
         connections.forEach((connection) => {
-            const nextId = connection.fromNodeId === currentId ? connection.toNodeId : connection.toNodeId === currentId ? connection.fromNodeId : null;
+            const outgoing = connection.fromNodeId === currentId;
+            const nextId = outgoing ? connection.toNodeId : connection.toNodeId === currentId ? connection.fromNodeId : null;
             if (!nextId) return;
             const next = nodes.find((item) => item.id === nextId);
             if (!next) return;
             if (next.type === CanvasNodeType.Config) visit(next.id);
-            else addResource(next);
+            else if (!outgoing || !isGeneratedResultNode(next)) addResource(next);
         });
     };
     visit(nodeId);
@@ -53,8 +54,32 @@ export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[],
     return Array.from(related.values());
 }
 
+function isGeneratedResultNode(node: CanvasNodeData) {
+    const metadata = node.metadata || {};
+    if (node.type === CanvasNodeType.Image) return Boolean(metadata.generationType || metadata.batchRootId || (metadata.model && metadata.prompt));
+    if (node.type === CanvasNodeType.Video) return Boolean(metadata.videoTaskId || (metadata.model && metadata.prompt));
+    if (node.type === CanvasNodeType.Audio) return Boolean(metadata.voiceboxGenerationId || metadata.model);
+    if (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Script) return Boolean(metadata.prompt && metadata.content);
+    return false;
+}
+
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return getMentionResourceNodes(nodeId, nodes, connections);
+    const related = new Map<string, CanvasNodeData>();
+    const visited = new Set<string>();
+    const visit = (currentId: string) => {
+        if (visited.has(currentId)) return;
+        visited.add(currentId);
+        connections
+            .filter((connection) => connection.toNodeId === currentId)
+            .forEach((connection) => {
+                const input = nodes.find((node) => node.id === connection.fromNodeId);
+                if (!input) return;
+                if (input.type === CanvasNodeType.Config) visit(input.id);
+                else if (isResourceNode(input)) related.set(input.id, input);
+            });
+    };
+    visit(nodeId);
+    return Array.from(related.values());
 }
 
 function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

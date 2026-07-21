@@ -30,7 +30,7 @@ export type NodeGenerationInput = {
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
-    if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
+    if ((sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) || /@\[node:[^\]]+\]/.test(prompt)) {
         return buildComposerGenerationContext(inputs, prompt);
     }
 
@@ -61,12 +61,14 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     const textBlocks: string[] = [];
     const counts = { image: 0, video: 0, audio: 0, text: 0 };
     let hasToken = false;
+    let hasNodeToken = false;
     let lastIndex = 0;
     let nextPrompt = "";
 
     for (const match of prompt.matchAll(/@\[node:([^\]]+)\]/g)) {
         if (match.index === undefined) continue;
         hasToken = true;
+        hasNodeToken = true;
         nextPrompt += prompt.slice(lastIndex, match.index);
         const input = inputByNodeId.get(match[1]);
         if (input) {
@@ -83,6 +85,13 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     }
 
     nextPrompt += prompt.slice(lastIndex);
+    if (!hasNodeToken) {
+        const apiInputs = composerApiReferenceInputs(inputs, prompt);
+        if (apiInputs.length) {
+            hasToken = true;
+            selectedInputs.push(...apiInputs);
+        }
+    }
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
@@ -111,6 +120,19 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
     };
+}
+
+function composerApiReferenceInputs(inputs: NodeGenerationInput[], prompt: string) {
+    const limits = {
+        image: maxReferenceIndex(prompt, /@(?:image|图片)(\d+)/gi),
+        video: maxReferenceIndex(prompt, /@(?:video|视频)(\d+)/gi),
+        audio: maxReferenceIndex(prompt, /@(?:audio|音频)(\d+)/gi),
+    };
+    return (["image", "video", "audio"] as const).flatMap((type) => inputs.filter((input) => input.type === type).slice(0, limits[type]));
+}
+
+function maxReferenceIndex(prompt: string, pattern: RegExp) {
+    return Array.from(prompt.matchAll(pattern)).reduce((max, match) => Math.max(max, Number(match[1]) || 0), 0);
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
