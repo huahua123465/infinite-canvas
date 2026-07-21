@@ -108,8 +108,6 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         const standardModel = !fixedResolution;
         if (standardModel && !["480p", "720p"].includes(resolution)) issues.push(blocked("seedance_resolution", "当前 Seedance 标准模型仅支持 480p/720p", "请修改分辨率或切换固定分辨率模型。"));
         if (fixedResolution && resolution !== fixedResolution) issues.push(warning("seedance_fixed_resolution", `当前模型固定输出 ${fixedResolution}，设置中的 ${resolution} 不会生效`, "生成时会以模型档位为准。"));
-        const localImageCount = input.references.filter((item) => !/^https?:\/\//i.test(item.url || item.dataUrl)).length;
-        if (fixedResolution && localImageCount && (input.references.length > 1 || input.videoReferences.length || input.audioReferences.length)) issues.push(blocked("seedance_fixed_local_images", "当前固定档位支持多图，但多图素材必须使用公网 HTTP/HTTPS URL", "本地图片只能单张通过 multipart image 上传；多张本地图可切换标准 seedance-2.0 并选择 720p（最多 4 张），或先取得公网图片地址。"));
     }
 
     if (isOmniImageVideoModel(model)) {

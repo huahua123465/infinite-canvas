@@ -346,7 +346,6 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
             created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
             requestFields = ["model", "prompt", "aspect_ratio", "duration", ...(!fixedResolution ? ["resolution", "audio"] : []), "image"];
         } else {
-            if (fixedResolution && imageUrls.some((url) => !isPublicMediaUrl(url))) throw new Error(`${modelName} 支持多张参考图，但多图接口只接受公网 HTTP/HTTPS URL；本地图片只能单张通过 multipart image 上传，多张本地图请切换标准 seedance-2.0 的 720p 档位（最多 4 张）`);
             const payload = {
                 model: modelName,
                 prompt: requestPrompt,
