@@ -8512,6 +8512,19 @@ function storyboardAssetRoleHint(asset: StoryboardAsset) {
     return "当前镜头可见人物主体，负责执行场景卡中的主要动作；只控制脸型、年龄状态、发型、体态、服装和画风。";
 }
 
+function storyboardSceneMatchFragments(value: string) {
+    const ignored = new Set(["画面", "场景", "人物", "镜头", "光线", "自然", "真实", "生活", "环境", "保持", "当前", "主体", "参考", "空间", "结构", "材质", "风格"]);
+    const fragments = value.match(/[\u3400-\u9fffA-Za-z0-9]+/g) || [];
+    return new Set(fragments.flatMap((fragment) => Array.from({ length: Math.max(0, fragment.length - 1) }, (_, index) => fragment.slice(index, index + 2))).filter((fragment) => !ignored.has(fragment)));
+}
+
+function storyboardSceneFallbackScore(asset: StoryboardAsset, locations: string[], visualText: string) {
+    const assetText = [asset.name, asset.description, asset.prompt].filter(Boolean).join(" ");
+    const assetFragments = storyboardSceneMatchFragments(assetText);
+    const overlap = (value: string) => Array.from(storyboardSceneMatchFragments(value)).filter((fragment) => assetFragments.has(fragment)).length;
+    return locations.reduce((total, location) => total + overlap(location) * 6, 0) + overlap(visualText) * 2;
+}
+
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
     const currentStages = [shotPlan?.timeStage, ...sourceBeats.map((beat) => beat.timeStage)].filter((stage): stage is string => Boolean(stage));
@@ -8531,9 +8544,16 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
         .filter((item) => item.score > 1)
         .sort((first, second) => second.score - first.score)
         .map((item) => item.asset);
+    const matchedScene = ranked.find((asset) => asset.kind === "scene");
+    const fallbackScene = assets
+        .filter((asset) => asset.kind === "scene")
+        .map((asset) => ({ asset, score: storyboardSceneFallbackScore(asset, locations, row[2] || "") }))
+        .filter((item) => item.score > 0)
+        .sort((first, second) => second.score - first.score || requiredAssetPriority(second.asset) - requiredAssetPriority(first.asset))[0]?.asset;
+    const primaryScene = matchedScene || fallbackScene;
     const selectedCharacterBases = new Set<string>();
     const allowsMultiStageSamePerson = storyboardAllowsMultipleCharacterStages(sourceBeats, row, shotPlan);
-    return ranked
+    const selected = ranked
         .filter((asset) => {
             if (asset.kind !== "character") return true;
             if (allowsMultiStageSamePerson) return true;
@@ -8543,6 +8563,8 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
             return true;
         })
         .slice(0, 6);
+    if (!primaryScene || selected.some((asset) => asset.id === primaryScene.id)) return selected;
+    return [...selected.filter((asset) => asset.kind !== "scene").slice(0, 5), primaryScene];
 }
 
 function storyboardAllowsMultipleCharacterStagesForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {
