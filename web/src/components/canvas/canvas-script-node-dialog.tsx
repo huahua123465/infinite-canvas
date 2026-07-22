@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { App, Button, Dropdown, Input, InputNumber, Modal, Select } from "antd";
+import { App, Button, Dropdown, Input, Modal, Select } from "antd";
 import { Copy, Ellipsis, Image as ImageIcon, LoaderCircle, Lock, Maximize2, PanelsTopLeft, Plus, RefreshCw, Sparkles, Square, Trash2, Unlock, Upload, Video, Volume2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -8,12 +8,12 @@ import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardPlanningConfigKey, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
-import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionMode, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotPlan } from "@/types/canvas";
+import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotPlan } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
 const STORYBOARD_ROW_LIMIT = 300;
-type ScriptDialogView = "shots" | "assets" | "prompts";
+type ScriptDialogView = "shots" | "assets" | "prompts" | "videos";
 type StoryboardRowsUpdater = string[][] | ((rows: string[][]) => string[][]);
 type ShotImportMode = "auto" | "append" | "insert";
 const ASSET_KIND_LABEL: Record<StoryboardAssetKind, string> = { character: "角色", scene: "场景", prop: "道具" };
@@ -21,16 +21,6 @@ const ASSET_SECTIONS: Array<{ kind: StoryboardAssetKind; title: string }> = [
     { kind: "character", title: "角色" },
     { kind: "scene", title: "场景" },
     { kind: "prop", title: "道具" },
-];
-const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
-    { value: "economy", label: "节省成本" },
-    { value: "documentary", label: "标准漫剧" },
-    { value: "detailed", label: "细拍漫剧" },
-    { value: "custom", label: "自定义" },
-];
-const STORYBOARD_PRODUCTION_SCOPE_OPTIONS = [
-    { value: "single", label: "单集浓缩" },
-    { value: "series", label: "完整系列" },
 ];
 function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storageKey">) {
     return Boolean(asset.imageUrl || asset.storageKey);
@@ -64,15 +54,16 @@ type CanvasScriptNodeDialogProps = {
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
     onBatchGenerateVideos: (node: CanvasNodeData) => void;
     onActiveEpisodeChange: (nodeId: string, episodeId: string) => void;
-    onProductionConfigChange: (nodeId: string, patch: { storyboardProductionScope?: StoryboardProductionScope; storyboardProductionMode?: StoryboardProductionMode; storyboardEpisodeDurationSeconds?: number; storyboardCustomVideoBudget?: number; storyboardTargetChapterCount?: number }) => void;
     onCreateChapterNodes: (node: CanvasNodeData) => void;
     onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void;
     onShotPlanChange: (nodeId: string, rowIndex: number, patch: Partial<StoryboardShotPlan>) => void;
+    videoDraftCount: number;
+    videoResultCount: number;
     config: AiConfig;
     promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" };
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onActiveEpisodeChange, onProductionConfigChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, config, promptProgress }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -86,15 +77,15 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const shotPlans = node?.metadata?.storyboardShotPlans || {};
     const episodes = node?.metadata?.storyboardChapters || [];
     const activeEpisodeId = episodes.some((episode) => episode.id === node?.metadata?.storyboardActiveChapterId) ? node?.metadata?.storyboardActiveChapterId || "" : episodes[0]?.id || "";
-    const productionScope = node?.metadata?.storyboardProductionScope || "single";
-    const productionMode = node?.metadata?.storyboardProductionMode || "documentary";
-    const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, node?.metadata?.storyboardEpisodeDurationSeconds || 90, node?.metadata?.storyboardCustomVideoBudget, node?.metadata?.storyboardTargetChapterCount);
+    const productionScope = node?.metadata?.storyboardProductionScope || "series";
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope);
     const planningStale = Boolean(rows.length && node?.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
     const allAssets = node?.metadata?.storyboardAssets || [];
     const assets = allAssets.filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
     const activeEpisodePrepared = activeEpisodeId ? Boolean(node?.metadata?.storyboardPreparedChapterIds?.includes(activeEpisodeId)) : assets.length > 0;
     const activeRowIndexes = rows.map((_, index) => index).filter((index) => !activeEpisodeId || shotPlans[String(index)]?.chapterId === activeEpisodeId);
     const dynamicIndexes = activeRowIndexes.filter((index) => shotPlans[String(index)]?.renderMode !== "still");
+    const allDynamicCount = Object.values(shotPlans).filter((plan) => plan.renderMode !== "still").length;
     const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)])).length;
     const failedPromptCount = dynamicIndexes.filter((index) => Boolean(promptErrors[String(index)])).length;
     const pendingPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) || Boolean(promptErrors[String(index)])).length;
@@ -170,7 +161,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         });
     };
 
-    const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, "5s", "", "", "", "", "", "", ""]]);
+    const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, "15s", "", "", "", "", "", "", ""]]);
     const deleteRow = (rowIndex: number) => saveRows((currentRows) => currentRows.filter((_, index) => index !== rowIndex));
     const importRows = (importedRows: string[][], mode: ShotImportMode, insertAfter: number) => {
         saveRows((currentRows) => mergeImportedRows(currentRows, importedRows, mode, insertAfter));
@@ -188,6 +179,11 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const openPrompts = () => {
         if (!node || !rows.length || !assets.length || missingAssets > 0 || (productionScope === "series" && activeEpisodeId && !narrationLocked)) return;
         setView("prompts");
+    };
+
+    const openVideos = () => {
+        if (!node || dynamicPromptCount !== dynamicIndexes.length) return setView("prompts");
+        setView("videos");
     };
 
     const uploadEditingAsset = (file?: File) => {
@@ -252,20 +248,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     }}
                 >
                     <div className="sticky top-0 z-30 flex min-h-20 shrink-0 items-center gap-6 border-b border-[#303030] bg-[#070707] px-8 py-3 shadow-[0_10px_28px_rgba(0,0,0,.35)]">
-                        <div className="grid min-w-0 flex-1 grid-cols-3 items-center gap-6">
-                            <Step index="1" title="确认片段" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : planningStale ? "生产配置已变更，需要重新规划" : coverage ? `${node.metadata?.storyboardOriginalBeatCount && node.metadata.storyboardOriginalBeatCount !== coverage.total ? `原文浓缩 ${node.metadata.storyboardOriginalBeatCount}→${coverage.total}` : `事实覆盖 ${coverage.covered}/${coverage.total}`}，共 ${episodes.length || 1} 集${productionScope === "series" ? narrationLocked ? "，本章旁白已锁定" : "，待锁定本章旁白" : ""}` : `${filledCount}/${rows.length} 片段待校对`} active={view === "shots"} done={!planningStale && Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0) && (productionScope !== "series" || narrationLocked)} onClick={() => setView("shots")} />
-                            <Step index="2" title="准备资产" detail={planningStale ? "等待重新规划" : `${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={!planningStale && assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
+                        <div className="grid min-w-0 flex-1 grid-cols-4 items-center gap-5">
+                            <Step index="1" title="故事拆分" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : planningStale ? "需要重新规划" : coverage ? `${coverage.covered}/${coverage.total} 个事实，共 ${episodes.length || 1} 章` : `${filledCount}/${rows.length} 片段待校对`} active={view === "shots"} done={!planningStale && Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0) && (productionScope !== "series" || narrationLocked)} onClick={() => setView("shots")} />
+                            <Step index="2" title="资产生成" detail={planningStale ? "等待故事拆分" : `${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={!planningStale && assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
                             <Step index="3" title="合成提示词" detail={planningStale ? "等待重新规划" : `${dynamicPromptCount}/${dynamicIndexes.length} 个视频片段已合成${failedPromptCount ? `，失败 ${failedPromptCount}` : ""}`} active={view === "prompts"} done={!planningStale && dynamicIndexes.length > 0 && dynamicPromptCount === dynamicIndexes.length} onClick={openPrompts} />
+                            <Step index="4" title="视频生成" detail={`当前章 ${videoResultCount}/${dynamicIndexes.length} 已生成 · 15秒/条`} active={view === "videos"} done={dynamicIndexes.length > 0 && videoResultCount >= dynamicIndexes.length} onClick={openVideos} />
                         </div>
-                        {view === "shots" ? (
-                            <div className="flex shrink-0 items-center gap-2">
-                                <Select value={productionScope} className="!min-w-28" options={STORYBOARD_PRODUCTION_SCOPE_OPTIONS} onChange={(value: StoryboardProductionScope) => onProductionConfigChange(node.id, { storyboardProductionScope: value })} />
-                                <Select value={productionMode} className="!min-w-28" options={STORYBOARD_PRODUCTION_MODE_OPTIONS} onChange={(value: StoryboardProductionMode) => onProductionConfigChange(node.id, { storyboardProductionMode: value })} />
-                                <InputNumber min={60} max={300} step={30} value={node.metadata?.storyboardEpisodeDurationSeconds || 90} className="!w-32" addonAfter="秒/集" onChange={(value) => onProductionConfigChange(node.id, { storyboardEpisodeDurationSeconds: Number(value) || 90 })} />
-                                {productionScope === "series" ? <InputNumber min={2} max={30} value={node.metadata?.storyboardTargetChapterCount || 8} className="!w-28" addonAfter="章" onChange={(value) => onProductionConfigChange(node.id, { storyboardTargetChapterCount: Number(value) || 8 })} /> : null}
-                                {productionMode === "custom" ? <InputNumber min={2} max={30} value={node.metadata?.storyboardCustomVideoBudget || 8} className="!w-36" addonAfter="片段/集" onChange={(value) => onProductionConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 8 })} /> : null}
-                            </div>
-                        ) : null}
+                        {view === "shots" ? <div className="shrink-0 text-xs text-[#a8a8a8]">{episodes.length ? `自动拆为 ${episodes.length} 章 · ${allDynamicCount} 条 × 15 秒` : "完整故事自动拆章 · 每条 15 秒"}</div> : null}
                         {!planningStale && productionScope === "series" && episodes.length ? <Select value={activeEpisodeId} className="!min-w-56" options={episodes.map((episode) => ({ value: episode.id, label: `${episode.title}（${episode.shotIndexes.length}片段 / ${Math.round(episode.durationSeconds || 0)}秒）` }))} onChange={(episodeId) => onActiveEpisodeChange(node.id, episodeId)} /> : null}
                         {view === "assets" ? (
                             <AssetPrepToolbar
@@ -287,6 +276,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         {view === "prompts" ? (
                             <PromptStepToolbar node={node} actionKey={actionKey} promptProgress={promptProgress} dynamicPromptCount={dynamicPromptCount} dynamicShotCount={dynamicIndexes.length} pendingPromptCount={pendingPromptCount} failedPromptCount={failedPromptCount} staticShotCount={staticShotCount} onComposeFinalPrompt={onComposeFinalPrompt} onRecomposeAll={confirmRecomposeAllPrompts} onStopPromptGeneration={onStopPromptGeneration} />
                         ) : null}
+                        {view === "videos" ? <Button type="primary" icon={<Video className="size-4" />} disabled={!dynamicIndexes.length || dynamicPromptCount !== dynamicIndexes.length || Boolean(actionKey)} onClick={() => onBatchGenerateVideos(node)}>{videoDraftCount ? "更新" : "创建"}当前章 {dynamicIndexes.length} 条 × 15 秒视频工作区</Button> : null}
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
                     </div>
                     {view === "assets" ? (
@@ -340,6 +330,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             dynamicShotCount={dynamicIndexes.length}
                             staticShotCount={staticShotCount}
                         />
+                    ) : view === "videos" ? (
+                        <VideoGenerationView node={node} rows={rows} rowIndexes={dynamicIndexes} promptDetails={promptDetails} actionKey={actionKey} draftCount={videoDraftCount} resultCount={videoResultCount} onGenerateVideo={onGenerateVideo} onBatchGenerateVideos={onBatchGenerateVideos} />
                     ) : (
                         <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
@@ -525,7 +517,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
     const stillCount = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "still").length;
     const videoSeconds = rowIndexes.reduce((total, index) => total + (plans[String(index)]?.renderMode === "video" ? Number(rows[index]?.[1]?.match(/\d+(?:\.\d+)?/)?.[0] || 0) : 0), 0);
     const displayRows = rowIndexes.map((rowIndex) => ({ row: rows[rowIndex], rowIndex }));
-    const planningButtonText = `${rows.length ? "重新" : "自动"}规划${productionScope === "single" ? "单集" : "完整系列"}`;
+    const planningButtonText = `${rows.length ? "重新" : "自动"}规划${productionScope === "single" ? "单集" : "完整故事"}`;
     const dramaturgy = node.metadata?.storyboardDramaturgyPlan;
     return (
         <>
@@ -549,7 +541,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
             ) : null}
             {!planningStale && rows.length && chapters.length ? (
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[#303030] bg-[#171717] px-8 text-xs text-[#c9c9c9]">
-                    <span className="font-semibold text-white">{productionModeLabel(node.metadata?.storyboardProductionMode)}</span>
+                    <span className="font-semibold text-white">自动规划 · 15秒/条</span>
                     <span>{activeEpisode?.title}</span>
                     <span>{rowIndexes.length} 个生产片段</span>
                     <span className="text-emerald-200">{videoCount} 个动态视频</span>
@@ -664,13 +656,6 @@ function storyboardShotFactRoleTitle(plan?: StoryboardShotPlan) {
     return [`主要可见事实：${plan.visualBeatIds?.join("、") || "未指定"}`, `旁白承载事实：${plan.voiceoverBeatIds?.join("、") || "无"}`].join("\n");
 }
 
-function productionModeLabel(mode?: string) {
-    if (mode === "economy") return "节省成本";
-    if (mode === "detailed") return "细拍漫剧";
-    if (mode === "custom") return "自定义";
-    return "标准漫剧";
-}
-
 function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, dynamicPromptCount, dynamicShotCount, staticShotCount }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; dynamicPromptCount: number; dynamicShotCount: number; staticShotCount: number }) {
     return (
         <>
@@ -765,6 +750,34 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                 </div>
             </div>
         </>
+    );
+}
+
+function VideoGenerationView({ node, rows, rowIndexes, promptDetails, actionKey, draftCount, resultCount, onGenerateVideo, onBatchGenerateVideos }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; promptDetails: Record<string, StoryboardPromptDetail>; actionKey?: string | null; draftCount: number; resultCount: number; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onBatchGenerateVideos: (node: CanvasNodeData) => void }) {
+    return (
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-auto bg-[#151515]">
+            <div className="flex items-center justify-between border-b border-[#303030] px-8 py-5">
+                <div>
+                    <div className="text-base font-semibold text-white">当前章 {rowIndexes.length} 条 × 15 秒</div>
+                    <div className="mt-1 text-xs text-[#a8a8a8]">视频工作区 {draftCount}/{rowIndexes.length} · 已生成 {resultCount}/{rowIndexes.length}</div>
+                </div>
+                <Button type="primary" icon={<Video className="size-4" />} disabled={!rowIndexes.length || Boolean(actionKey)} onClick={() => onBatchGenerateVideos(node)}>{draftCount ? "更新" : "创建"}视频工作区</Button>
+            </div>
+            <div>
+                {rowIndexes.map((rowIndex) => {
+                    const row = rows[rowIndex];
+                    const ready = Boolean(promptDetails[String(rowIndex)]?.videoMotionPrompt?.trim());
+                    return (
+                        <div key={rowIndex} className="grid grid-cols-[90px_90px_minmax(0,1fr)_132px] items-center gap-4 border-b border-[#2b2b2b] px-8 py-4 text-sm">
+                            <span className="font-semibold text-white">第 {row?.[0] || rowIndex + 1} 镜</span>
+                            <span className="text-[#b8b8b8]">15 秒</span>
+                            <span className="truncate text-[#d8d8d8]">{row?.[2] || "未填写画面"}</span>
+                            <Button icon={<Video className="size-4" />} disabled={!ready || Boolean(actionKey)} onClick={() => onGenerateVideo(node, rowIndex)}>创建待审核视频</Button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
     );
 }
 
@@ -1040,7 +1053,7 @@ function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; pl
         <div className="grid max-h-[72vh] gap-3 overflow-y-auto pr-1">
             <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">当前片段必须保持一个主要可见事实、一个地点和一个人物时期。动作要写演员或物体实际做什么，不要只写心理变化。</div>
             {fields.map(([key, label, placeholder]) => <label key={String(key)} className="grid gap-1 text-xs text-[#bdbdbd]"><span>{label}</span><Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} value={String(draft[key] || "")} placeholder={placeholder} onChange={(event) => update(key, event.target.value)} /></label>)}
-            <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>2-4 个因果动作节拍</span><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} value={(draft.actionBeats || []).join("\n")} placeholder="每行一个动作，后一行由前一行结果触发" onChange={(event) => update("actionBeats", event.target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean).slice(0, 4))} /></label>
+            <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>2-3 个因果动作节拍</span><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} value={(draft.actionBeats || []).join("\n")} placeholder="每行一个动作，后一行由前一行结果触发" onChange={(event) => update("actionBeats", event.target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean).slice(0, 3))} /></label>
         </div>
         <div className="mt-4 flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" onClick={() => { onSave({ goal: draft.goal, obstacle: draft.obstacle, stakes: draft.stakes, tactic: draft.tactic, actionBeats: draft.actionBeats, obstacleReaction: draft.obstacleReaction, turningAction: draft.turningAction, result: draft.result, valueShift: draft.valueShift, startState: draft.startState, endState: draft.endState }); message.success(`第 ${row[0] || ""} 镜场景卡已保存，旧视频提示词已清除，请重新合成`); }}>保存场景卡</Button></div>
     </Modal>;
@@ -1095,7 +1108,7 @@ function storyboardNarrationIssues(rows: string[][], rowIndexes: number[]) {
         const budget = storyboardNarrationBudget(rows[rowIndex]);
         const length = storyboardNarrationLength(narration);
         const duration = storyboardDurationSeconds(rows[rowIndex]?.[1]);
-        const dialogueBudget = Math.max(1, duration - 2 - Math.round(duration * 0.55)) * 4;
+        const dialogueBudget = Math.max(1, Math.round((duration - 9) * 3.2));
         const dialogueLength = storyboardNarrationLength(speech.dialogues.join(""));
         return [
             length > budget ? `镜${rowIndex + 1}旁白 ${length} 字，超过 ${budget} 字` : "",
@@ -1110,12 +1123,11 @@ function storyboardNarrationLength(value: string) {
 }
 
 function storyboardNarrationBudget(row?: string[]) {
-    const duration = storyboardDurationSeconds(row?.[1]);
-    return (storyboardSpeechParts(row?.[5] || "").dialogues.length ? Math.max(1, Math.round(duration * 0.55)) : Math.max(1, duration - 2)) * 4;
+    return storyboardSpeechParts(row?.[5] || "").dialogues.length ? 34 : 48;
 }
 
 function storyboardDurationSeconds(value?: string) {
-    return Math.max(1, Number(value?.match(/\d+(?:\.\d+)?/)?.[0]) || 12);
+    return Math.max(1, Number(value?.match(/\d+(?:\.\d+)?/)?.[0]) || 15);
 }
 
 function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount, batchProgress, preparing, generatingAssets, hasPartialAssets, readyAssets, onPrepareAssets, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; missingCount: number; batchProgress?: StoryboardAssetBatchProgress; preparing: boolean; generatingAssets: boolean; hasPartialAssets: boolean; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {

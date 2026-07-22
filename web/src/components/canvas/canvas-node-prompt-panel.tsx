@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
-import { App, Button, InputNumber, Select } from "antd";
+import { App, Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, modelOptionName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -16,7 +16,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
-import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardProductionMode, type StoryboardProductionScope } from "@/types/canvas";
+import { CanvasNodeType, STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -47,8 +47,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const isScriptNode = node.type === CanvasNodeType.Script;
     const scriptVideoConfig = isScriptNode ? buildScriptVideoConfig(globalConfig, node) : null;
-    const productionScope = node.metadata?.storyboardProductionScope || "single";
-    const productionMode = node.metadata?.storyboardProductionMode || "documentary";
+    const scriptChapterCount = node.metadata?.storyboardChapters?.length || 0;
+    const scriptVideoCount = Object.values(node.metadata?.storyboardShotPlans || {}).filter((plan) => plan.renderMode !== "still").length;
     const isStoryboardVideo = node.type === CanvasNodeType.Video && Boolean(node.metadata?.storyboardSourceNodeId) && node.metadata?.storyboardRowIndex !== undefined;
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -234,19 +234,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 ) : (
                     <>
                         {isScriptNode ? (
-                            <>
-                                <Select value={productionScope} className="min-w-[150px]" options={STORYBOARD_PRODUCTION_SCOPE_OPTIONS} onChange={(value: StoryboardProductionScope) => onConfigChange(node.id, { storyboardProductionScope: value })} />
-                                <Select
-                                    value={productionMode}
-                                    className="min-w-[190px]"
-                                    options={STORYBOARD_PRODUCTION_MODE_OPTIONS}
-                                    onChange={(value: StoryboardProductionMode) => onConfigChange(node.id, { storyboardProductionMode: value })}
-                                />
-                                <InputNumber min={60} max={300} step={30} value={node.metadata?.storyboardEpisodeDurationSeconds || 90} className="!w-28" addonAfter="秒/集" onChange={(value) => onConfigChange(node.id, { storyboardEpisodeDurationSeconds: Number(value) || 90 })} />
-                                {productionMode === "custom" ? (
-                                    <InputNumber min={2} max={30} value={node.metadata?.storyboardCustomVideoBudget || 8} className="!w-32" addonAfter="片段/集" onChange={(value) => onConfigChange(node.id, { storyboardCustomVideoBudget: Number(value) || 8 })} />
-                                ) : null}
-                            </>
+                            <span className="shrink-0 px-1 text-xs opacity-60">
+                                {scriptChapterCount ? `自动拆为 ${scriptChapterCount} 章 · ${scriptVideoCount} 条 × 15 秒` : "完整故事自动拆章 · 每条 15 秒"}
+                            </span>
                         ) : null}
                         <ModelPicker config={config} value={config.model} onChange={updateModel} capability="text" className="!h-10 !min-w-[130px] !max-w-[170px] flex-1" onMissingConfig={() => openConfigDialog(true)} />
                         {scriptVideoConfig ? (
@@ -340,18 +330,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         </>
     );
 }
-
-const STORYBOARD_PRODUCTION_MODE_OPTIONS = [
-    { value: "economy", label: "节省成本（每集约4-6片段）" },
-    { value: "documentary", label: "标准漫剧（每集约6-9片段）" },
-    { value: "detailed", label: "细拍漫剧（每集约8-12片段）" },
-    { value: "custom", label: "自定义" },
-];
-
-const STORYBOARD_PRODUCTION_SCOPE_OPTIONS = [
-    { value: "single", label: "单集浓缩（推荐）" },
-    { value: "series", label: "完整系列" },
-];
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text || type === CanvasNodeType.Script ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";

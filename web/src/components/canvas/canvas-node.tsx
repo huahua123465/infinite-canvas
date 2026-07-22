@@ -2385,9 +2385,8 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
     const assets = (node.metadata?.storyboardAssets || []).filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
     const promptDetails = node.metadata?.storyboardPromptDetails || {};
     const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
-    const productionScope = node.metadata?.storyboardProductionScope || "single";
-    const productionMode = node.metadata?.storyboardProductionMode || "documentary";
-    const planningConfigKey = storyboardPlanningConfigKey(productionScope, productionMode, node.metadata?.storyboardEpisodeDurationSeconds || 90, node.metadata?.storyboardCustomVideoBudget, node.metadata?.storyboardTargetChapterCount);
+    const productionScope = node.metadata?.storyboardProductionScope || "series";
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope);
     const planningStale = Boolean(rows.length && node.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
     const isReady = filledRows > 0 && !planningStale;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;

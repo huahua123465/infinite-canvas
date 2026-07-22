@@ -45,7 +45,7 @@ export const NODE_SPECS = {
     },
     [CanvasNodeType.Script]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Script],
-        metadata: { content: "", status: "idle", fontSize: 14, generationMode: "text", storyboardRows: [], storyboardProductionMode: "documentary" },
+        metadata: { content: "", status: "idle", fontSize: 14, generationMode: "text", storyboardRows: [], storyboardProductionScope: "series", seconds: "15" },
     },
     [CanvasNodeType.Workspace]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Workspace],
