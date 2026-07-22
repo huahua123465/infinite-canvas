@@ -3433,16 +3433,23 @@ function InfiniteCanvasPage() {
                     const relayoutWorkspace = existingWorkspace ? { ...existingWorkspace, position: workspacePositions[kind], width: 0, height: 0 } : undefined;
                     return [buildStoryboardWorkspaceNode(relayoutWorkspace, existingWorkspace?.id || `storyboard-assets:${scriptNode.id}:${kind}`, scriptNode, childNodes, workspacePositions[kind], STORYBOARD_ASSET_WORKSPACE_KIND[kind])];
                 });
+                const exportedById = new Map(exportedNodes.map((item) => [item.id, item]));
+                const referenceLookupNodes = [...nodesRef.current.map((item) => exportedById.get(item.id) || item), ...exportedNodes.filter((item) => !nodesRef.current.some((node) => node.id === item.id))];
+                const currentScriptNode = referenceLookupNodes.find((item) => item.id === scriptNode.id) || scriptNode;
+                const updatedScriptNode = { ...currentScriptNode, metadata: { ...currentScriptNode.metadata, ...scriptNode.metadata, storyboardAssets: nextAssets, storyboardAssetNodeIds: assetNodeIds, storyboardAssetMentionNodeIds: mentionNodeIds } };
+                const scriptLookupNodes = referenceLookupNodes.map((item) => item.id === scriptNode.id ? updatedScriptNode : item);
+                const relinkedScriptNode = { ...updatedScriptNode, metadata: { ...updatedScriptNode.metadata, storyboardPromptDetails: relinkStoryboardPromptDetails(updatedScriptNode, scriptLookupNodes) } };
+                const relinkLookupNodes = scriptLookupNodes.map((item) => item.id === scriptNode.id ? relinkedScriptNode : item);
+                const refreshedDraftNodes = relinkLookupNodes
+                    .filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === scriptNode.id)
+                    .map((item) => refreshStoryboardVideoDraftReferences(item, relinkedScriptNode, relinkLookupNodes, connectionsRef.current));
+                const refreshedDraftById = new Map(refreshedDraftNodes.map((item) => [item.id, item]));
                 setNodes((prev) => {
-                    const lookupNodes = [...prev, ...exportedNodes];
                     const exportedById = new Map([...workspaceNodes, ...exportedNodes].map((item) => [item.id, item]));
                     const nextWorkspaceIds = new Set(workspaceNodes.map((item) => item.id));
                     const updated = prev.filter((item) => !isStoryboardAssetWorkspace(item) || item.metadata?.workspaceSourceNodeId !== scriptNode.id || nextWorkspaceIds.has(item.id)).map((item) => {
-                        if (item.id === scriptNode.id) {
-                            const updatedScriptNode = { ...item, metadata: { ...item.metadata, ...scriptNode.metadata, storyboardAssets: nextAssets, storyboardAssetNodeIds: assetNodeIds, storyboardAssetMentionNodeIds: mentionNodeIds } };
-                            const promptDetails = relinkStoryboardPromptDetails(updatedScriptNode, lookupNodes);
-                            return { ...updatedScriptNode, metadata: { ...updatedScriptNode.metadata, storyboardPromptDetails: promptDetails } };
-                        }
+                        if (item.id === scriptNode.id) return relinkedScriptNode;
+                        if (refreshedDraftById.has(item.id)) return refreshedDraftById.get(item.id) || item;
                         return exportedById.get(item.id) || item;
                     });
                     const existingIds = new Set(updated.map((item) => item.id));
@@ -3451,9 +3458,10 @@ function InfiniteCanvasPage() {
                 setConnections((prev) => {
                     const workspaceIds = new Set(nodesRef.current.filter((item) => isStoryboardAssetWorkspace(item) && item.metadata?.workspaceSourceNodeId === scriptNode.id).map((item) => item.id));
                     const next = [...workspaceNodes.map((workspaceNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: workspaceNode.id })), ...exportedNodes.map((assetNode) => ({ id: nanoid(), fromNodeId: scriptNode.id, toNodeId: assetNode.id }))];
-                    return addUniqueConnections(prev.filter((connection) => !workspaceIds.has(connection.fromNodeId) && !workspaceIds.has(connection.toNodeId)), next);
+                    const base = addUniqueConnections(prev.filter((connection) => !workspaceIds.has(connection.fromNodeId) && !workspaceIds.has(connection.toNodeId)), next);
+                    return refreshedDraftNodes.reduce((current, draftNode) => syncStoryboardVideoReferenceConnections(current, draftNode.id, draftNode.metadata?.storyboardVideoReferences || [], relinkLookupNodes), base);
                 });
-                message.success({ key: messageKey, content: `已更新角色、场景、道具工作区，共包含 ${exportedNodes.length} 个已生成资产节点` });
+                message.success({ key: messageKey, content: `已更新角色、场景、道具工作区，共包含 ${exportedNodes.length} 个已生成资产节点${refreshedDraftNodes.length ? `，并同步 ${refreshedDraftNodes.length} 个视频草稿的参考连线` : ""}` });
             } catch (error) {
                 message.error({ key: messageKey, content: error instanceof Error ? error.message : "导出资产失败" });
             } finally {
@@ -7863,6 +7871,16 @@ function mergeStoryboardVideoReferences(base: StoryboardVideoReference[], extra?
     return [extra, ...next];
 }
 
+function mergeStoryboardVideoReferenceList(base: StoryboardVideoReference[], extras: StoryboardVideoReference[]) {
+    return extras.reduce((current, item) => mergeStoryboardVideoReferences(current, item), base);
+}
+
+function mergeStoryboardAutomaticVideoReferences(existing: StoryboardVideoReference[], automatic: StoryboardVideoReference[]) {
+    const automaticMentions = new Set(automatic.map((item) => item.mention));
+    const preserved = existing.filter((item) => item.role === "firstFrame" || item.role === "lastFrame" || item.source === "asset" || item.source === "node" || !automaticMentions.has(item.mention));
+    return mergeStoryboardVideoReferenceList(automatic, preserved);
+}
+
 function storyboardGeneratedFirstFrameReference(rowIndex: number, nodeId: string, image: Pick<UploadedImage, "url" | "storageKey">): StoryboardVideoReference {
     const name = `第 ${rowIndex + 1} 镜合成首帧`;
     return { mention: `@${name}`, name, status: "bound", nodeId, url: image.url, storageKey: image.storageKey, role: "firstFrame", source: "script" };
@@ -7927,11 +7945,6 @@ function storyboardVideoSecondsForRow(templateSeconds: string | undefined, row?:
     return seconds || parseStoryboardRowSeconds(row) || "-1";
 }
 
-function mergeStoryboardSceneLockReferences(base: StoryboardVideoReference[], autoReferences: StoryboardVideoReference[]) {
-    const existing = new Set(base.map((item) => item.mention));
-    return [...base, ...autoReferences.filter((item) => item.role === "sceneLock" && !existing.has(item.mention))];
-}
-
 function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null, variantIndex?: number, resultNodeId?: string) {
     if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
     const sourceNode = nodes.find((node) => node.id === sourceNodeId);
@@ -7945,6 +7958,32 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
     });
 }
 
+function refreshStoryboardVideoDraftReferences(videoNode: CanvasNodeData, scriptNode: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const rowIndex = videoNode.metadata?.storyboardRowIndex;
+    if (rowIndex === undefined) return videoNode;
+    const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
+    const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
+    const automaticReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
+    const plannedTailFrame = Boolean(scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]?.usePreviousTailFrame);
+    const existingReferences = plannedTailFrame ? videoNode.metadata?.storyboardVideoReferences || [] : (videoNode.metadata?.storyboardVideoReferences || []).filter((item) => item.role !== "firstFrame");
+    const baseReferences = mergeStoryboardAutomaticVideoReferences(existingReferences, automaticReferences);
+    const previousTailFrame = plannedTailFrame ? previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections) : null;
+    const generatedFirstFrame = storyboardGeneratedFirstFrameForRow(scriptNode.id, rowIndex, nodes);
+    const generatedUsesTailFrame = !previousTailFrame || storyboardGeneratedFirstFrameUsesReference(scriptNode.id, rowIndex, previousTailFrame, nodes);
+    const references = storyboardPrioritizedVideoReferences(mergeStoryboardVideoReferences(mergeStoryboardVideoReferences(baseReferences, previousTailFrame), generatedFirstFrame), generatedUsesTailFrame);
+    const basePrompt = videoNode.metadata?.storyboardVideoFinalPrompt || videoNode.metadata?.prompt || detail?.videoMotionPrompt || "";
+    const linkedDetail = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes) : undefined;
+    return {
+        ...videoNode,
+        metadata: {
+            ...videoNode.metadata,
+            ...storyboardVideoVisualReferencePatch(basePrompt, references, videoNode.metadata?.storyboardVideoAudioReferences),
+            storyboardAssetMentions: assetReferences.map((item) => item.mention),
+            storyboardAssetMentionLinks: linkedDetail?.assetMentionLinks || [],
+        },
+    };
+}
+
 function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[], rowIndex: number, order: number, spec: { width: number; height: number }, generationConfig: AiConfig, workspacePosition: Position, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasNodeData {
     const existing = nodes.find((node) => node.metadata?.storyboardSourceNodeId === scriptNode.id && node.metadata?.storyboardRowIndex === rowIndex && node.type === CanvasNodeType.Video && !node.metadata?.content && !node.metadata?.storyboardVideoDraftNodeId);
     const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
@@ -7955,7 +7994,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const autoVideoReferences = storyboardVideoReferencesFromAssetReferences(assetReferences);
     const plannedTailFrame = Boolean(scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]?.usePreviousTailFrame);
     const existingVideoReferences = plannedTailFrame ? existing?.metadata?.storyboardVideoReferences || [] : (existing?.metadata?.storyboardVideoReferences || []).filter((item) => item.role !== "firstFrame");
-    const baseVideoReferences = existingVideoReferences.length ? mergeStoryboardSceneLockReferences(existingVideoReferences, autoVideoReferences) : autoVideoReferences;
+    const baseVideoReferences = mergeStoryboardAutomaticVideoReferences(existingVideoReferences, autoVideoReferences);
     const preservedAudioReferences = (existing?.metadata?.storyboardVideoAudioReferences || []).filter((item) => item.source !== "script" || item.role !== "voiceLock");
     const baseAudioReferences = mergeStoryboardAudioReferenceList(preservedAudioReferences, audioReferences);
     const previousTailFrame = plannedTailFrame ? previousStoryboardTailFrameReference(scriptNode.id, rowIndex, nodes, connections) : null;
