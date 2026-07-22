@@ -7495,6 +7495,61 @@ function storyboardVideoFinalPrompt(prompt: string, references: StoryboardVideoR
     return basePrompt.includes(marker) ? basePrompt.replace(marker, `${marker}\n${continuityPrompt}`).trim() : `${basePrompt}\n\n${continuityPrompt}`.trim();
 }
 
+function storyboardReferenceBindingLine(reference: StoryboardVideoReference) {
+    if (reference.role === "firstFrame") return `- ${reference.mention}：起始画面参考，锁定首帧构图、人物站位、动作起点、场景结构和光线。`;
+    if (reference.role === "lastFrame") return `- ${reference.mention}：结束画面参考，当前动作和运镜自然落到该构图。`;
+    if (reference.kind === "scene") return `- ${reference.mention}：唯一场景空间参考，锁定地点结构、陈设、材质和光线，不生成分屏或多宫格。`;
+    if (reference.kind === "character") return `- ${reference.mention}：人物身份参考，锁定该时期的脸型、年龄、发型、体态、服装和画风。`;
+    if (reference.kind === "prop") return `- ${reference.mention}：关键道具参考，锁定外观、材质、尺寸和使用连续性。`;
+    return `- ${reference.mention}：视觉参考素材，只控制与当前镜头对应的主体或画面连续性。`;
+}
+
+function stripStoryboardReferenceBindingLines(prompt: string) {
+    return prompt
+        .split("\n")
+        .filter((line) => !/^\s*-\s*@.*(?:起始画面参考|结束画面参考|唯一场景空间参考|人物身份参考|关键道具参考|视觉参考素材)/.test(line))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+function insertStoryboardReferenceBindings(prompt: string, marker: string, references: StoryboardVideoReference[]) {
+    if (!references.length) return prompt;
+    const markerIndex = prompt.indexOf(marker);
+    const nextMarkerIndex = markerIndex < 0 ? -1 : prompt.slice(markerIndex + marker.length).search(/\n【[^】]+】/);
+    const section = markerIndex < 0 ? "" : prompt.slice(markerIndex, nextMarkerIndex < 0 ? undefined : markerIndex + marker.length + nextMarkerIndex);
+    const missing = references.filter((reference) => !section.includes(reference.mention));
+    if (!missing.length) return prompt;
+    const lines = missing.map(storyboardReferenceBindingLine).join("\n");
+    if (markerIndex >= 0) return prompt.replace(marker, `${marker}\n${lines}`);
+    const bindingMarker = "【参考资产绑定】";
+    return prompt.includes(bindingMarker) ? prompt.replace(bindingMarker, `${bindingMarker}\n${lines}`) : `${bindingMarker}\n${lines}\n\n${prompt}`.trim();
+}
+
+function storyboardVideoPromptWithBoundReferences(basePrompt: string, references: StoryboardVideoReference[], knownAssetMentions: string[] = []) {
+    let prompt = stripStoryboardReferenceBindingLines(basePrompt);
+    const selectedMentions = new Set(references.map((reference) => reference.mention));
+    const sceneAliases = new Map(
+        references
+            .filter((reference) => reference.kind === "scene" && reference.mention.endsWith("-多角度锁定图"))
+            .map((reference) => [reference.mention.replace(/-多角度锁定图$/, ""), reference.mention]),
+    );
+    Array.from(sceneAliases.entries()).sort((first, second) => second[0].length - first[0].length).forEach(([baseMention, selectedMention]) => {
+        prompt = prompt.replace(new RegExp(`${escapeRegExp(baseMention)}(?!-多角度锁定图)`, "g"), selectedMention);
+    });
+    Array.from(new Set([...knownAssetMentions, ...sceneAliases.keys()]))
+        .sort((first, second) => second.length - first.length)
+        .forEach((mention) => {
+            if (!selectedMentions.has(mention) && !sceneAliases.has(mention)) prompt = prompt.replace(new RegExp(escapeRegExp(mention), "g"), mention.replace(/^@/, ""));
+        });
+    prompt = insertStoryboardReferenceBindings(prompt, "【场景设定】", references.filter((reference) => reference.kind === "scene"));
+    prompt = insertStoryboardReferenceBindings(prompt, "【人物设定】", references.filter((reference) => reference.kind === "character"));
+    prompt = insertStoryboardReferenceBindings(prompt, "【站位设定】", references.filter((reference) => reference.kind === "prop"));
+    prompt = insertStoryboardReferenceBindings(prompt, "【起始画面】", references.filter((reference) => reference.role === "firstFrame"));
+    prompt = insertStoryboardReferenceBindings(prompt, "【连续性与稳定约束】", references.filter((reference) => reference.role === "lastFrame"));
+    return insertStoryboardReferenceBindings(prompt, "【参考资产绑定】", references.filter((reference) => !reference.kind && reference.role !== "firstFrame" && reference.role !== "lastFrame"));
+}
+
 function storyboardVideoAudioContinuityPrompt(references?: StoryboardAudioReference[]) {
     const voiceLocks = (references || []).filter((item) => item.role === "voiceLock");
     if (!voiceLocks.length) return "";
@@ -7912,12 +7967,13 @@ function storyboardGeneratedFirstFrameUsesReference(sourceNodeId: string, rowInd
     return Boolean(target && frame?.metadata?.references?.includes(target));
 }
 
-function storyboardVideoVisualReferencePatch(basePrompt: string, references: StoryboardVideoReference[], audioReferences?: StoryboardAudioReference[]): Partial<CanvasNodeMetadata> {
+function storyboardVideoVisualReferencePatch(basePrompt: string, references: StoryboardVideoReference[], audioReferences?: StoryboardAudioReference[], knownAssetMentions?: string[]): Partial<CanvasNodeMetadata> {
+    const alignedPrompt = storyboardVideoPromptWithBoundReferences(basePrompt, references, knownAssetMentions);
     return {
         references: references.map((item) => item.storageKey || item.url).filter((url): url is string => Boolean(url)),
         storyboardAssetReferenceNodeIds: references.map((item) => item.nodeId).filter((id): id is string => Boolean(id)),
         storyboardVideoReferences: references,
-        storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(storyboardVideoFinalPrompt(basePrompt, references), audioReferences),
+        storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(storyboardVideoFinalPrompt(alignedPrompt, references), audioReferences),
     };
 }
 
@@ -7977,7 +8033,7 @@ function refreshStoryboardVideoDraftReferences(videoNode: CanvasNodeData, script
         ...videoNode,
         metadata: {
             ...videoNode.metadata,
-            ...storyboardVideoVisualReferencePatch(basePrompt, references, videoNode.metadata?.storyboardVideoAudioReferences),
+            ...storyboardVideoVisualReferencePatch(basePrompt, references, videoNode.metadata?.storyboardVideoAudioReferences, detail?.assetMentions),
             storyboardAssetMentions: assetReferences.map((item) => item.mention),
             storyboardAssetMentionLinks: linkedDetail?.assetMentionLinks || [],
         },
@@ -8013,7 +8069,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const finalPromptBase = (existing?.metadata?.storyboardVideoFinalPromptCustomized || existingBasePrompt === prompt) && existingFinalPrompt
         ? existingFinalPrompt
         : prompt;
-    const visualReferencePatch = storyboardVideoVisualReferencePatch(finalPromptBase, finalVideoReferences, baseAudioReferences);
+    const visualReferencePatch = storyboardVideoVisualReferencePatch(finalPromptBase, finalVideoReferences, baseAudioReferences, detail?.assetMentions);
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,
@@ -8435,7 +8491,13 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
         if (asset.kind === "scene" && scene) return asset.id === scene.id;
         return true;
     });
-    return { ...normalized, assetMentions: Array.from(new Set([...required.map((asset) => `@${asset.name}`), ...retainedMentions])) };
+    const assetMentions = Array.from(new Set([...required.map((asset) => `@${asset.name}`), ...retainedMentions]));
+    const boundAssets = assetMentions.map((mention) => assets.find((asset) => `@${asset.name}` === mention)).filter((asset): asset is StoryboardAsset => Boolean(asset));
+    const storyboardPrompt = boundAssets.filter((asset) => !normalized.storyboardPrompt.includes(`@${asset.name}`)).length
+        ? `参考资产绑定：${boundAssets.map((asset) => `@${asset.name} ${storyboardAssetRoleHint(asset)}`).join("；")}\n\n${normalized.storyboardPrompt}`.trim()
+        : normalized.storyboardPrompt;
+    const videoReferences = boundAssets.map((asset): StoryboardVideoReference => ({ mention: `@${asset.name}`, name: asset.name, status: "bound", assetId: asset.id, kind: asset.kind, role: asset.kind === "scene" ? "sceneLock" : "reference", source: "script" }));
+    return { ...normalized, storyboardPrompt, videoMotionPrompt: storyboardVideoPromptWithBoundReferences(normalized.videoMotionPrompt, videoReferences, assets.map((asset) => `@${asset.name}`)), assetMentions };
 }
 
 function requiredAssetPriority(asset: StoryboardAsset) {
