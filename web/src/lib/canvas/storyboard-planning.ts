@@ -147,31 +147,31 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
 
 export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     return shots.flatMap((shot, index) => {
-        const plan = shot.plan;
-        const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
-        const actionChain = (plan.actionBeats || []).join("；");
-        const chainContains = (value?: string) => !value?.trim() || actionChain.includes(value.trim().slice(0, Math.min(8, value.trim().length)));
-        const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
-        const issues = [
-            plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
-            !plan.goal ? "缺少当前可见目标" : "",
-            !plan.obstacle ? "缺少可见阻力或压力" : "",
-            !plan.stakes ? "缺少失败代价" : "",
-            !plan.tactic ? "缺少人物采取的具体策略" : "",
-            (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
-            (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
-            !chainContains(plan.obstacleReaction) ? "阻力反作用未压缩进2-3个动作节拍" : "",
-            !chainContains(plan.turningAction) ? "动作转折未压缩进2-3个动作节拍" : "",
-            narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
-            !plan.obstacleReaction ? "缺少阻力反作用" : "",
-            !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
-            !plan.result ? "缺少可见结果" : "",
-            !plan.valueShift ? "缺少价值变化" : "",
-            !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
-            abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
-        ].filter(Boolean);
+        const issues = storyboardShotQualityIssuesForShot(shot);
         return issues.length ? [`片段${index + 1}：${issues.join("、")}`] : [];
     });
+}
+
+export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) {
+    const plan = shot.plan;
+    const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
+    const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
+    return [
+        plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
+        !plan.goal ? "缺少当前可见目标" : "",
+        !plan.obstacle ? "缺少可见阻力或压力" : "",
+        !plan.stakes ? "缺少失败代价" : "",
+        !plan.tactic ? "缺少人物采取的具体策略" : "",
+        (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
+        (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
+        narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
+        !plan.obstacleReaction ? "缺少阻力反作用" : "",
+        !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
+        !plan.result ? "缺少可见结果" : "",
+        !plan.valueShift ? "缺少价值变化" : "",
+        !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
+        abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
+    ].filter(Boolean);
 }
 
 export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], scope: StoryboardProductionScope = "series") {
@@ -205,17 +205,18 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
             chapter.shotIndexes.push(index);
             shot.plan.chapterId = chapter.id;
             shot.plan.chapterTitle = chapter.title;
-            shot.plan.renderMode = "video";
+            if (shot.plan.renderMode !== "still") shot.plan.renderMode = "video";
         });
-        chapter.durationSeconds = chapter.shotIndexes.length * 15;
-        chapter.targetClipCount = chapter.shotIndexes.length;
+        const chapterVideoCount = chapter.shotIndexes.filter((index) => shots[index].plan.renderMode === "video").length;
+        chapter.durationSeconds = chapterVideoCount * 15;
+        chapter.targetClipCount = chapterVideoCount;
         previousBoundary = boundary;
     });
     shots.forEach((shot, index) => {
         const previous = shots[index - 1]?.plan;
         shot.plan.usePreviousTailFrame = Boolean(shot.plan.renderMode === "video" && previous?.renderMode === "video" && shot.plan.continuityGroupId && previous.chapterId === shot.plan.chapterId && previous.continuityGroupId === shot.plan.continuityGroupId && shot.plan.transition === "continue");
     });
-    return { shots, chapters, videoCount: shots.length, stillCount: 0 };
+    return { shots, chapters, videoCount: shots.filter((shot) => shot.plan.renderMode === "video").length, stillCount: shots.filter((shot) => shot.plan.renderMode === "still").length };
 }
 
 export function storyboardSingleEpisodeBeatTarget() {

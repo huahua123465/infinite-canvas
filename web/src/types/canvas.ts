@@ -182,6 +182,7 @@ export type StoryboardShotPlan = {
     obstacleReaction?: string;
     turningAction?: string;
     result?: string;
+    qualityError?: string;
     plotRhythm?: StoryboardDramaturgyPhase["plotRhythm"];
     emotionRhythm?: StoryboardDramaturgyPhase["emotionRhythm"];
     valueShift?: string;

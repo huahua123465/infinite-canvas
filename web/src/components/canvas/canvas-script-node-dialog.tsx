@@ -587,9 +587,10 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                 })}
                                 <td className="border-b border-[#303030] px-3 py-3">
                                     <div className="mb-2 text-center text-[11px]">
-                                        <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
-                                            {plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
+                                        <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.qualityError ? "bg-amber-500/15 text-amber-200" : plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
+                                            {plans[String(rowIndex)]?.qualityError ? "待修正" : plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
                                         </span>
+                                        {plans[String(rowIndex)]?.qualityError ? <div className="mt-1 line-clamp-2 text-left text-[10px] text-amber-200/85" title={plans[String(rowIndex)]?.qualityError}>原因：{plans[String(rowIndex)]?.qualityError}</div> : null}
                                         {plans[String(rowIndex)]?.chapterTitle ? <div className="mt-1 truncate text-[#858585]" title={plans[String(rowIndex)]?.chapterTitle}>{plans[String(rowIndex)]?.chapterTitle}</div> : null}
                                         {plans[String(rowIndex)]?.dramaticFunction ? <div className="mt-1 truncate font-semibold text-amber-200/80" title={storyboardShotDramaturgyTitle(plans[String(rowIndex)])}>{dramaticFunctionLabel(plans[String(rowIndex)]?.dramaticFunction)}</div> : null}
                                         {plans[String(rowIndex)]?.visualBeatIds?.length ? <div className="mt-1 truncate text-[10px] text-emerald-200/70" title={storyboardShotFactRoleTitle(plans[String(rowIndex)])}>1 个主要画面 · {plans[String(rowIndex)]?.voiceoverBeatIds?.length || 0} 个旁白事实</div> : null}
