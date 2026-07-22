@@ -583,8 +583,9 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                         <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} h-px border-b border-r border-[#303030] align-top`}>
                                             {colIndex === 8 ? (
                                                 <button className="block h-full min-h-[78px] w-full overflow-y-auto px-3 py-3 text-left leading-5 text-[#bdbdbd] outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
-                                                    <span className="line-clamp-3">{detail?.storyboardPrompt || row[colIndex] || "点击打开合成提示词"}</span>
-                                                    {detail?.videoMotionPrompt ? <span className="mt-2 inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
+                                                    <span className="block text-[10px] font-semibold text-cyan-200">首帧提示词</span>
+                                                    <span className="line-clamp-2">{detail?.storyboardPrompt || row[colIndex] || "点击打开合成提示词"}</span>
+                                                    {detail?.videoMotionPrompt ? <><span className="mt-2 block text-[10px] font-semibold text-emerald-200">视频运动初稿</span><span className="line-clamp-2 text-emerald-100/80">{detail.videoMotionPrompt}</span></> : null}
                                                 </button>
                                             ) : (
                                                 <textarea readOnly={colIndex === 5 && narrationLocked} title={colIndex === 5 && narrationLocked ? "本章旁白已锁定，先在旁白主稿区解锁" : undefined} className={`block h-full min-h-[78px] w-full resize-none overflow-y-auto bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""} ${colIndex === 5 && narrationLocked ? "cursor-not-allowed opacity-65" : ""}`} style={{ color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
@@ -706,9 +707,10 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                         <button className="block min-h-24 w-full px-3 py-3 text-left leading-5 outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
                                             {hasPrompt ? (
                                                 <>
-                                                    <span className="line-clamp-3 text-[#e7e7e7]">{detail?.storyboardPrompt}</span>
+                                                    <span className="block text-[10px] font-semibold text-cyan-200">首帧提示词</span>
+                                                    <span className="line-clamp-2 text-[#e7e7e7]">{detail?.storyboardPrompt}</span>
+                                                    {detail?.videoMotionPrompt ? <><span className="mt-2 block text-[10px] font-semibold text-emerald-200">视频运动初稿（进入最终提交提示词确认）</span><span className="line-clamp-2 text-emerald-100/80">{detail.videoMotionPrompt}</span></> : null}
                                                     <span className="mt-2 flex flex-wrap gap-1.5">
-                                                        {detail?.videoMotionPrompt ? <span className="inline-flex rounded bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">已生成视频运动提示词</span> : null}
                                                         {boundCount ? <span className="inline-flex rounded bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">已绑定 {boundCount} 个资产</span> : null}
                                                         {missingCount ? <span className="inline-flex rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-100">未绑定 {missingCount} 个</span> : null}
                                                     </span>
@@ -813,14 +815,14 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                 <div className="thin-scrollbar min-h-0 flex-1 overflow-auto px-6 py-5">
                     <AssetMentionStrip mentions={mentions} links={mentionLinks} />
                     <PromptBlock
-                        title="分镜提示词"
-                        hint="用于首帧图、分镜图和画面生成"
+                        title="首帧提示词"
+                        hint="用于首帧图和分镜图；视频运动初稿会进入最终提交提示词确认"
                         value={draft.storyboardPrompt}
                         onChange={(storyboardPrompt) => updateDraft({ storyboardPrompt })}
                     />
                     <PromptBlock
-                        title="视频运动提示词"
-                        hint="用于待审核视频节点的运动初稿；最终发送内容在视频节点确认页确认"
+                        title="视频运动初稿"
+                        hint="用于待审核视频节点的运动初稿；最终发送内容在视频节点的最终提交提示词页确认"
                         value={draft.videoMotionPrompt}
                         tall
                         onChange={(videoMotionPrompt) => updateDraft({ videoMotionPrompt })}

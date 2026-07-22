@@ -284,6 +284,7 @@ export type CanvasNodeMetadata = {
     storyboardVideoReferences?: StoryboardVideoReference[];
     storyboardVideoAudioReferences?: StoryboardAudioReference[];
     storyboardVideoFinalPrompt?: string;
+    storyboardVideoFinalPromptCustomized?: boolean;
     storyboardVideoDraftNodeId?: string;
     storyboardVideoVariantIndex?: number;
     storyboardVideoLatestResultNodeId?: string;

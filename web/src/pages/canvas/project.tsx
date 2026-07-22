@@ -2436,29 +2436,44 @@ function InfiniteCanvasPage() {
     }, []);
 
     const updateStoryboardPromptDetail = useCallback((nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => {
-        setNodes((prev) =>
-            prev.map((node) => {
-                if (node.id !== nodeId) return node;
-                const rows = parseStoryboardRows(node.metadata?.storyboardRows).map((row) => [...row]);
-                const linkedDetail = linkStoryboardPromptAssets(node, completeStoryboardPromptDetailAssets(node, rows, rowIndex, detail), prev);
-                if (rows[rowIndex]) rows[rowIndex][8] = linkedDetail.storyboardPrompt || linkedDetail.videoMotionPrompt;
-                const normalized = renumberStoryboardRowsForCanvas(rows);
-                return {
-                    ...node,
-                    metadata: {
-                        ...node.metadata,
-                        content: storyboardRowsToMarkdownForCanvas(normalized),
-                        storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
-                        storyboardStep: "prompts",
-                        storyboardPromptDetails: {
-                            ...(node.metadata?.storyboardPromptDetails || {}),
-                            [String(rowIndex)]: linkedDetail,
-                        },
-                        storyboardPromptErrors: Object.fromEntries(Object.entries(node.metadata?.storyboardPromptErrors || {}).filter(([key]) => key !== String(rowIndex))),
+        setNodes((prev) => {
+            const scriptNode = prev.find((node) => node.id === nodeId);
+            if (!scriptNode) return prev;
+            const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows).map((row) => [...row]);
+            const linkedDetail = linkStoryboardPromptAssets(scriptNode, completeStoryboardPromptDetailAssets(scriptNode, rows, rowIndex, detail), prev);
+            if (rows[rowIndex]) rows[rowIndex][8] = linkedDetail.storyboardPrompt || linkedDetail.videoMotionPrompt;
+            const normalized = renumberStoryboardRowsForCanvas(rows);
+            const nextScriptNode = {
+                ...scriptNode,
+                metadata: {
+                    ...scriptNode.metadata,
+                    content: storyboardRowsToMarkdownForCanvas(normalized),
+                    storyboardRows: [STORYBOARD_COLUMNS, ...normalized],
+                    storyboardStep: "prompts" as const,
+                    storyboardPromptDetails: {
+                        ...(scriptNode.metadata?.storyboardPromptDetails || {}),
+                        [String(rowIndex)]: linkedDetail,
                     },
-                };
-            }),
-        );
+                    storyboardPromptErrors: Object.fromEntries(Object.entries(scriptNode.metadata?.storyboardPromptErrors || {}).filter(([key]) => key !== String(rowIndex))),
+                },
+            };
+            const syncedAssetPatch = {
+                storyboardAssetMentions: linkedDetail.assetMentions || [],
+                storyboardAssetMentionLinks: linkedDetail.assetMentionLinks || [],
+                storyboardPromptSource: linkedDetail.promptSource,
+                storyboardPromptSkillRoot: linkedDetail.promptSkillRoot,
+            };
+            return prev.map((node) => {
+                if (node.id === nodeId) return nextScriptNode;
+                if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== nodeId || node.metadata.storyboardRowIndex !== rowIndex || node.metadata.content || node.metadata.storyboardVideoDraftNodeId) return node;
+                const basePrompt = (linkedDetail.videoMotionPrompt || linkedDetail.storyboardPrompt || "").trim();
+                if (node.metadata.storyboardVideoFinalPromptCustomized) return { ...node, metadata: { ...node.metadata, ...syncedAssetPatch, prompt: basePrompt } };
+                const references = node.metadata.storyboardVideoReferences || [];
+                const audioReferences = node.metadata.storyboardVideoAudioReferences || [];
+                const finalPrompt = storyboardVideoFinalPromptWithAudio(storyboardVideoFinalPrompt(basePrompt, references), audioReferences);
+                return { ...node, metadata: { ...node.metadata, ...syncedAssetPatch, prompt: basePrompt, storyboardVideoFinalPrompt: finalPrompt } };
+            });
+        });
     }, []);
 
     const updateStoryboardPromptError = useCallback((nodeId: string, rowIndex: number, error: string) => {
@@ -3368,16 +3383,9 @@ function InfiniteCanvasPage() {
             let failed = 0;
             try {
                 const promptInstruction = await buildStoryboardFinalPromptInstruction();
-                let conservativeFallback = false;
                 for (const index of indexes) {
                     const currentIndex = indexes.indexOf(index) + 1;
                     setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "准备当前片段", status: "running" });
-                    if (conservativeFallback) {
-                        setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "生成保守兜底提示词", status: "running" });
-                        updateStoryboardPromptDetail(scriptNode.id, index, buildStoryboardConservativePromptDetail(scriptNode, rows, index));
-                        completed += 1;
-                        continue;
-                    }
                     let detail: StoryboardPromptDetail | null = null;
                     let lastError = "合成提示词失败";
                     let safetyRejects = 0;
@@ -3391,7 +3399,7 @@ function InfiniteCanvasPage() {
                             const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                             setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "校验提示词结构与动作", attempt: attempt + 1, status: "running" });
                             detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
-                            assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
+                            assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index), storyboardAllowsMultipleCharacterStagesForRow(scriptNode, rows, index));
                             assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
                         } catch (error) {
                             if (isGenerationCanceled(error)) throw error;
@@ -3404,7 +3412,6 @@ function InfiniteCanvasPage() {
                             if (isSafetyGenerationError(error)) {
                                 safetyRejects += 1;
                                 if (safetyRejects >= 2 || attempt === 2) {
-                                    conservativeFallback = true;
                                     detail = buildStoryboardConservativePromptDetail(scriptNode, rows, index);
                                     continue;
                                 }
@@ -3416,7 +3423,7 @@ function InfiniteCanvasPage() {
                                     detail = parseStoryboardPromptDetailAnswer(repaired, scriptNode.metadata?.storyboardAssets || []);
                                     const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
                                     detail = { ...detail, videoMotionPrompt: normalizeStoryboardVideoPromptLayout(detail.videoMotionPrompt, duration) };
-                                    assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index));
+                                    assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index), storyboardAllowsMultipleCharacterStagesForRow(scriptNode, rows, index));
                                     assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
                                 } catch (repairError) {
                                     if (isGenerationCanceled(repairError)) throw repairError;
@@ -7741,6 +7748,11 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const videoQuality = customConfig?.vquality || generationConfig.vquality;
     const videoGenerateAudio = customConfig?.generateAudio ?? generationConfig.videoGenerateAudio ?? "true";
     const videoWatermark = customConfig?.watermark || generationConfig.videoWatermark;
+    const existingFinalPrompt = existing?.metadata?.storyboardVideoFinalPrompt?.trim() || "";
+    const existingBasePrompt = existing?.metadata?.prompt?.trim() || "";
+    const finalPrompt = (existing?.metadata?.storyboardVideoFinalPromptCustomized || existingBasePrompt === prompt) && existingFinalPrompt
+        ? existingFinalPrompt
+        : storyboardVideoFinalPrompt(prompt, finalVideoReferences);
     return {
         id: existing?.id || `storyboard-video-${scriptNode.id}-${rowIndex}`,
         type: CanvasNodeType.Video,
@@ -7767,7 +7779,7 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
             storyboardAssetReferenceNodeIds: assetReferences.map((item) => item.node?.id).filter((id): id is string => Boolean(id)),
             storyboardVideoReferences: finalVideoReferences,
             storyboardVideoAudioReferences: baseAudioReferences,
-            storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(existing?.metadata?.storyboardVideoFinalPrompt || storyboardVideoFinalPrompt(prompt, finalVideoReferences), baseAudioReferences),
+            storyboardVideoFinalPrompt: storyboardVideoFinalPromptWithAudio(finalPrompt, baseAudioReferences),
             storyboardPromptSource: detail?.promptSource,
             storyboardPromptSkillRoot: detail?.promptSkillRoot,
         },
@@ -8141,10 +8153,10 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const episodeAssets = assets.filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
-    const relevant = storyboardRelevantPromptAssets(episodeAssets, storyboardVisualSourceBeats(sourceBeats, shotPlan), rows[rowIndex] || [], shotPlan);
+    const visualSourceBeats = storyboardVisualSourceBeats(sourceBeats, shotPlan);
+    const relevant = storyboardRelevantPromptAssets(episodeAssets, visualSourceBeats, rows[rowIndex] || [], shotPlan);
     const characterNames = new Set<string>();
-    const evidence = [rows[rowIndex]?.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.event, beat.emotion, ...beat.characters])].filter(Boolean).join(" ");
-    const allowsMultiStageSamePerson = /(同框|同时|出生|女婴|婴儿|新生儿|接生|抱持|照护|多个时期|回忆|对照)/.test(evidence);
+    const allowsMultiStageSamePerson = storyboardAllowsMultipleCharacterStages(visualSourceBeats, rows[rowIndex] || [], shotPlan);
     const requiredCharacters = relevant.filter((asset) => {
         if (asset.kind !== "character") return false;
         const name = asset.baseName || asset.name;
@@ -8180,6 +8192,7 @@ function storyboardAssetRoleHint(asset: StoryboardAsset) {
 
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
+    const currentStages = [shotPlan?.timeStage, ...sourceBeats.map((beat) => beat.timeStage)].filter((stage): stage is string => Boolean(stage));
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
     const locations = sourceBeats.map((beat) => beat.location).filter(Boolean);
     const ranked = assets
@@ -8187,15 +8200,17 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
             const identityMatch = asset.kind === "character" && [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
             const sceneMatch = asset.kind === "scene" && (evidence.includes(asset.name) || locations.some((location) => asset.name.includes(location) || location.includes(asset.name) || asset.description.includes(location)));
             const propMatch = asset.kind === "prop" && evidence.includes(asset.name);
-            const stateMatch = !asset.lifeStage || evidence.includes(asset.lifeStage) || Boolean(shotPlan?.timeStage && (shotPlan.timeStage.includes(asset.lifeStage) || asset.lifeStage.includes(shotPlan.timeStage)));
+            const lifeStage = asset.lifeStage;
+            const stageMatch = asset.kind === "character" && Boolean(lifeStage && (evidence.includes(lifeStage) || currentStages.some((stage) => stage.includes(lifeStage) || lifeStage.includes(stage))));
+            const stageScore = asset.kind !== "character" ? 0 : stageMatch ? 4 : lifeStage ? 0 : 1;
             const matchScore = (identityMatch ? 4 : 0) + (sceneMatch || propMatch ? 3 : 0);
-            return { asset, score: matchScore ? matchScore + (stateMatch ? 2 : 0) + requiredAssetPriority(asset) : 0 };
+            return { asset, score: matchScore ? matchScore + stageScore + requiredAssetPriority(asset) : 0 };
         })
         .filter((item) => item.score > 1)
         .sort((first, second) => second.score - first.score)
         .map((item) => item.asset);
     const selectedCharacterBases = new Set<string>();
-    const allowsMultiStageSamePerson = /(同框|同时|出生|女婴|婴儿|新生儿|接生|抱持|照护|多个时期|回忆|对照)/.test(evidence);
+    const allowsMultiStageSamePerson = storyboardAllowsMultipleCharacterStages(sourceBeats, row, shotPlan);
     return ranked
         .filter((asset) => {
             if (asset.kind !== "character") return true;
@@ -8206,6 +8221,18 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
             return true;
         })
         .slice(0, 6);
+}
+
+function storyboardAllowsMultipleCharacterStagesForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {
+    const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+    const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
+    const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
+    return storyboardAllowsMultipleCharacterStages(storyboardVisualSourceBeats(sourceBeats, shotPlan), rows[rowIndex] || [], shotPlan);
+}
+
+function storyboardAllowsMultipleCharacterStages(sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
+    const evidence = [row[2], shotPlan?.timeStage, shotPlan?.goal, shotPlan?.actionBeats?.join(" "), shotPlan?.result, ...sourceBeats.flatMap((beat) => [beat.timeStage, beat.event, beat.emotion, ...beat.characters])].filter(Boolean).join(" ");
+    return /(回忆对照|今昔对照|成长对照|出生与成长.{0,8}(?:对照|同框|同时可见)|同一人物.{0,16}(?:同框|同时可见)|(?:不同年龄|不同阶段|多个时期|多时期).{0,16}(?:对照|同框|同时可见)|(?:同框|同时可见).{0,16}(?:不同年龄|不同阶段|多个时期|多时期))/.test(evidence);
 }
 
 function storyboardSingleScenePromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[]) {
@@ -8273,7 +8300,7 @@ function parseStoryboardPromptDetailAnswer(content: string, assets: StoryboardAs
     return normalizeStoryboardPromptDetailAssets({ storyboardPrompt: storyboardPrompt || videoMotionPrompt, videoMotionPrompt: videoMotionPrompt || storyboardPrompt, assetMentions: Array.from(new Set(assetMentions)) }, assets);
 }
 
-function assertStoryboardVideoPromptFormat(prompt: string, duration: number, detail?: StoryboardPromptDetail, assets: StoryboardAsset[] = [], expectedSpeech?: ReturnType<typeof storyboardSpeechParts>) {
+function assertStoryboardVideoPromptFormat(prompt: string, duration: number, detail?: StoryboardPromptDetail, assets: StoryboardAsset[] = [], expectedSpeech?: ReturnType<typeof storyboardSpeechParts>, allowsMultipleCharacterStages = false) {
     const sections = ["生成规格", "参考资产绑定", "叙事目标", "起始画面", `${duration}秒时间轴`, "镜头运动", "光线与画面质感", "声音时间轴", "连续性与稳定约束"];
     const missing = sections.filter((section) => !prompt.includes(`【${section}】`));
     if (missing.length) throw new Error(`视频运动提示词格式不完整：缺少${missing.join("、")}`);
@@ -8303,10 +8330,10 @@ function assertStoryboardVideoPromptFormat(prompt: string, duration: number, det
     if (!/稳定|保持|停住|静止|落点|不再/.test(finalLine)) throw new Error("视频运动提示词格式不完整：最后1-2秒必须只保持稳定落点，不得继续增加剧情");
     const sceneMentions = assets.filter((asset) => asset.kind === "scene" && ((detail?.assetMentions || []).includes(`@${asset.name}`) || prompt.includes(`@${asset.name}`)));
     if (new Set(sceneMentions.map((asset) => asset.id)).size > 1) throw new Error("视频运动提示词格式不完整：普通片段最多只能绑定一个主要场景资产");
-    assertStoryboardAssetRoleConsistency(prompt, detail, assets);
+    assertStoryboardAssetRoleConsistency(prompt, detail, assets, allowsMultipleCharacterStages);
 }
 
-function assertStoryboardAssetRoleConsistency(prompt: string, detail: StoryboardPromptDetail | undefined, assets: StoryboardAsset[]) {
+function assertStoryboardAssetRoleConsistency(prompt: string, detail: StoryboardPromptDetail | undefined, assets: StoryboardAsset[], allowsMultipleCharacterStages: boolean) {
     const mentions = new Set([...(detail?.assetMentions || []), ...assets.filter((asset) => prompt.includes(`@${asset.name}`)).map((asset) => `@${asset.name}`)]);
     const characterAssets = assets.filter((asset) => asset.kind === "character" && mentions.has(`@${asset.name}`));
     const byBaseName = new Map<string, StoryboardAsset[]>();
@@ -8316,8 +8343,7 @@ function assertStoryboardAssetRoleConsistency(prompt: string, detail: Storyboard
     });
     for (const [baseName, candidates] of byBaseName) {
         const stages = new Set(candidates.map((asset) => asset.lifeStage || asset.name));
-        const hasInfantRole = candidates.some((asset) => /(出生|婴儿|新生儿|宝宝|幼儿|幼年)/.test(`${asset.name} ${asset.lifeStage || ""}`));
-        if (stages.size > 1 && !/回忆|对照|同框|出生与成长|多个时期/.test(prompt) && !(hasInfantRole && /被抱|被照护|接生|婴儿|新生儿|女婴/.test(prompt))) {
+        if (stages.size > 1 && !allowsMultipleCharacterStages) {
             throw new Error(`视频运动提示词格式不完整：人物“${baseName}”同时绑定了多个年龄/时期资产，当前镜头必须只选择一个时期`);
         }
     }
@@ -8340,7 +8366,7 @@ function assertStoryboardPromptActionCoverage(prompt: string, plan?: StoryboardS
     const required = [plan.goal, plan.tactic, ...(plan.actionBeats || []), plan.obstacleReaction, plan.turningAction, plan.result].filter((value): value is string => Boolean(value && value.trim()));
     const missing = required.filter((value) => !timeline.includes(value.trim().slice(0, Math.min(10, value.trim().length))));
     if (missing.length >= Math.max(2, Math.ceil(required.length * 0.45))) throw new Error("视频运动提示词格式不完整：四段时间轴没有继承第一步场景卡的动作链");
-    const finalRange = timeline.match(/(?:^|\n)\s*\d+(?:\.\d+)?\s*[-—–~至]\s*\d+(?:\.\d+)?\s*秒\s*[：:]([^\n]+)/)?.[1] || "";
+    const finalRange = Array.from(timeline.matchAll(/(?:^|\n)\s*\d+(?:\.\d+)?\s*[-—–~至]\s*\d+(?:\.\d+)?\s*秒\s*[：:]([^\n]+)/g)).at(-1)?.[1] || "";
     if (plan.result && !finalRange.includes(plan.result.trim().slice(0, Math.min(10, plan.result.trim().length)))) throw new Error("视频运动提示词格式不完整：最后一段没有落到场景卡可见结果");
 }
 

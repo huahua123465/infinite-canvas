@@ -1650,8 +1650,8 @@ function StoryboardVideoPromptPreviewModal({
         saveHintTimerRef.current = window.setTimeout(() => setSaveHint(""), 1800);
     };
 
-    const saveDraft = (config: AiConfig, finalPrompt: string, nextReferences = draftReferences, configCustomized = false) => {
-        onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()), ...(configCustomized ? { storyboardVideoConfigCustomized: true } : {}) });
+    const saveDraft = (config: AiConfig, finalPrompt: string, nextReferences = draftReferences, configCustomized = false, finalPromptCustomized = false) => {
+        onConfigChange({ ...storyboardVideoReferencePatch(nextReferences), ...storyboardVideoConfigPatch(config, prompt, finalPrompt.trim()), ...(configCustomized ? { storyboardVideoConfigCustomized: true } : {}), ...(finalPromptCustomized ? { storyboardVideoFinalPromptCustomized: true } : {}) });
         markAutoSaved();
     };
 
@@ -1687,7 +1687,7 @@ function StoryboardVideoPromptPreviewModal({
 
     const updateDraftFinalPrompt = (value: string) => {
         setDraftFinalPrompt(value);
-        saveDraft(draftConfig, value, draftReferences);
+        saveDraft(draftConfig, value, draftReferences, false, true);
     };
 
     const toggleReference = (reference: StoryboardVideoReference) => {
@@ -1719,7 +1719,7 @@ function StoryboardVideoPromptPreviewModal({
     return (
         <Modal
             className="storyboard-video-prompt-modal"
-            title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜最终生成提示词`} onClose={onClose} />}
+            title={<CanvasModalTitle title={`第 ${(node.metadata?.storyboardRowIndex || 0) + 1} 镜最终提交提示词`} onClose={onClose} />}
             open={open}
             onCancel={onClose}
             footer={null}
@@ -1741,7 +1741,7 @@ function StoryboardVideoPromptPreviewModal({
                 <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pb-4 pr-2">
                     <div className="space-y-5">
                         <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-600 dark:text-blue-200">
-                            卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终生成提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
+                            卡片上方只是截断预览；点击这里的“生成视频”时，以本页最终提交提示词和下方参考图数组为准。@ 名称用于绑定和识别资产，传给模型时会变成参考图 + 文本提示词。
                         </div>
                         {node.metadata?.storyboardPromptSource ? <div title={node.metadata.storyboardPromptSkillRoot || STORYBOARD_PROMPT_SOURCE_TEXT[node.metadata.storyboardPromptSource]} className={`rounded-xl border px-3 py-2 text-xs leading-5 ${node.metadata.storyboardPromptSource === "skill" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200" : node.metadata.storyboardPromptSource === "fallback" ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200" : "border-stone-300 bg-stone-100 text-stone-600 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300"}`}>提示词来源：<span className="font-semibold">{STORYBOARD_PROMPT_SOURCE_TEXT[node.metadata.storyboardPromptSource]}</span>{node.metadata.storyboardPromptSource === "fallback" ? "，建议检查内容安全改写后再生成视频。" : ""}</div> : null}
                         <div className={`rounded-xl border px-3 py-2 text-xs leading-5 ${modalFirstFrameSource ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"}`}>
@@ -1817,7 +1817,7 @@ function StoryboardVideoPromptPreviewModal({
                 ) : null}
                 <section>
                     <div className="mb-2 flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold">最终生成提示词</div>
+                        <div className="text-sm font-semibold">最终提交提示词</div>
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-stone-500">文字与参考图独立保存，删除 @ 名称不会移除已选图片</span>
                             <Button type="text" size="small" icon={<Expand className="size-3.5" />} onClick={() => setPromptExpanded(true)}>放大查看</Button>
@@ -1831,7 +1831,7 @@ function StoryboardVideoPromptPreviewModal({
                         onChange={updateDraftFinalPrompt}
                         highlightLabels={false}
                         className="thin-scrollbar h-40 w-full resize-y rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-stone-700 dark:bg-stone-950/60 dark:text-stone-200"
-                        placeholder="请输入最终发送给视频模型的提示词"
+                        placeholder="请输入最终提交给视频模型的提示词"
                         data-canvas-no-zoom
                         onPointerDown={(event) => event.stopPropagation()}
                         onMouseDown={(event) => event.stopPropagation()}
@@ -1859,7 +1859,7 @@ function StoryboardVideoPromptPreviewModal({
             </div>
             <Modal
                 open={promptExpanded}
-                title="最终生成提示词预览"
+                title="最终提交提示词预览"
                 onCancel={() => setPromptExpanded(false)}
                 footer={null}
                 width={980}
