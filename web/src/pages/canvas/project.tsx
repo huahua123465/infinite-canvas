@@ -26,7 +26,7 @@ import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
 import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
-import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
+import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -2514,7 +2514,6 @@ function InfiniteCanvasPage() {
             const videoSettingsPatch = storyboardVideoSettingsFallbackPatch(scriptNode, sourceText);
             const productionScope = scriptNode.metadata?.storyboardProductionScope || "series";
             const planningConfigKey = storyboardPlanningConfigKey(productionScope);
-            const clipPlanInstruction = storyboardClipPlanInstruction(productionScope);
             const planningCheckpointKey = `${storyText}\n\n【生产配置】${planningConfigKey}`;
             if (!sourceText) {
                 message.warning("请先把剧本文本节点连接到脚本节点");
@@ -2543,10 +2542,29 @@ function InfiniteCanvasPage() {
             };
             let failedStage = "";
             let failedRawResponse = "";
-            const shotQualityErrors: Array<{ stage: string; item: number; error: string; rawResponse: string }> = [];
-            const saveShotQualityError = (error: { stage: string; item: number; error: string; rawResponse: string }) => {
+            type ShotQualityError = { stage: string; item: number; error: string; rawResponse: string };
+            const storedShotQualityErrors: ShotQualityError[] = (() => {
+                if (!checkpoint) return [];
+                try {
+                    const stored = JSON.parse(scriptNode.metadata?.storyboardPlanningRawResponse || "[]");
+                    return Array.isArray(stored) ? stored.filter((item): item is ShotQualityError => typeof item?.stage === "string" && typeof item?.item === "number" && typeof item?.error === "string" && typeof item?.rawResponse === "string") : [];
+                } catch {
+                    return [];
+                }
+            })();
+            const restoredShotQualityErrors: ShotQualityError[] = checkpoint?.shots.flatMap((shot, index) => {
+                if (shot.plan.renderMode !== "still") return [];
+                const error = shot.plan.qualityError || "该场景卡仍标记为静态待修正";
+                return [storedShotQualityErrors.find((item) => item.error === error) || { stage: "断点恢复", item: index + 1, error, rawResponse: "" }];
+            }) || [];
+            const restoredBatchQualityErrors = checkpoint ? storedShotQualityErrors.filter((item) => item.item === 0 && Number(item.stage.match(/镜头批次 (\d+)\//)?.[1] || 0) <= (checkpoint.completedShotBatches || 0)) : [];
+            const shotQualityErrors: ShotQualityError[] = [...restoredShotQualityErrors, ...restoredBatchQualityErrors];
+            const syncShotQualityErrors = () => {
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningErrorStage: shotQualityErrors.length ? `部分场景卡待人工修正（${shotQualityErrors.length}项）` : undefined, storyboardPlanningRawResponse: shotQualityErrors.length ? JSON.stringify(shotQualityErrors) : undefined } } : item));
+            };
+            const saveShotQualityError = (error: ShotQualityError) => {
                 shotQualityErrors.push(error);
-                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningErrorStage: `部分场景卡待人工修正（${shotQualityErrors.length}项）`, storyboardPlanningRawResponse: JSON.stringify(shotQualityErrors) } } : item));
+                syncShotQualityErrors();
             };
             const parsePlanningAnswer = async <T,>(answer: string, stage: string, parser: (content: string) => T) => {
                 try {
@@ -2647,10 +2665,12 @@ function InfiniteCanvasPage() {
                 } else if (productionScope === "series") {
                     originalBeatCount = beats.length;
                 }
+                const totalClipTarget = storyboardTotalClipTarget(beats.length);
+                const clipPlanInstruction = storyboardClipPlanInstruction(productionScope, totalClipTarget);
                 if (!dramaturgyPlan) {
                     updatePlanningProgress(26, `正在用 ${beats.length} 个${productionScope === "single" ? "核心" : "完整"}事实建立剧作总纲`);
                     const dramaturgyInstruction = await buildStoryboardDramaturgyInstruction();
-                    const dramaturgyRequestSource = `${dramaturgyInstruction.content}\n\n制作范围：${productionScope === "single" ? "单集浓缩，每个动态片段固定15秒" : "完整故事自然拆章，每个动态片段固定15秒"}\n\n【完整事实列表】\n${JSON.stringify(beats)}`;
+                    const dramaturgyRequestSource = `${dramaturgyInstruction.content}\n\n制作范围：${productionScope === "single" ? "单集浓缩" : "完整故事自然拆章"}，动态视频总预算严格为${totalClipTarget}个，每个片段固定15秒。\n\n【完整事实列表】\n${JSON.stringify(beats)}`;
                     const dramaturgyAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: dramaturgyRequestSource }], () => {}, { signal: controller.signal });
                     dramaturgyPlan = await parsePlanningAnswer(dramaturgyAnswer, "剧作总纲", (content) => parseStoryboardDramaturgyPlan(content, beats));
                     let dramaturgyIssues = storyboardDramaturgyQualityIssues(dramaturgyPlan, beats);
@@ -2670,43 +2690,99 @@ function InfiniteCanvasPage() {
                     dramaturgySkillRoot = dramaturgyInstruction.skillRoot;
                     saveCheckpoint(sourceChunks.length, 0, beats, [], beatsCondensed, originalBeatCount);
                 }
-                updatePlanningProgress(30, productionScope === "single" ? `剧作总纲已锁定，开始规划 ${beats.length} 个核心事实` : `剧作总纲已锁定，开始分批规划 ${beats.length} 个事实`);
-                const plannedShots: PlannedStoryboardShot[] = checkpointHasDramaturgy ? checkpoint?.shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined } })) || [] : [];
+                updatePlanningProgress(30, `剧作总纲已锁定，${beats.length} 个事实将规划为 ${totalClipTarget} 个动态片段`);
+                let plannedShots: PlannedStoryboardShot[] = checkpointHasDramaturgy ? checkpoint?.shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined } })) || [] : [];
                 const batches = productionScope === "single" ? [beats] : storyboardBeatBatches(beats);
-                const completedShotBatches = checkpointHasDramaturgy ? Math.min(checkpoint?.completedShotBatches || 0, batches.length) : 0;
+                const batchClipTargets = storyboardBatchClipTargets(batches, totalClipTarget);
+                let completedShotBatches = checkpointHasDramaturgy ? Math.min(checkpoint?.completedShotBatches || 0, batches.length) : 0;
+                const retryBatchIndex = restoredBatchQualityErrors.reduce<number | undefined>((earliest, error) => {
+                    const batchIndex = Number(error.stage.match(/镜头批次 (\d+)\//)?.[1] || 0) - 1;
+                    return batchIndex >= 0 && (earliest === undefined || batchIndex < earliest) ? batchIndex : earliest;
+                }, undefined);
+                if (retryBatchIndex !== undefined && retryBatchIndex < completedShotBatches) {
+                    const retryBeatIds = new Set(batches.slice(retryBatchIndex).flatMap((batch) => batch.map((beat) => beat.id)));
+                    const discardedShots = plannedShots.filter((shot) => shot.plan.sourceBeatIds.some((id) => retryBeatIds.has(id)));
+                    const discardedQualityErrorCounts = discardedShots.reduce((counts, shot) => {
+                        if (shot.plan.qualityError) counts.set(shot.plan.qualityError, (counts.get(shot.plan.qualityError) || 0) + 1);
+                        return counts;
+                    }, new Map<string, number>());
+                    plannedShots = plannedShots.filter((shot) => !shot.plan.sourceBeatIds.some((id) => retryBeatIds.has(id)));
+                    completedShotBatches = retryBatchIndex;
+                    for (let index = shotQualityErrors.length - 1; index >= 0; index -= 1) {
+                        const errorText = shotQualityErrors[index].error;
+                        const errorBatchIndex = Number(shotQualityErrors[index].stage.match(/镜头批次 (\d+)\//)?.[1] || 0) - 1;
+                        const discardedErrorCount = discardedQualityErrorCounts.get(errorText) || 0;
+                        if (shotQualityErrors[index].item === 0 && errorBatchIndex >= retryBatchIndex) shotQualityErrors.splice(index, 1);
+                        else if (discardedErrorCount) {
+                            shotQualityErrors.splice(index, 1);
+                            discardedQualityErrorCounts.set(errorText, discardedErrorCount - 1);
+                        }
+                    }
+                    syncShotQualityErrors();
+                    saveCheckpoint(sourceChunks.length, completedShotBatches, beats, plannedShots, beatsCondensed, originalBeatCount);
+                }
                 if (completedShotBatches) updatePlanningProgress(20 + Math.round((completedShotBatches / batches.length) * 60), `从断点继续：已完成 ${completedShotBatches}/${batches.length} 批镜头`);
                 for (let batchIndex = completedShotBatches; batchIndex < batches.length; batchIndex += 1) {
-                    const previous = plannedShots.at(-1)?.plan;
-                    const shotSource = buildStoryboardShotBatchSource(storyText, batches[batchIndex], batchIndex, previous, false, directorInstruction, clipPlanInstruction, dramaturgyPlan);
+                    const previous = [...plannedShots].reverse().find((shot) => shot.plan.renderMode !== "still")?.plan;
+                    const batchTarget = batchClipTargets[batchIndex];
+                    const shotSource = buildStoryboardShotBatchSource(storyText, batches[batchIndex], batchIndex, previous, false, directorInstruction, clipPlanInstruction, dramaturgyPlan, batchTarget);
                     const answer = await requestImageQuestion(
                         generationConfig,
                         [{ role: "user", content: shotSource }],
                         () => {},
                         { signal: controller.signal },
                     );
+                    const batchErrorStart = shotQualityErrors.length;
                     const parsedShots = await parseShotsWithQualityRetry(answer, shotSource, `镜头批次 ${batchIndex + 1}/${batches.length}`, 68);
-                    const batchShots = plannedShotsForBeats(parsedShots, batches[batchIndex]);
-                    if (!batchShots.length) throw new Error(`第 ${batchIndex + 1} 批没有生成可用镜头`);
+                    const initialErrorEnd = shotQualityErrors.length;
+                    const initialDynamicShots = plannedShotsForBeats(parsedShots.filter((shot) => shot.plan.renderMode !== "still"), batches[batchIndex]);
+                    const initialStillShots = plannedShotsForBeats(parsedShots.filter((shot) => shot.plan.renderMode === "still"), batches[batchIndex]);
+                    const initialDynamicCoverage = storyboardCoverage(batches[batchIndex], initialDynamicShots);
+                    let batchShots = [...initialDynamicShots, ...initialStillShots];
+                    if (initialDynamicShots.length === batchTarget && !initialDynamicCoverage.missingBeatIds.length && initialStillShots.length) {
+                        batchShots = initialDynamicShots;
+                        shotQualityErrors.splice(batchErrorStart);
+                        syncShotQualityErrors();
+                    } else if (initialDynamicShots.length !== batchTarget || initialDynamicCoverage.missingBeatIds.length) {
+                        updatePlanningProgress(72, `第 ${batchIndex + 1} 批正在定点修正为 ${batchTarget} 个片段并补齐事实引用`);
+                        const countRepairSource = `${shotSource}\n\n【首次模型返回JSON】\n${answer}\n\n【逐项质量修正后的当前shots】\n${JSON.stringify({ shots: parsedShots })}\n\n【定点数量与覆盖修正】\n当前有 ${initialStillShots.length} 个质量失败的still行会由系统另行保留，它们不计动态配额，也不能承担事实覆盖。当前有效动态shots为 ${initialDynamicShots.length} 个，遗漏动态事实ID：${initialDynamicCoverage.missingBeatIds.join("、") || "无"}。保持本批事实、顺序、人物时期和连续性不变，重新输出严格 ${batchTarget} 个全部可作为动态视频的shots；必须由这些动态shots覆盖所有本批事实ID，每个shot只有1个visualBeatId，其余同场背景事实放voiceoverBeatIds。不要返回上述still错误行，只输出完整动态replacement JSON。`;
+                        try {
+                            const countRepairAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: countRepairSource }], () => {}, { signal: controller.signal });
+                            const replacementShots = await parseShotsWithQualityRetry(countRepairAnswer, countRepairSource, `镜头批次 ${batchIndex + 1}/${batches.length} 数量修正`, 74);
+                            const replacementDynamicShots = plannedShotsForBeats(replacementShots.filter((shot) => shot.plan.renderMode !== "still"), batches[batchIndex]);
+                            const replacementStillShots = plannedShotsForBeats(replacementShots.filter((shot) => shot.plan.renderMode === "still"), batches[batchIndex]);
+                            const replacementDynamicCoverage = storyboardCoverage(batches[batchIndex], replacementDynamicShots);
+                            if (!replacementStillShots.length && replacementDynamicShots.length === batchTarget && !replacementDynamicCoverage.missingBeatIds.length) {
+                                batchShots = replacementDynamicShots;
+                                shotQualityErrors.splice(batchErrorStart);
+                            } else {
+                                shotQualityErrors.splice(initialErrorEnd);
+                                if (!initialStillShots.length && initialErrorEnd === batchErrorStart) shotQualityErrors.push({ stage: `镜头批次 ${batchIndex + 1}/${batches.length} 数量修正`, item: 0, error: `replacement 未完整通过：动态 ${replacementDynamicShots.length}/${batchTarget}，still ${replacementStillShots.length}，遗漏事实 ${replacementDynamicCoverage.missingBeatIds.join("、") || "无"}`, rawResponse: answer });
+                            }
+                        } catch (error) {
+                            if (isGenerationCanceled(error)) throw error;
+                            shotQualityErrors.splice(initialErrorEnd);
+                            if (!initialStillShots.length && initialErrorEnd === batchErrorStart) shotQualityErrors.push({ stage: `镜头批次 ${batchIndex + 1}/${batches.length} 数量修正`, item: 0, error: `replacement 请求或解析失败：${error instanceof Error ? error.message : "未知错误"}；首次动态 ${initialDynamicShots.length}/${batchTarget}，遗漏事实 ${initialDynamicCoverage.missingBeatIds.join("、") || "无"}`, rawResponse: answer });
+                        }
+                        syncShotQualityErrors();
+                    }
+                    if (batchShots.filter((shot) => shot.plan.renderMode !== "still").length > batchTarget) {
+                        shotQualityErrors.splice(batchErrorStart);
+                        syncShotQualityErrors();
+                        saveCheckpoint(sourceChunks.length, batchIndex, beats, plannedShots, beatsCondensed, originalBeatCount);
+                        throw new Error(`第 ${batchIndex + 1} 批动态片段超过 ${batchTarget} 个预算，本批未写入断点，请重新执行`);
+                    }
                     plannedShots.push(...batchShots);
                     saveCheckpoint(sourceChunks.length, batchIndex + 1, beats, plannedShots, beatsCondensed, originalBeatCount);
                     updatePlanningProgress(20 + Math.round(((batchIndex + 1) / batches.length) * 60), `已完成 ${batchIndex + 1}/${batches.length} 批，共 ${plannedShots.length} 个生产片段`);
                 }
-                let coverage = storyboardCoverage(beats, plannedShots);
-                if (coverage.missingBeatIds.length) {
-                    updatePlanningProgress(84, `自动补齐 ${coverage.missingBeatIds.length} 个遗漏事实`);
-                    const missingBeats = beats.filter((beat) => coverage.missingBeatIds.includes(beat.id));
-                    const repairSource = buildStoryboardShotBatchSource(storyText, missingBeats, batches.length, plannedShots.at(-1)?.plan, true, directorInstruction, clipPlanInstruction, dramaturgyPlan);
-                    const repairAnswer = await requestImageQuestion(
-                        generationConfig,
-                        [{ role: "user", content: repairSource }],
-                        () => {},
-                        { signal: controller.signal },
-                    );
-                    const repairedShots = await parseShotsWithQualityRetry(repairAnswer, repairSource, "遗漏事实补镜", 88);
-                    plannedShots.push(...plannedShotsForBeats(repairedShots, missingBeats));
-                    coverage = storyboardCoverage(beats, plannedShots);
-                }
+                const dynamicPlannedShots = plannedShots.filter((shot) => shot.plan.renderMode !== "still");
+                const coverage = storyboardCoverage(beats, plannedShots);
                 if (coverage.missingBeatIds.length) throw new Error(`仍有 ${coverage.missingBeatIds.length} 个原文事实未生成镜头：${coverage.missingBeatIds.join("、")}`);
+                const dynamicCoverage = storyboardCoverage(beats, dynamicPlannedShots);
+                if (dynamicPlannedShots.length > totalClipTarget) throw new Error(`动态片段不得超过 ${totalClipTarget} 个全局预算，实际得到 ${dynamicPlannedShots.length} 个`);
+                if (!shotQualityErrors.length && dynamicCoverage.missingBeatIds.length) throw new Error(`仍有 ${dynamicCoverage.missingBeatIds.length} 个原文事实未进入动态镜头：${dynamicCoverage.missingBeatIds.join("、")}`);
+                if (!shotQualityErrors.length && dynamicPlannedShots.length !== totalClipTarget) throw new Error(`完整规划必须得到 ${totalClipTarget} 个动态片段，实际得到 ${dynamicPlannedShots.length} 个`);
                 if (plannedShots.length > STORYBOARD_ROW_LIMIT) throw new Error(`完整故事需要 ${plannedShots.length} 个片段，超过当前 ${STORYBOARD_ROW_LIMIT} 镜安全上限，请拆成上下集`);
                 const beatOrder = new Map(beats.map((beat, index) => [beat.id, index]));
                 plannedShots.sort((first, second) => Math.min(...first.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)) - Math.min(...second.plan.sourceBeatIds.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER)));
@@ -8592,11 +8668,12 @@ function withCurrentStoryboardDirectorPreset(node: CanvasNodeData) {
     return { ...node, metadata: { ...node.metadata, prompt: STORYBOARD_SCRIPT_PRESET } };
 }
 
-function buildStoryboardShotBatchSource(sourceText: string, beats: StoryboardSourceBeat[], batchIndex: number, previous?: StoryboardShotPlan, repair = false, directorInstruction = "", clipPlanInstruction = "", dramaturgyPlan?: StoryboardDramaturgyPlan) {
+function buildStoryboardShotBatchSource(sourceText: string, beats: StoryboardSourceBeat[], batchIndex: number, previous?: StoryboardShotPlan, repair = false, directorInstruction = "", clipPlanInstruction = "", dramaturgyPlan?: StoryboardDramaturgyPlan, targetShotCount?: number) {
     const batchPrefix = `G${String(batchIndex + 1).padStart(2, "0")}`;
     return [
         STORYBOARD_PLANNED_SHOTS_PROMPT,
         clipPlanInstruction,
+        targetShotCount ? `【本批精确预算】\n本批必须严格输出 ${targetShotCount} 个shots，不多不少；${beats.length}个事实ID必须全部出现在这${targetShotCount}个shots的sourceBeatIds中，每个shot只选1个visualBeatId，其余事实放voiceoverBeatIds。` : "",
         dramaturgyPlan ? `【全片剧作总纲】\n${JSON.stringify(dramaturgyPlan)}\n总纲只决定戏剧功能、节奏和视觉强调，不得覆盖本批事实或创造新剧情。` : "",
         directorInstruction ? `【整体要求/导演提示词】\n${directorInstruction}` : "",
         repair ? "这是覆盖检查发现的遗漏事实补镜。只补这些事实，不重写已有镜头；新镜头默认切镜，不要假装与不相邻镜头连续。" : `这是第 ${batchIndex + 1} 批。新连续性组使用 ${batchPrefix} 开头的编号；只有第一条与上一批确实同场景、同人物时期且动作直接相承时，才可复用上一批最后的 continuityGroupId。`,

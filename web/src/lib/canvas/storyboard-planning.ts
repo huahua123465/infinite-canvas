@@ -1,6 +1,6 @@
 import type { StoryboardChapter, StoryboardDramaturgyPhase, StoryboardDramaturgyPlan, StoryboardProductionScope, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
 
-export const STORYBOARD_BEAT_BATCH_SIZE = 10;
+export const STORYBOARD_BEAT_BATCH_SIZE = 20;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
 
 export type PlannedStoryboardShot = {
@@ -185,15 +185,19 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
         items.at(-1)?.push(index);
         return items;
     }, []);
+    const segmentVideoCounts = segments.map((indexes) => indexes.filter((index) => shots[index].plan.renderMode !== "still").length);
+    const remainingVideoCounts = segmentVideoCounts.map((_, index) => segmentVideoCounts.slice(index).reduce((total, count) => total + count, 0));
     let previousBoundary: StoryboardNaturalChapterBoundary | undefined;
-    segments.forEach((indexes) => {
+    segments.forEach((indexes, segmentIndex) => {
         const firstShot = shots[indexes[0]];
         const beat = beatById.get(firstShot.plan.visualBeatIds?.[0] || firstShot.plan.sourceBeatIds[0]);
         const boundary = storyboardNaturalChapterBoundary(firstShot, beat);
-        const shouldStartChapter = !currentChapter || (scope === "series" && storyboardStartsNaturalChapter(previousBoundary, boundary) && (currentChapter.shotIndexes.length >= 2 || storyboardStartsStrongNaturalChapter(previousBoundary, boundary)));
+        const currentVideoCount = currentChapter?.shotIndexes.filter((index) => shots[index].plan.renderMode === "video").length || 0;
+        const canStartChapter = currentVideoCount >= 4 && remainingVideoCounts[segmentIndex] >= 4 && chapters.length < 10 && (chapters.length < 9 || remainingVideoCounts[segmentIndex] <= 7);
+        const shouldStartChapter = !currentChapter || (scope === "series" && canStartChapter && (storyboardStartsNaturalChapter(previousBoundary, boundary) || currentVideoCount + segmentVideoCounts[segmentIndex] > 7));
         if (shouldStartChapter) {
             const episodeNumber = chapters.length + 1;
-            const phase = (beat?.phase || beat?.timeStage || "故事推进").trim();
+            const phase = boundary.lifeStage || (beat?.phase || "故事推进").trim();
             currentChapter = { id: `E${String(episodeNumber).padStart(2, "0")}`, title: scope === "single" ? `单集 · ${phase}` : `第 ${episodeNumber} 集 · ${phase}`, shotIndexes: [], durationSeconds: 0, targetClipCount: 0 };
             chapters.push(currentChapter);
         }
@@ -224,24 +228,40 @@ export function storyboardSingleEpisodeBeatTarget() {
 }
 
 export function storyboardPlanningConfigKey(scope: StoryboardProductionScope) {
-    return `scene-contract-v4/${scope}/natural-chapters/15s`;
+    return `scene-contract-v5/${scope}/global-budget/natural-chapters/15s`;
 }
 
-export function storyboardClipPlanInstruction(scope: StoryboardProductionScope) {
+export function storyboardTotalClipTarget(factCount: number) {
+    return Math.max(2, Math.min(300, Math.ceil(Math.max(1, factCount) / 5)));
+}
+
+export function storyboardBatchClipTargets(batches: StoryboardSourceBeat[][], totalTarget: number) {
+    const totalFacts = batches.reduce((total, batch) => total + batch.length, 0);
+    let remainingFacts = totalFacts;
+    let remainingTarget = totalTarget;
+    return batches.map((batch, index) => {
+        const remainingBatches = batches.length - index - 1;
+        const target = index === batches.length - 1 ? remainingTarget : Math.max(1, Math.min(remainingTarget - remainingBatches, Math.round((remainingTarget * batch.length) / Math.max(1, remainingFacts))));
+        remainingFacts -= batch.length;
+        remainingTarget -= target;
+        return target;
+    });
+}
+
+export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, totalTarget?: number) {
     const clipRule = "每个动态片段固定15秒，只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜，0-3秒建立场景，3-9秒推进动作，9-12秒形成反作用或可见结果，12-15秒只保持稳定落点。旁白目标36-45个汉字，硬上限48个汉字。相邻背景事实只有在同地点、同人物时期且不要求第二段可见剧情时才能由旁白承载。";
-    if (scope === "single") return `这是整篇故事的单集浓缩生产。${clipRule}无法放入的次要细节继续浓缩，不得把多个地点、人物时期或主要事件硬塞进同一视频。`;
-    return `这是完整故事生产。${clipRule}按事实的 timeStage、地点、人物身体状态变化、迁徙、婚姻、重大损失和剧作转折自然拆章；不得按目标时长、固定章数或机械平均方式切章，也不得按一事实一片段无限拆分。`;
+    const budgetRule = totalTarget ? `完整生产的动态视频总预算严格为${totalTarget}个，必须通过把同地点、同人物时期的非主要事实放入voiceoverBeatIds覆盖，不能增加镜头突破预算。` : "";
+    if (scope === "single") return `这是整篇故事的单集浓缩生产。${budgetRule}${clipRule}无法放入的次要细节继续浓缩，不得把多个地点、人物时期或主要事件硬塞进同一视频。`;
+    return `这是完整故事生产。${budgetRule}${clipRule}章节只按童年、青年、成家、中年、晚年、身后等宽泛人生阶段，以及迁徙、婚姻、重大损失、身体状态不可逆变化和高潮/结局等强转折划分；不得因任意phase、timeStage文案或地点小变化切章，也不得按一事实一片段无限拆分。`;
 }
 
-type StoryboardNaturalChapterBoundary = { phase: string; timeStage: string; location: string; majorTransition: string; dramaticFunction: StoryboardShotPlan["dramaticFunction"]; transition: StoryboardShotTransition };
+type StoryboardNaturalChapterBoundary = { lifeStage: string; majorTransition: string; dramaticFunction: StoryboardShotPlan["dramaticFunction"]; transition: StoryboardShotTransition };
 
 function storyboardNaturalChapterBoundary(shot: PlannedStoryboardShot, beat?: StoryboardSourceBeat): StoryboardNaturalChapterBoundary {
     const evidence = `${beat?.sourceText || ""} ${beat?.event || ""} ${shot.plan.goal || ""} ${shot.plan.result || ""}`;
     return {
-        phase: normalizeBoundaryText(beat?.phase),
-        timeStage: normalizeBoundaryText(shot.plan.timeStage || beat?.timeStage),
-        location: normalizeBoundaryText(beat?.location),
-        majorTransition: evidence.match(/迁徙|远行|离婚|结婚|再婚|丧女|丧子|去世|离世|死亡|下葬|失去[^，。；]{0,8}亲人|残疾|瘫痪|萎缩|精神崩溃|住院/)?.[0] || "",
+        lifeStage: storyboardBroadLifeStage(`${shot.plan.timeStage || ""} ${beat?.timeStage || ""} ${beat?.phase || ""}`),
+        majorTransition: evidence.match(/迁徙|远行|逃荒|离婚|结婚|再婚|丧女|丧子|去世|离世|死亡|下葬|失去[^，。；]{0,8}亲人|残疾加重|瘫痪|萎缩|精神崩溃|住院/)?.[0] || "",
         dramaticFunction: shot.plan.dramaticFunction,
         transition: shot.plan.transition,
     };
@@ -249,22 +269,20 @@ function storyboardNaturalChapterBoundary(shot: PlannedStoryboardShot, beat?: St
 
 function storyboardStartsNaturalChapter(previous: StoryboardNaturalChapterBoundary | undefined, current: StoryboardNaturalChapterBoundary) {
     if (!previous) return true;
-    if (current.phase && previous.phase && current.phase !== previous.phase) return true;
-    if (current.timeStage && previous.timeStage && current.timeStage !== previous.timeStage) return true;
+    if (current.lifeStage && previous.lifeStage && current.lifeStage !== previous.lifeStage) return true;
     if (current.majorTransition && current.majorTransition !== previous.majorTransition) return true;
-    if (current.transition === "time-jump" && current.location && previous.location && current.location !== previous.location) return true;
     return current.dramaticFunction !== previous.dramaticFunction && (current.dramaticFunction === "climax" || current.dramaticFunction === "resolution");
 }
 
-function storyboardStartsStrongNaturalChapter(previous: StoryboardNaturalChapterBoundary | undefined, current: StoryboardNaturalChapterBoundary) {
-    if (!previous) return true;
-    if (current.timeStage && previous.timeStage && current.timeStage !== previous.timeStage) return true;
-    if (current.majorTransition && current.majorTransition !== previous.majorTransition) return true;
-    return current.transition === "time-jump" && current.location !== previous.location;
-}
-
-function normalizeBoundaryText(value?: string) {
-    return (value || "").replace(/[\s·,，。；;：:（）()]/g, "").trim();
+function storyboardBroadLifeStage(value: string) {
+    if (/身后|下葬|墓|去世后|离世后/.test(value)) return "身后";
+    if (/晚年|老年|暮年|临终|去世|离世/.test(value)) return "晚年";
+    if (/中年|养育子女|孩子上学|家庭重担/.test(value)) return "中年";
+    if (/成家|婚后|结婚|再婚|孕期|育儿|生育/.test(value)) return "成家";
+    if (/青年|年轻|成年|务工|离家/.test(value)) return "青年";
+    if (/少年|青春期|学生时期/.test(value)) return "少年";
+    if (/出生|婴儿|幼年|童年|儿时|孩童/.test(value)) return "童年";
+    return "";
 }
 
 export function storyboardBeatBatches(beats: StoryboardSourceBeat[]) {
@@ -311,8 +329,9 @@ export function plannedShotsForBeats(shots: PlannedStoryboardShot[], beats: Stor
         if (!sourceBeatIds.length) return [];
         const visualBeatIds = (shot.plan.visualBeatIds || []).filter((id) => sourceBeatIds.includes(id)).slice(0, 1);
         const resolvedVisualBeatIds = visualBeatIds.length ? visualBeatIds : sourceBeatIds.slice(0, 1);
-        const voiceoverBeatIds = (shot.plan.voiceoverBeatIds || []).filter((id) => sourceBeatIds.includes(id) && !resolvedVisualBeatIds.includes(id));
-        return [{ ...shot, plan: { ...shot.plan, sourceBeatIds, visualBeatIds: resolvedVisualBeatIds, voiceoverBeatIds: voiceoverBeatIds.length ? voiceoverBeatIds : sourceBeatIds.filter((id) => !resolvedVisualBeatIds.includes(id)) } }];
+        const voiceoverBeatIds = Array.from(new Set((shot.plan.voiceoverBeatIds || []).filter((id) => sourceBeatIds.includes(id) && !resolvedVisualBeatIds.includes(id))));
+        const missingVoiceoverBeatIds = sourceBeatIds.filter((id) => !resolvedVisualBeatIds.includes(id) && !voiceoverBeatIds.includes(id));
+        return [{ ...shot, plan: { ...shot.plan, sourceBeatIds, visualBeatIds: resolvedVisualBeatIds, voiceoverBeatIds: [...voiceoverBeatIds, ...missingVoiceoverBeatIds] } }];
     });
 }
 
