@@ -4,7 +4,6 @@ setlocal
 set "WEB_DIR=%~dp0web"
 set "AGENT_DIR=%~dp0canvas-agent"
 set "AUDIO_SEPARATOR_DIR=%~dp0audio-separator-service"
-set "VOXCPM_SERVICE_DIR=%~dp0voxcpm-service"
 set "VOICEBOX_START_SCRIPT=%~dp0start-voicebox.ps1"
 set "TOONFLOW_START_SCRIPT=%~dp0start-toonflow.ps1"
 set "WEB_PORT=3000"
@@ -15,7 +14,6 @@ echo Infinite Canvas unified launcher
 echo   Web              http://127.0.0.1:3000
 echo   Canvas Agent     http://127.0.0.1:17371
 echo   Audio Separator  http://127.0.0.1:17372
-echo   VoxCPM           http://127.0.0.1:8810
 echo   Voicebox         http://127.0.0.1:17493
 echo   ToonFlow         Desktop application
 echo ============================================================
@@ -73,17 +71,6 @@ if errorlevel 1 (
   )
 ) else (
   echo Local audio separator is already running.
-)
-
-echo Checking local VoxCPM service...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:8810/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
-if errorlevel 1 (
-  if exist "%VOXCPM_SERVICE_DIR%\start-hidden.ps1" (
-    echo Starting local VoxCPM service in the background...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%VOXCPM_SERVICE_DIR%\start-hidden.ps1"
-  )
-) else (
-  echo Local VoxCPM service is already running.
 )
 
 echo Checking local Voicebox service...

@@ -62,8 +62,6 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const CANGYUAN_BASE_URL = "https://ai.cangyuansuanli.cn";
-const VOXCPM_CHANNEL_ID = "local-voxcpm";
-const VOXCPM_MODEL_OPTION = `${VOXCPM_CHANNEL_ID}${CHANNEL_MODEL_SEPARATOR}VoxCPM2`;
 const VOICEBOX_CHANNEL_ID = "local-voicebox";
 const VOICEBOX_MODEL_OPTION = `${VOICEBOX_CHANNEL_ID}${CHANNEL_MODEL_SEPARATOR}Voicebox`;
 
@@ -80,14 +78,6 @@ export const defaultConfig: AiConfig = {
             apiKey: "",
             apiFormat: "openai",
             models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
-        },
-        {
-            id: VOXCPM_CHANNEL_ID,
-            name: "本地 VoxCPM",
-            baseUrl: "http://127.0.0.1:8810/v1",
-            apiKey: "local",
-            apiFormat: "openai",
-            models: ["VoxCPM2"],
         },
         {
             id: VOICEBOX_CHANNEL_ID,
@@ -112,11 +102,11 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts", VOXCPM_MODEL_OPTION, VOICEBOX_MODEL_OPTION],
+    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts", VOICEBOX_MODEL_OPTION],
     imageModels: ["default::gpt-image-2"],
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
-    audioModels: ["default::gpt-4o-mini-tts", VOXCPM_MODEL_OPTION, VOICEBOX_MODEL_OPTION],
+    audioModels: ["default::gpt-4o-mini-tts", VOICEBOX_MODEL_OPTION],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -254,7 +244,7 @@ export const useConfigStore = create<ConfigStore>()(
                         imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
                         videoModel: normalizeModelOptionValue(config.videoModel || "grok-imagine-video", channels),
                         textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
-                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
+                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels) || defaultConfig.audioModel,
                         audioVoice: config.audioVoice || defaultConfig.audioVoice,
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
@@ -267,7 +257,7 @@ export const useConfigStore = create<ConfigStore>()(
                         imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : suggestModelsByCapability(channels, "image"),
                         videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : suggestModelsByCapability(channels, "video"),
                         textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : suggestModelsByCapability(channels, "text"),
-                        audioModels: uniqueModelOptions([...(Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : suggestModelsByCapability(channels, "audio")), VOXCPM_MODEL_OPTION, VOICEBOX_MODEL_OPTION]),
+                        audioModels: uniqueModelOptions([...(Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : suggestModelsByCapability(channels, "audio")), VOICEBOX_MODEL_OPTION]),
                     },
                 };
             },
@@ -359,7 +349,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 }
 
 function normalizeChannels(config: AiConfig) {
-    const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
+    const persistedChannels = Array.isArray(config.channels) ? config.channels.filter((channel) => !channel.id.startsWith("local-")) : [];
     const channels = persistedChannels.map((channel, index) =>
         createModelChannel({
             ...channel,
@@ -386,9 +376,6 @@ function normalizeChannels(config: AiConfig) {
                 ]),
             }),
         );
-    }
-    if (!channels.some((channel) => channel.id === VOXCPM_CHANNEL_ID)) {
-        channels.push(createModelChannel({ id: VOXCPM_CHANNEL_ID, name: "本地 VoxCPM", baseUrl: "http://127.0.0.1:8810/v1", apiKey: "local", apiFormat: "openai", models: ["VoxCPM2"] }));
     }
     if (!channels.some((channel) => channel.id === VOICEBOX_CHANNEL_ID)) {
         channels.push(createModelChannel({ id: VOICEBOX_CHANNEL_ID, name: "本地 Voicebox", baseUrl: "http://127.0.0.1:17493", apiKey: "local", apiFormat: "openai", models: ["Voicebox"] }));

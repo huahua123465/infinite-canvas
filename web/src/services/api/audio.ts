@@ -109,7 +109,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         }
     }
     const selectedProvider = resolveAudioProvider(requestConfig, model);
-    if (selectedProvider.kind !== "voxcpm" && selectedProvider.kind !== "voicebox" && normalizeVolcengineSpeakerValue(config.audioVoice) && !isVolcengineSpeechConfig(requestConfig, model)) {
+    if (selectedProvider.kind !== "voicebox" && normalizeVolcengineSpeakerValue(config.audioVoice) && !isVolcengineSpeechConfig(requestConfig, model)) {
         const volcengineModel = findVolcengineAudioModel(config);
         if (volcengineModel) {
             requestConfig = resolveModelRequestConfig(config, volcengineModel);
@@ -118,7 +118,6 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     }
     assertAudioConfig(requestConfig, model);
     if (isVolcengineSpeechConfig(requestConfig, model)) return requestVolcengineSpeech(requestConfig, model, prompt, options);
-    if (resolveAudioProvider(requestConfig, model).kind === "voxcpm") return requestVoxCPMSpeech(requestConfig, model, prompt, options);
     if (resolveAudioProvider(requestConfig, model).kind === "voicebox") return requestVoiceboxSpeech(requestConfig, prompt, options);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
@@ -202,33 +201,6 @@ async function requestVoiceboxSpeech(config: AiConfig, text: string, options?: R
     }
 }
 
-async function requestVoxCPMSpeech(config: AiConfig, model: string, text: string, options?: RequestOptions): Promise<Blob> {
-    const reference = options?.referenceAudios?.[0];
-    const targetPitchHz = reference ? null : voxCpmTargetPitchHz(config.audioInstructions);
-    try {
-        const response = await axios.post<Blob>(
-            aiApiUrl(config, "/audio/speech"),
-            {
-                model,
-                input: text,
-                voice: "default",
-                response_format: "wav",
-                speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
-                ...(config.audioInstructions.trim() ? { instructions: config.audioInstructions.trim() } : {}),
-                ...(reference ? { reference_audio: await referenceAudioDataUrl(reference, options?.signal) } : {}),
-                ...(reference && options?.promptText?.trim() ? { prompt_text: options.promptText.trim() } : {}),
-                ...(options?.seed ? { seed: options.seed } : {}),
-                ...(targetPitchHz ? { candidate_count: options?.candidateCount || 3, target_pitch_hz: targetPitchHz } : {}),
-            },
-            { headers: aiHeaders(config), responseType: "blob", signal: options?.signal },
-        );
-        await assertAudioBlob(response.data);
-        return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: "audio/wav" });
-    } catch (error) {
-        throw new Error(await readAxiosError(error, "VoxCPM 音频生成失败"));
-    }
-}
-
 async function referenceAudioDataUrl(reference: ReferenceAudio, signal?: AbortSignal) {
     let blob = reference.storageKey ? await getMediaBlob(reference.storageKey) : null;
     if (!blob && reference.url?.startsWith("data:audio/")) return reference.url;
@@ -236,11 +208,11 @@ async function referenceAudioDataUrl(reference: ReferenceAudio, signal?: AbortSi
         const response = await fetch(reference.url, { signal });
         if (response.ok) blob = await response.blob();
     }
-    if (!blob) throw new Error("VoxCPM 参考音频不可用");
+    if (!blob) throw new Error("参考音频不可用");
     return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(reader.error || new Error("读取 VoxCPM 参考音频失败"));
+        reader.onerror = () => reject(reader.error || new Error("读取参考音频失败"));
         reader.readAsDataURL(blob);
     });
 }
@@ -462,7 +434,7 @@ export async function requestStoredAudioGeneration(config: AiConfig, prompt: str
         const cached = await readLocalAudioCache(cacheKey);
         if (cached) return { ...cached, cacheKey, cacheHit: "local" };
     }
-    const format = provider.kind === "voxcpm" || provider.kind === "voicebox" ? "wav" : config.audioFormat;
+    const format = provider.kind === "voicebox" ? "wav" : config.audioFormat;
     const shared = alwaysGenerate || script || options?.referenceAudios?.length ? null : await readSharedAudioCache(cacheKey, format);
     if (shared) return { ...shared, cacheKey, cacheHit: "shared" };
     let voiceboxSource: VoiceboxGenerationSource | undefined;
@@ -524,19 +496,19 @@ function normalizeSharedAudioUrl(url: string) {
 async function audioGenerationCacheKey(config: AiConfig, prompt: string, options?: RequestOptions, script = "") {
     let requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const selectedProvider = resolveAudioProvider(requestConfig, requestConfig.model);
-    if (!script && selectedProvider.kind !== "voxcpm" && selectedProvider.kind !== "voicebox" && normalizeVolcengineSpeakerValue(requestConfig.audioVoice) && !isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim())) {
+    if (!script && selectedProvider.kind !== "voicebox" && normalizeVolcengineSpeakerValue(requestConfig.audioVoice) && !isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim())) {
         const volcengineModel = findVolcengineAudioModel(config);
         if (volcengineModel) requestConfig = resolveModelRequestConfig(config, volcengineModel);
     }
     const provider = resolveAudioProvider(requestConfig, requestConfig.model);
-    const voice = provider.kind === "voxcpm" ? "default" : provider.kind === "voicebox" ? requestConfig.audioVoice.trim() : normalizeAudioVoiceValue(requestConfig.audioVoice);
+    const voice = provider.kind === "voicebox" ? requestConfig.audioVoice.trim() : normalizeAudioVoiceValue(requestConfig.audioVoice);
     const model = isVolcengineSpeechConfig(requestConfig, requestConfig.model.trim()) ? normalizeVolcengineResourceId(requestConfig.model, voice) : requestConfig.model.trim();
     const payload = JSON.stringify({
         v: 3,
         baseUrl: requestConfig.baseUrl.trim().replace(/\/+$/, ""),
         model,
         voice,
-        format: provider.kind === "voxcpm" || provider.kind === "voicebox" ? "wav" : normalizeAudioFormatValue(requestConfig.audioFormat),
+        format: provider.kind === "voicebox" ? "wav" : normalizeAudioFormatValue(requestConfig.audioFormat),
         speed: provider.kind === "voicebox" ? null : normalizeAudioSpeedValue(requestConfig.audioSpeed),
         instructions: requestConfig.audioInstructions.trim(),
         prompt: prompt.trim(),
@@ -544,7 +516,6 @@ async function audioGenerationCacheKey(config: AiConfig, prompt: string, options
         promptText: options?.promptText?.trim() || "",
         seed: options?.seed || null,
         candidateCount: options?.candidateCount || null,
-        targetPitchHz: provider.kind === "voxcpm" ? voxCpmTargetPitchHz(requestConfig.audioInstructions) : null,
         script,
     });
     return `audio-preview:${await sha256(payload)}`;
@@ -564,24 +535,6 @@ async function normalizeModelScriptAudio(result: unknown, format: string, signal
     if (!response.ok) throw new Error(`模型调用脚本返回的音频无法读取（${response.status}）`);
     const blob = await response.blob();
     return blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
-}
-
-function voxCpmTargetPitchHz(instructions: string) {
-    const text = instructions.trim();
-    if (/女婴/.test(text)) return 320;
-    if (/男婴/.test(text)) return 290;
-    if (/婴儿|宝宝|襁褓/.test(text)) return 305;
-    if (/女孩|女童/.test(text)) return 255;
-    if (/男孩|男童/.test(text)) return 225;
-    if (/少女/.test(text)) return 220;
-    if (/少年|变声期/.test(text)) return 160;
-    if (/老年中国女性|老年女性/.test(text)) return 175;
-    if (/中年中国女性|中年女性/.test(text)) return 185;
-    if (/年轻中国女性|成年中国女性|年轻女性|成年女性/.test(text)) return 205;
-    if (/老年中国男性|老年男性/.test(text)) return 105;
-    if (/中年中国男性|中年男性/.test(text)) return 110;
-    if (/年轻中国男性|成年中国男性|年轻男性|成年男性/.test(text)) return 120;
-    return null;
 }
 
 async function sha256(value: string) {
