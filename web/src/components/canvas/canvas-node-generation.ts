@@ -105,7 +105,8 @@ function normalizeComposerReferenceMentions(prompt: string, imageCount: number, 
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt = ""): NodeGenerationInput[] {
-    const inputNodes = getGenerationResourceNodes(nodeId, nodes, connections);
+    const targetNode = nodes.find((node) => node.id === nodeId);
+    const inputNodes = getGenerationResourceNodes(nodeId, nodes, connections).filter((node) => !isStoryboardTailFrameCarrier(node, targetNode));
     const inputIds = new Set(inputNodes.map((node) => node.id));
     const explicitlyMentionedNodeIds = new Set(Array.from(prompt.matchAll(/@\[node:([^\]]+)\]/g)).map((match) => match[1]));
     const explicitlyMentionedNodes = Array.from(explicitlyMentionedNodeIds)
@@ -122,6 +123,18 @@ export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[
         if (text) return [{ nodeId: node.id, type: "text" as const, title: node.title, text }];
         return [];
     });
+}
+
+function isStoryboardTailFrameCarrier(node: CanvasNodeData, targetNode?: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Video || targetNode?.type !== CanvasNodeType.Video || !node.metadata?.storyboardVideoDraftNodeId) return false;
+    if (!node.metadata.storyboardVideoTailFrameUrl && !node.metadata.storyboardVideoTailFrameStorageKey) return false;
+    const targetRowIndex = targetNode.metadata?.storyboardRowIndex;
+    return Boolean(
+        targetNode.metadata?.storyboardSourceNodeId
+        && node.metadata.storyboardSourceNodeId === targetNode.metadata.storyboardSourceNodeId
+        && targetRowIndex !== undefined
+        && node.metadata.storyboardRowIndex === targetRowIndex - 1
+    );
 }
 
 export function buildNodeResponseMessages(context: NodeGenerationContext): AiTextMessage[] {

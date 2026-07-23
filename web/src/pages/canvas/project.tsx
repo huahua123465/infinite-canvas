@@ -5268,7 +5268,7 @@ function InfiniteCanvasPage() {
                             ),
                         );
                         const nextDraft = nodesRef.current.find((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === node.metadata?.storyboardSourceNodeId && item.metadata.storyboardRowIndex === (node.metadata?.storyboardRowIndex ?? -2) + 1);
-                        if (nextDraft && tailFrame) {
+                        if (nextDraft && tailFrame && storyboardUsesPreviousTailFrame(nodesRef.current, node.metadata?.storyboardSourceNodeId, nextDraft.metadata?.storyboardRowIndex)) {
                             const tailReference = storyboardTailFrameReference(node.metadata?.storyboardRowIndex || 0, tailFrame, completedResult.metadata?.storyboardVideoVariantIndex, completedResult.id);
                             const references = storyboardPrioritizedVideoReferences(mergeStoryboardVideoReferences(nextDraft.metadata?.storyboardVideoReferences || [], tailReference), storyboardGeneratedFirstFrameUsesReference(node.metadata?.storyboardSourceNodeId || "", nextDraft.metadata?.storyboardRowIndex || 0, tailReference, nodesRef.current));
                             setConnections((prev) => syncStoryboardVideoReferenceConnections(prev, nextDraft.id, references, nodesRef.current));
@@ -8013,8 +8013,7 @@ function storyboardVideoSecondsForRow(templateSeconds: string | undefined, row?:
 
 function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined, tailFrame: UploadedImage | null, variantIndex?: number, resultNodeId?: string) {
     if (!sourceNodeId || rowIndex === undefined || !tailFrame) return nodes;
-    const sourceNode = nodes.find((node) => node.id === sourceNodeId);
-    if (!sourceNode?.metadata?.storyboardShotPlans?.[String(rowIndex + 1)]?.usePreviousTailFrame) return nodes;
+    if (!storyboardUsesPreviousTailFrame(nodes, sourceNodeId, rowIndex + 1)) return nodes;
     const reference = storyboardTailFrameReference(rowIndex, tailFrame, variantIndex, resultNodeId);
     return nodes.map((node) => {
         if (node.type !== CanvasNodeType.Video || node.metadata?.storyboardSourceNodeId !== sourceNodeId || node.metadata.storyboardRowIndex !== rowIndex + 1 || node.metadata.content || node.metadata.storyboardVideoDraftNodeId) return node;
@@ -8022,6 +8021,11 @@ function applyStoryboardTailFrameToNextVideo(nodes: CanvasNodeData[], sourceNode
         const references = storyboardPrioritizedVideoReferences(mergeStoryboardVideoReferences(current, reference), storyboardGeneratedFirstFrameUsesReference(sourceNodeId, rowIndex + 1, reference, nodes));
         return { ...node, metadata: { ...node.metadata, ...storyboardVideoVisualReferencePatch(node.metadata.storyboardVideoFinalPrompt || node.metadata.prompt || "", references, node.metadata.storyboardVideoAudioReferences) } };
     });
+}
+
+function storyboardUsesPreviousTailFrame(nodes: CanvasNodeData[], sourceNodeId: string | undefined, rowIndex: number | undefined) {
+    if (!sourceNodeId || rowIndex === undefined) return false;
+    return Boolean(nodes.find((node) => node.id === sourceNodeId)?.metadata?.storyboardShotPlans?.[String(rowIndex)]?.usePreviousTailFrame);
 }
 
 function refreshStoryboardVideoDraftReferences(videoNode: CanvasNodeData, scriptNode: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
