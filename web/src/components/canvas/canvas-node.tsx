@@ -1692,7 +1692,7 @@ function StoryboardVideoPromptPreviewModal({
 
     const toggleReference = (reference: StoryboardVideoReference) => {
         const selected = draftReferences.some((item) => item.mention === reference.mention);
-        const nextReferences = selected ? draftReferences.filter((item) => item.mention !== reference.mention) : dedupeStoryboardReferences([...draftReferences, { ...reference, role: reference.role || "reference", status: "bound" }]);
+        const nextReferences = selected ? draftReferences.filter((item) => item.mention !== reference.mention) : dedupeStoryboardReferences([...draftReferences, { ...storyboardPinnedReference(reference), role: reference.role || "reference", status: "bound" }]);
         setDraftReferences(nextReferences);
         let nextPrompt = draftFinalPrompt;
         const textarea = finalPromptTextareaRef.current;
@@ -1950,6 +1950,10 @@ function storyboardReferenceOptionLabel(reference: StoryboardVideoReference) {
     return `${source} · ${role}`;
 }
 
+function storyboardPinnedReference(reference: StoryboardVideoReference): StoryboardVideoReference {
+    return reference.source === "script" && reference.nodeId ? { ...reference, source: "node" } : reference;
+}
+
 function storyboardReferenceAssetCandidates(references: StoryboardVideoReference[], scriptReferences: StoryboardVideoReference[], imageAssets: ImageAsset[]) {
     const materialReferences = imageAssets
         .map((asset) => ({
@@ -2109,7 +2113,7 @@ function StoryboardVideoReferenceEditor({ node, open, references, scriptReferenc
     const addReference = (reference: StoryboardVideoReference, role: StoryboardVideoReferenceRole) => {
         setDraft((current) => {
             const mention = uniqueStoryboardMention(normalizeStoryboardMention(reference.mention || reference.name), current);
-            return [...current, { ...reference, mention, name: mention.replace(/^@/, ""), role, status: "bound" }];
+            return [...current, { ...storyboardPinnedReference(reference), mention, name: mention.replace(/^@/, ""), role, status: "bound" }];
         });
     };
     const setFirstFrameReference = (reference: StoryboardVideoReference) => {

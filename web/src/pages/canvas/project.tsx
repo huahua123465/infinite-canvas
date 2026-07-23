@@ -7389,9 +7389,9 @@ type ResolvedStoryboardReference = { mention: string; node?: CanvasNodeData; ref
 
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
     const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
-    const promptText = `${detail?.storyboardPrompt || ""}\n${detail?.videoMotionPrompt || ""}`;
     const assets = scriptNode.metadata?.storyboardAssets || [];
-    const mentions = Array.from(new Set([...storyboardAssetMentionsForPrompt(detail), ...assets.filter((asset) => promptText.includes(`@${asset.name}`) || promptText.includes(asset.name)).map((asset) => `@${asset.name}`)]));
+    const knownMentions = new Set(assets.map((asset) => `@${asset.name}`));
+    const mentions = Array.from(new Set((detail?.assetMentions || []).map(normalizeAssetMention).filter((mention) => knownMentions.has(mention))));
     const mentionNodeIds = scriptNode.metadata?.storyboardAssetMentionNodeIds || {};
     const assetNodeIds = scriptNode.metadata?.storyboardAssetNodeIds || {};
     const assetByName = new Map(assets.map((asset) => [`@${asset.name}`, asset]));
@@ -7515,14 +7515,16 @@ function stripStoryboardReferenceBindingLines(prompt: string) {
 
 function insertStoryboardReferenceBindings(prompt: string, marker: string, references: StoryboardVideoReference[]) {
     if (!references.length) return prompt;
-    const markerIndex = prompt.indexOf(marker);
-    const nextMarkerIndex = markerIndex < 0 ? -1 : prompt.slice(markerIndex + marker.length).search(/\n【[^】]+】/);
-    const section = markerIndex < 0 ? "" : prompt.slice(markerIndex, nextMarkerIndex < 0 ? undefined : markerIndex + marker.length + nextMarkerIndex);
+    const squareMarker = `[${marker.replace(/[【】]/g, "")}]`;
+    const actualMarker = prompt.includes(marker) ? marker : prompt.includes(squareMarker) ? squareMarker : marker;
+    const markerIndex = prompt.indexOf(actualMarker);
+    const nextMarkerIndex = markerIndex < 0 ? -1 : prompt.slice(markerIndex + actualMarker.length).search(/\n(?:【[^】]+】|\[[^\]]+\])/);
+    const section = markerIndex < 0 ? "" : prompt.slice(markerIndex, nextMarkerIndex < 0 ? undefined : markerIndex + actualMarker.length + nextMarkerIndex);
     const missing = references.filter((reference) => !section.includes(reference.mention));
     if (!missing.length) return prompt;
     const lines = missing.map(storyboardReferenceBindingLine).join("\n");
-    if (markerIndex >= 0) return prompt.replace(marker, `${marker}\n${lines}`);
-    const bindingMarker = "【参考资产绑定】";
+    if (markerIndex >= 0) return prompt.replace(actualMarker, `${actualMarker}\n${lines}`);
+    const bindingMarker = prompt.includes("[参考资产绑定]") ? "[参考资产绑定]" : "【参考资产绑定】";
     return prompt.includes(bindingMarker) ? prompt.replace(bindingMarker, `${bindingMarker}\n${lines}`) : `${bindingMarker}\n${lines}\n\n${prompt}`.trim();
 }
 
@@ -7931,8 +7933,7 @@ function mergeStoryboardVideoReferenceList(base: StoryboardVideoReference[], ext
 }
 
 function mergeStoryboardAutomaticVideoReferences(existing: StoryboardVideoReference[], automatic: StoryboardVideoReference[]) {
-    const automaticMentions = new Set(automatic.map((item) => item.mention));
-    const preserved = existing.filter((item) => item.role === "firstFrame" || item.role === "lastFrame" || item.source === "asset" || item.source === "node" || !automaticMentions.has(item.mention));
+    const preserved = existing.filter((item) => item.role === "firstFrame" || item.role === "lastFrame" || item.source === "asset" || item.source === "node");
     return mergeStoryboardVideoReferenceList(automatic, preserved);
 }
 
@@ -7956,7 +7957,8 @@ function storyboardPrioritizedVideoReferences(references: StoryboardVideoReferen
     const identity = pinned.some((item) => item.kind === "character") ? undefined : references.find((item) => item.kind === "character" && item.role !== "firstFrame" && !explicit.includes(item));
     const scenes = references.filter((item) => item.kind === "scene" && item.role !== "firstFrame" && !explicit.includes(item));
     const scene = pinned.some((item) => item.kind === "scene") ? undefined : scenes.find((item) => item.sceneViewRole === "lock") || scenes[0];
-    return [firstFrame, ...pinned, identity, scene]
+    const prop = pinned.some((item) => item.kind === "prop") ? undefined : references.find((item) => item.kind === "prop" && item.role !== "firstFrame" && !explicit.includes(item));
+    return [firstFrame, ...pinned, identity, scene, prop]
         .filter((item, index, items): item is StoryboardVideoReference => Boolean(item && items.findIndex((candidate) => candidate?.mention === item.mention) === index))
         .slice(0, 9);
 }
@@ -8481,7 +8483,8 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
         return true;
     });
     const scene = relevant.find((asset) => asset.kind === "scene");
-    const required = scene ? [...requiredCharacters, scene] : requiredCharacters;
+    const prop = relevant.find((asset) => asset.kind === "prop");
+    const required = [...requiredCharacters, scene, prop].filter((asset): asset is StoryboardAsset => Boolean(asset));
     const requiredCharacterNames = new Set(requiredCharacters.map((asset) => asset.name));
     const requiredCharacterBases = new Set(requiredCharacters.map((asset) => asset.baseName || asset.name));
     const retainedMentions = (normalized.assetMentions || []).filter((mention) => {
@@ -8489,6 +8492,7 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
         if (!asset) return false;
         if (asset.kind === "character" && requiredCharacterBases.has(asset.baseName || asset.name)) return requiredCharacterNames.has(asset.name);
         if (asset.kind === "scene" && scene) return asset.id === scene.id;
+        if (asset.kind === "prop") return asset.id === prop?.id;
         return true;
     });
     const assetMentions = Array.from(new Set([...required.map((asset) => `@${asset.name}`), ...retainedMentions]));
@@ -8525,8 +8529,23 @@ function storyboardSceneFallbackScore(asset: StoryboardAsset, locations: string[
     return locations.reduce((total, location) => total + overlap(location) * 6, 0) + overlap(visualText) * 2;
 }
 
+function storyboardPropMatchScore(asset: StoryboardAsset, visualText: string, actionText: string) {
+    const assetNameFragments = storyboardSceneMatchFragments(asset.name);
+    const assetDetailFragments = storyboardSceneMatchFragments(`${asset.description} ${asset.prompt}`);
+    const scoreEvidence = (value: string, weight: number) => {
+        const fragments = storyboardSceneMatchFragments(value);
+        const nameOverlap = Array.from(fragments).filter((fragment) => assetNameFragments.has(fragment)).length;
+        const detailOverlap = Array.from(fragments).filter((fragment) => assetDetailFragments.has(fragment)).length;
+        if (!value.includes(asset.name) && nameOverlap === 0) return 0;
+        return (value.includes(asset.name) ? 12 : 0) + nameOverlap * weight + Math.min(detailOverlap, 4);
+    };
+    return scoreEvidence(visualText, 4) + scoreEvidence(actionText, 6);
+}
+
 function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
+    const propVisualText = [row[2], ...sourceBeats.flatMap((beat) => [beat.sourceText, beat.event])].filter(Boolean).join(" ");
+    const propActionText = [shotPlan?.goal, shotPlan?.tactic, shotPlan?.actionBeats?.join(" "), shotPlan?.obstacleReaction, shotPlan?.turningAction, shotPlan?.result].filter(Boolean).join(" ");
     const currentStages = [shotPlan?.timeStage, ...sourceBeats.map((beat) => beat.timeStage)].filter((stage): stage is string => Boolean(stage));
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
     const locations = sourceBeats.map((beat) => beat.location).filter(Boolean);
@@ -8534,11 +8553,11 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
         .map((asset) => {
             const identityMatch = asset.kind === "character" && [asset.name, asset.baseName].filter(Boolean).some((name) => evidence.includes(String(name)) || Array.from(characters).some((character) => String(name).includes(character) || character.includes(String(name))));
             const sceneMatch = asset.kind === "scene" && (evidence.includes(asset.name) || locations.some((location) => asset.name.includes(location) || location.includes(asset.name) || asset.description.includes(location)));
-            const propMatch = asset.kind === "prop" && evidence.includes(asset.name);
+            const propScore = asset.kind === "prop" ? storyboardPropMatchScore(asset, propVisualText, propActionText) : 0;
             const lifeStage = asset.lifeStage;
             const stageMatch = asset.kind === "character" && Boolean(lifeStage && (evidence.includes(lifeStage) || currentStages.some((stage) => stage.includes(lifeStage) || lifeStage.includes(stage))));
             const stageScore = asset.kind !== "character" ? 0 : stageMatch ? 4 : lifeStage ? 0 : 1;
-            const matchScore = (identityMatch ? 4 : 0) + (sceneMatch || propMatch ? 3 : 0);
+            const matchScore = (identityMatch ? 4 : 0) + (sceneMatch ? 3 : 0) + propScore;
             return { asset, score: matchScore ? matchScore + stageScore + requiredAssetPriority(asset) : 0 };
         })
         .filter((item) => item.score > 1)
@@ -8551,20 +8570,20 @@ function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: 
         .filter((item) => item.score > 0)
         .sort((first, second) => second.score - first.score || requiredAssetPriority(second.asset) - requiredAssetPriority(first.asset))[0]?.asset;
     const primaryScene = matchedScene || fallbackScene;
+    const primaryProp = ranked.find((asset) => asset.kind === "prop");
     const selectedCharacterBases = new Set<string>();
     const allowsMultiStageSamePerson = storyboardAllowsMultipleCharacterStages(sourceBeats, row, shotPlan);
-    const selected = ranked
+    const selectedCharacters = ranked
         .filter((asset) => {
-            if (asset.kind !== "character") return true;
+            if (asset.kind !== "character") return false;
             if (allowsMultiStageSamePerson) return true;
             const baseName = asset.baseName || asset.name;
             if (selectedCharacterBases.has(baseName)) return false;
             selectedCharacterBases.add(baseName);
             return true;
         })
-        .slice(0, 6);
-    if (!primaryScene || selected.some((asset) => asset.id === primaryScene.id)) return selected;
-    return [...selected.filter((asset) => asset.kind !== "scene").slice(0, 5), primaryScene];
+        .slice(0, 6 - Number(Boolean(primaryScene)) - Number(Boolean(primaryProp)));
+    return [...selectedCharacters, primaryScene, primaryProp].filter((asset): asset is StoryboardAsset => Boolean(asset));
 }
 
 function storyboardAllowsMultipleCharacterStagesForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {
