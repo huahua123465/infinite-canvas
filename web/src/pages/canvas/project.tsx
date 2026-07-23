@@ -8480,7 +8480,7 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const episodeAssets = storyboardPromptCandidateAssets(assets, shotPlan?.chapterId);
     const visualSourceBeats = storyboardVisualSourceBeats(sourceBeats, shotPlan);
-    const relevant = storyboardRelevantPromptAssets(episodeAssets, visualSourceBeats, rows[rowIndex] || [], shotPlan);
+    const relevant = storyboardRelevantPromptAssets(episodeAssets, visualSourceBeats, rows[rowIndex] || [], shotPlan, `${normalized.storyboardPrompt}\n${normalized.videoMotionPrompt}`);
     const characterNames = new Set<string>();
     const allowsMultiStageSamePerson = storyboardAllowsMultipleCharacterStages(visualSourceBeats, rows[rowIndex] || [], shotPlan);
     const requiredCharacters = relevant.filter((asset) => {
@@ -8551,10 +8551,10 @@ function storyboardPropMatchScore(asset: StoryboardAsset, visualText: string, ac
     return scoreEvidence(visualText, 4) + scoreEvidence(actionText, 6);
 }
 
-function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan) {
+function storyboardRelevantPromptAssets(assets: StoryboardAsset[], sourceBeats: StoryboardSourceBeat[], row: string[], shotPlan?: StoryboardShotPlan, completedPrompt = "") {
     const evidence = [row.join(" "), shotPlan?.timeStage, ...sourceBeats.flatMap((beat) => [beat.location, beat.timeStage, beat.event, ...beat.characters])].filter(Boolean).join(" ");
-    const propVisualText = [row[2], ...sourceBeats.flatMap((beat) => [beat.sourceText, beat.event])].filter(Boolean).join(" ");
-    const propActionText = [shotPlan?.goal, shotPlan?.tactic, shotPlan?.actionBeats?.join(" "), shotPlan?.obstacleReaction, shotPlan?.turningAction, shotPlan?.result].filter(Boolean).join(" ");
+    const propVisualText = [row[2], row[8], completedPrompt, ...sourceBeats.flatMap((beat) => [beat.sourceText, beat.event])].filter(Boolean).join(" ");
+    const propActionText = [completedPrompt, shotPlan?.goal, shotPlan?.tactic, shotPlan?.actionBeats?.join(" "), shotPlan?.obstacleReaction, shotPlan?.turningAction, shotPlan?.result].filter(Boolean).join(" ");
     const currentStages = [shotPlan?.timeStage, ...sourceBeats.map((beat) => beat.timeStage)].filter((stage): stage is string => Boolean(stage));
     const characters = new Set(sourceBeats.flatMap((beat) => beat.characters));
     const locations = sourceBeats.map((beat) => beat.location).filter(Boolean);
