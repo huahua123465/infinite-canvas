@@ -3444,6 +3444,8 @@ function InfiniteCanvasPage() {
                     .filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === scriptNode.id)
                     .map((item) => refreshStoryboardVideoDraftReferences(item, relinkedScriptNode, relinkLookupNodes, connectionsRef.current));
                 const refreshedDraftById = new Map(refreshedDraftNodes.map((item) => [item.id, item]));
+                const refreshedReferenceCounts = { character: 0, scene: 0, prop: 0 };
+                refreshedDraftNodes.flatMap((item) => item.metadata?.storyboardVideoReferences || []).forEach((reference) => { if (reference.kind) refreshedReferenceCounts[reference.kind] += 1; });
                 setNodes((prev) => {
                     const exportedById = new Map([...workspaceNodes, ...exportedNodes].map((item) => [item.id, item]));
                     const nextWorkspaceIds = new Set(workspaceNodes.map((item) => item.id));
@@ -3461,7 +3463,7 @@ function InfiniteCanvasPage() {
                     const base = addUniqueConnections(prev.filter((connection) => !workspaceIds.has(connection.fromNodeId) && !workspaceIds.has(connection.toNodeId)), next);
                     return refreshedDraftNodes.reduce((current, draftNode) => syncStoryboardVideoReferenceConnections(current, draftNode.id, draftNode.metadata?.storyboardVideoReferences || [], relinkLookupNodes), base);
                 });
-                message.success({ key: messageKey, content: `已更新角色、场景、道具工作区，共包含 ${exportedNodes.length} 个已生成资产节点${refreshedDraftNodes.length ? `，并同步 ${refreshedDraftNodes.length} 个视频草稿的参考连线` : ""}` });
+                message.success({ key: messageKey, content: `已更新角色、场景、道具工作区，共包含 ${exportedNodes.length} 个已生成资产节点${refreshedDraftNodes.length ? `，并同步 ${refreshedDraftNodes.length} 个视频草稿：人物 ${refreshedReferenceCounts.character}、场景 ${refreshedReferenceCounts.scene}、道具 ${refreshedReferenceCounts.prop}` : ""}` });
             } catch (error) {
                 message.error({ key: messageKey, content: error instanceof Error ? error.message : "导出资产失败" });
             } finally {
@@ -7014,6 +7016,12 @@ function storyboardAssetsForEpisode(node: CanvasNodeData, episodeId?: string) {
     return (node.metadata?.storyboardAssets || []).filter((asset) => !episodeId || asset.chapterIds === undefined || asset.chapterIds.includes(episodeId));
 }
 
+function storyboardPromptCandidateAssets(assets: StoryboardAsset[], chapterId?: string) {
+    const episodeAssets = assets.filter((asset) => !chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(chapterId));
+    const episodeAssetIds = new Set(episodeAssets.map((asset) => asset.id));
+    return [...episodeAssets, ...assets.filter((asset) => asset.kind === "prop" && !episodeAssetIds.has(asset.id))];
+}
+
 async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
     let nextIndex = 0;
     const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -8295,7 +8303,7 @@ function storyboardAssetReady(asset: Pick<StoryboardAsset, "imageUrl" | "storage
 function buildStoryboardPromptComposeSource(node: CanvasNodeData, rows: string[][], rowIndex: number, strictSafety = false) {
     const row = rows[rowIndex] || [];
     const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
-    const episodeAssets = (node.metadata?.storyboardAssets || []).filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const episodeAssets = storyboardPromptCandidateAssets(node.metadata?.storyboardAssets || [], shotPlan?.chapterId);
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const visualSourceBeats = storyboardVisualSourceBeats(sourceBeats, shotPlan);
@@ -8338,7 +8346,7 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
     const visualSourceBeats = storyboardVisualSourceBeats(sourceBeats, shotPlan);
-    const episodeAssets = (node.metadata?.storyboardAssets || []).filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const episodeAssets = storyboardPromptCandidateAssets(node.metadata?.storyboardAssets || [], shotPlan?.chapterId);
     const assets = storyboardSingleScenePromptAssets(storyboardRelevantPromptAssets(episodeAssets, visualSourceBeats, row, shotPlan), visualSourceBeats).slice(0, 3);
     const assetMentions = assets.map((asset) => `@${asset.name}`);
     const character = assets.find((asset) => asset.kind === "character");
@@ -8470,7 +8478,7 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
     const shotPlan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
     const beatById = new Map((node.metadata?.storyboardSourceBeats || []).map((beat) => [beat.id, beat]));
     const sourceBeats = shotPlan?.sourceBeatIds.map((id) => beatById.get(id)).filter((beat): beat is StoryboardSourceBeat => Boolean(beat)) || [];
-    const episodeAssets = assets.filter((asset) => !shotPlan?.chapterId || asset.chapterIds === undefined || asset.chapterIds.includes(shotPlan.chapterId));
+    const episodeAssets = storyboardPromptCandidateAssets(assets, shotPlan?.chapterId);
     const visualSourceBeats = storyboardVisualSourceBeats(sourceBeats, shotPlan);
     const relevant = storyboardRelevantPromptAssets(episodeAssets, visualSourceBeats, rows[rowIndex] || [], shotPlan);
     const characterNames = new Set<string>();
@@ -8483,7 +8491,8 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
         return true;
     });
     const scene = relevant.find((asset) => asset.kind === "scene");
-    const prop = relevant.find((asset) => asset.kind === "prop");
+    const explicitProp = (normalized.assetMentions || []).map((mention) => assets.find((asset) => asset.kind === "prop" && `@${asset.name}` === mention)).find((asset): asset is StoryboardAsset => Boolean(asset));
+    const prop = relevant.find((asset) => asset.kind === "prop") || explicitProp;
     const required = [...requiredCharacters, scene, prop].filter((asset): asset is StoryboardAsset => Boolean(asset));
     const requiredCharacterNames = new Set(requiredCharacters.map((asset) => asset.name));
     const requiredCharacterBases = new Set(requiredCharacters.map((asset) => asset.baseName || asset.name));
