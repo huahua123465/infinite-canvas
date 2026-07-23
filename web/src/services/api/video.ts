@@ -318,18 +318,23 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     }
     assertSeedanceVideoReferences(videoReferences, fixedResolution ? 2_000 : 4_000, fixedResolution ? { minSize: 300, maxSize: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 } : undefined);
     assertSeedanceAudioReferences(audioReferences);
-    const imageUrls = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
+    const limitedReferences = references.slice(0, limits.images);
+    const firstFrameIndex = limitedReferences.findIndex((image) => image.videoReferenceRole === "firstFrame");
+    const requestReferences = firstFrameIndex > 0 ? [limitedReferences[firstFrameIndex], ...limitedReferences.filter((_, index) => index !== firstFrameIndex)] : limitedReferences;
+    const imageUrls = await Promise.all(requestReferences.map((image) => resolveSeedanceImageUrl(config, image)));
     const referenceVideos = videoReferences.slice(0, limits.videos).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考视频 ${index + 1}`));
     const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
-    const primaryImageUrl = imageUrls[0] || "";
-    const extraImageUrls = imageUrls.slice(1);
-    const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, references, videoReferences, audioReferences);
+    const hasFirstFrame = firstFrameIndex >= 0;
+    const requiresPrimaryImage = hasFirstFrame || Boolean(referenceVideos.length || referenceAudios.length);
+    const primaryImageUrl = requiresPrimaryImage ? imageUrls[0] || "" : "";
+    const referenceImageUrls = requiresPrimaryImage ? imageUrls.slice(1) : imageUrls;
+    const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, requestReferences, videoReferences, audioReferences);
     if (requestPrompt.length > 5000) throw new Error(`${modelName} 最终视频提示词不能超过 5000 个字符，请精简提示词或参考素材名称`);
     try {
         const requestUrl = aiApiUrl(config, "/videos");
         let created: VideoResponse;
         let requestFields: string[];
-        const useMultipartImage = imageUrls.length === 1 && imageUrls[0].startsWith("data:") && !referenceVideos.length && !referenceAudios.length;
+        const useMultipartImage = hasFirstFrame && imageUrls.length === 1 && imageUrls[0].startsWith("data:") && !referenceVideos.length && !referenceAudios.length;
         if (useMultipartImage) {
             const body = new FormData();
             body.set("model", modelName);
@@ -340,7 +345,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
                 body.set("resolution", normalizeCangyuanSeedanceResolution(config.vquality));
                 body.set("audio", String(boolConfig(config.videoGenerateAudio, true)));
             }
-            body.append("image", dataUrlToFile({ ...references[0], dataUrl: imageUrls[0] }), references[0].name || "reference.png");
+            body.append("image", dataUrlToFile({ ...requestReferences[0], dataUrl: imageUrls[0] }), requestReferences[0].name || "reference.png");
             referenceVideos.forEach((url) => body.append("reference_videos", url));
             referenceAudios.forEach((url) => body.append("reference_audios", url));
             created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
@@ -352,9 +357,10 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
                 aspect_ratio: normalizeCangyuanVideoRatio(config.size),
                 duration: normalizeCangyuanVideoDuration(config.videoSeconds),
                 ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
-                ...(fixedResolution && imageUrls.length ? { image_url: imageUrls[0], ...(imageUrls.length > 1 ? { reference_image_urls: imageUrls.slice(1) } : {}) } : {}),
+                ...(fixedResolution && primaryImageUrl ? { image_url: primaryImageUrl } : {}),
+                ...(fixedResolution && referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
                 ...(!fixedResolution && primaryImageUrl ? { image_url: primaryImageUrl } : {}),
-                ...(!fixedResolution && extraImageUrls.length ? { reference_image_urls: extraImageUrls } : {}),
+                ...(!fixedResolution && referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
                 ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
                 ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
             };

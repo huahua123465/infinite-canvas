@@ -6425,7 +6425,7 @@ async function resolveStoryboardVideoReferences(references?: StoryboardVideoRefe
         sortStoryboardVideoReferences(references).map(async (reference, index): Promise<ReferenceImage | null> => {
             const source = reference.storageKey || reference.url || "";
             const dataUrl = source.startsWith("image:") ? await resolveImageUrl(source, "") : source;
-            return dataUrl ? { id: reference.assetId || reference.nodeId || `${index}`, name: `${reference.mention || reference.name || `reference-${index}`}.png`, type: "image/png", dataUrl, url: dataUrl, storageKey: reference.storageKey } : null;
+            return dataUrl ? { id: reference.assetId || reference.nodeId || `${index}`, name: `${reference.mention || reference.name || `reference-${index}`}.png`, type: "image/png", dataUrl, url: dataUrl, storageKey: reference.storageKey, videoReferenceRole: reference.role || "reference" } : null;
         }),
     );
     return items.filter((item): item is ReferenceImage => Boolean(item));
