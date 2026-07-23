@@ -86,6 +86,8 @@ Shot logic:
 
 Avoid forcing exact timing such as 0-3 seconds unless required. The model handles natural rhythm better than rigid timestamps.
 
+Infinite Canvas step 3 explicitly requires exact timing. For a 15-second clip, preserve the first-step `0-3 / 3-9 / 9-12 / 12-15` action contract: the opening segment establishes scene and blocking while executing the first beat, the middle segments continue the causal action and visible result, and the last segment only holds the landing.
+
 ## 5. Action Writing
 
 Good action is physical, gradual, and continuous.
@@ -186,6 +188,8 @@ Video motion prompt emphasis:
 - emotional externalization
 - audio and dialogue
 - stability constraints
+- a dedicated `[道具设定]` subsection when a key prop asset is bound
+- exact `@资产名` in the actual timeline segment where each visible character or prop participates; the scene reference appears in the opening frame or opening segment
 
 ## 10. Prompt Review Checklist
 

@@ -70,6 +70,15 @@ Before returning, check:
 - Are dialogue and narration grounded in source wording rather than invented exposition?
 - Can downstream image and video models see the actions being requested?
 
+## Executable 15-Second Timeline
+
+- The first-step `visual` field is the production action contract, not a summary. Write exactly four lines: `0-3秒`, `3-9秒`, `9-12秒`, and `12-15秒`.
+- `0-3秒` establishes the single scene and blocking while executing the first physical beat. It must not stop at “建立场景” or another shot label.
+- In the first three lines, name the actor or object, body part or prop, motion or operation, target, and resulting physical change. Use one or two executable sentences per line instead of short action labels.
+- Reuse the corresponding typed action beat's participant names, prop names, core physical verbs, and result terms in `visual`; do not replace them with untraceable synonyms.
+- `12-15秒` only holds the established result, end state, and stable landing. Do not introduce a new action, person, place, prop, or event.
+- First-step planning uses semantic character, scene, and prop names. Exact `@资产名` references are added only after second-step assets exist.
+
 ## Attribution
 
 This project-specific workflow transfers methodological patterns from the MIT-licensed "山音超级编剧大师" by @山音. See `THIRD_PARTY_NOTICE.md`. It does not redistribute the original packaged skill as a product feature.

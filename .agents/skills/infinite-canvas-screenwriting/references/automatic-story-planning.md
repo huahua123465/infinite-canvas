@@ -69,6 +69,17 @@ Each 10-15 second clip should additionally define:
 
 The fields guide action, pacing, assets, and final prompts. They never authorize a new event.
 
+For a 15-second production clip, the `visual` handoff must contain an executable four-line timeline:
+
+```text
+0-3秒：establish the single scene and blocking while executing the first physical beat
+3-9秒：continue from the first physical result and execute the second beat
+9-12秒：show the obstacle reaction, turning beat, and visible result
+12-15秒：hold only the result, end state, and stable landing
+```
+
+Each of the first three lines names the actor or object, body part or prop, motion or operation, target, and resulting physical change. Short labels such as “木杖落地”, “人物前行”, or “动作继续” are not production-ready. Planning uses semantic asset names; exact `@资产名` references are reserved for the downstream prompt after assets exist.
+
 ## Visual Writing Rules
 
 - Replace psychological labels with observable behavior.

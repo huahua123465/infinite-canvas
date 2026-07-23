@@ -155,6 +155,34 @@ export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     });
 }
 
+function storyboardActionFragments(value: string) {
+    const compact = value.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "");
+    return new Set(Array.from({ length: Math.max(0, compact.length - 1) }, (_, index) => compact.slice(index, index + 2)).filter((item) => !/^(动作|结果|人物|身体|物体|当前|场景|保持)$/.test(item)));
+}
+
+function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) {
+    const segments = Array.from(value.matchAll(/(?:^|\n)\s*(\d+)\s*[-—–~至]\s*(\d+)\s*秒\s*[：:]\s*([^\n]+)/g)).map((item) => ({ start: Number(item[1]), end: Number(item[2]), content: item[3].trim() }));
+    const expected = [[0, 3], [3, 9], [9, 12], [12, 15]];
+    if (segments.length !== 4 || segments.some((segment, index) => segment.start !== expected[index][0] || segment.end !== expected[index][1])) return "画面描述缺少0-3、3-9、9-12、12-15秒四段详细时间轴";
+    const minimumLengths = [24, 32, 24, 18];
+    const shallowIndex = segments.findIndex((segment, index) => Array.from(segment.content.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length < minimumLengths[index]);
+    if (shallowIndex >= 0) return `画面描述${segments[shallowIndex].start}-${segments[shallowIndex].end}秒过于简略，必须写清执行者、身体部位或物体、动作对象和物理变化`;
+    const actionMismatchIndex = (plan.typedActionBeats || []).findIndex((beat, index) => {
+        const actual = storyboardActionFragments(segments[Math.min(index, 2)]?.content || "");
+        const actionRequired = storyboardActionFragments(beat.action);
+        const resultRequired = storyboardActionFragments(beat.result || "");
+        const actionOverlap = Array.from(actionRequired).filter((item) => actual.has(item)).length;
+        const resultOverlap = Array.from(resultRequired).filter((item) => actual.has(item)).length;
+        return actionOverlap < Math.min(2, actionRequired.size) || resultOverlap < Math.min(1, resultRequired.size);
+    });
+    if (actionMismatchIndex >= 0) return `画面描述第${actionMismatchIndex + 1}段没有展开对应类型化动作节拍`;
+    if (!/稳定|保持|停住|静止|落点|不再|维持/.test(segments[3].content)) return "画面描述12-15秒缺少结果保持和稳定落点";
+    const endingRequired = storyboardActionFragments(`${plan.result || ""}${plan.endState || ""}`);
+    const endingActual = storyboardActionFragments(segments[3].content);
+    if (Array.from(endingRequired).filter((item) => endingActual.has(item)).length < Math.min(2, endingRequired.size)) return "画面描述12-15秒没有保持场景卡结果与结束状态";
+    return "";
+}
+
 export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) {
     const plan = shot.plan;
     const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
@@ -165,6 +193,9 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
     const unboundTypedAction = (plan.typedActionBeats || []).some((item) => !actors.has(item.actor) || !patients.has(item.patient));
     const infantActor = (plan.participants || []).find((item) => item.role === "actor" && /出生|新生儿|婴儿|宝宝|襁褓|幼儿/.test(`${item.name} ${item.lifeStage || ""}`));
     const infantCareAction = Boolean(infantActor && (plan.typedActionBeats || []).some((item) => item.actor === infantActor.name && /抱起|抱住|托住|喂养|喂奶|换尿布|照料|照护|护理|包裹|拢紧|整理襁褓|调整包裹|安置|穿衣|擦洗/.test(item.action)));
+    const visualTimelineIssue = storyboardVisualTimelineIssue(shot.row[2] || "", plan);
+    const actionCountMismatch = (plan.actionBeats?.length || 0) !== (plan.typedActionBeats?.length || 0);
+    const typedActionMissingResult = (plan.typedActionBeats || []).some((item) => !item.result?.trim());
     return [
         plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
         !plan.goal ? "缺少当前可见目标" : "",
@@ -177,6 +208,8 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
         humanRoleRequired && !patients.size ? "缺少明确动作承受者 patient" : "",
         (plan.typedActionBeats?.length || 0) < 2 ? "类型化动作节拍少于2个" : "",
         (plan.typedActionBeats?.length || 0) > 3 ? "类型化动作节拍超过3个" : "",
+        actionCountMismatch ? "动作节拍与类型化动作节拍没有逐项对应" : "",
+        typedActionMissingResult ? "类型化动作节拍缺少具体物理结果" : "",
         humanRoleRequired && unboundTypedAction ? "类型化动作节拍引用了未绑定的执行者或承受者" : "",
         humanRoleRequired && infantCareAction ? "婴儿/幼儿不能作为成人照护动作的执行者" : "",
         narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
@@ -186,6 +219,7 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
         !plan.valueShift ? "缺少价值变化" : "",
         !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
         abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
+        visualTimelineIssue,
     ].filter(Boolean);
 }
 
@@ -289,7 +323,7 @@ export function storyboardBatchClipTargets(batches: StoryboardSourceBeat[][], to
 }
 
 export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, totalTarget?: number) {
-    const clipRule = "每个动态片段固定15秒，只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜，0-3秒建立场景，3-9秒推进动作，9-12秒形成反作用或可见结果，12-15秒只保持稳定落点。旁白目标36-45个汉字，硬上限48个汉字。相邻背景事实只有在同地点、同人物时期且不要求第二段可见剧情时才能由旁白承载。";
+    const clipRule = "每个动态片段固定15秒，只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜，0-3秒建立场景与站位并执行第一拍，3-9秒承接首拍结果推进第二拍，9-12秒形成反作用、动作转折和可见结果，12-15秒只保持稳定落点。第一步画面描述的前三段必须写清执行者、身体部位或道具、动作对象与物理结果，禁止短动作标签。旁白目标36-45个汉字，硬上限48个汉字。相邻背景事实只有在同地点、同人物时期且不要求第二段可见剧情时才能由旁白承载。";
     const budgetRule = totalTarget ? `完整生产的动态视频总预算严格为${totalTarget}个，必须通过把同地点、同人物时期的非主要事实放入voiceoverBeatIds覆盖，不能增加镜头突破预算。` : "";
     if (scope === "single") return `这是整篇故事的单集浓缩生产。${budgetRule}${clipRule}无法放入的次要细节继续浓缩，不得把多个地点、人物时期或主要事件硬塞进同一视频。`;
     return `这是完整故事生产。${budgetRule}${clipRule}章节只按童年、青年、成家、中年、晚年、身后等宽泛人生阶段，以及迁徙、婚姻、重大损失、身体状态不可逆变化和高潮/结局等强转折划分；不得因任意phase、timeStage文案或地点小变化切章，也不得按一事实一片段无限拆分。`;

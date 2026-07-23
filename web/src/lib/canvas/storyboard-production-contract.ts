@@ -243,7 +243,27 @@ function validateFinalPrompt(contract: StoryboardProductionContract, block: (cod
     if (!continuous) block("timeline_coverage_invalid", `四段时间轴必须从 0 秒连续覆盖到 ${contract.duration} 秒`, "videoMotionPrompt");
     const expected15s = [[0, 3], [3, 9], [9, 12], [12, 15]];
     if (contract.duration === 15 && segments.some((segment, index) => segment.start !== expected15s[index][0] || segment.end !== expected15s[index][1])) block("timeline_15s_ranges_invalid", "15 秒镜头必须使用 0-3、3-9、9-12、12-15 秒四段时间轴", "videoMotionPrompt");
+    if (Array.from((segments[0]?.content || "").replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length < 24) block("timeline_opening_action_shallow", "0-3 秒必须在建场同时执行第一拍详细物理动作", "videoMotionPrompt");
     if (!/稳定|保持|停住|静止|落点|不再/.test(segments.at(-1)?.content || "")) block("timeline_final_unstable", "最后一段必须保持已形成的结果，不得引入新剧情", "videoMotionPrompt");
+    const timelineText = segments.map((segment) => segment.content).join("\n");
+    const participantNames = new Set(contract.participants.map((participant) => participant.name));
+    const propNames = new Set(contract.actionBeats.map((beat) => beat.prop).filter((name): name is string => Boolean(name)));
+    contract.assets.filter((asset) =>
+        (asset.role === "characterIdentity" && (participantNames.has(asset.name || "") || participantNames.has(asset.baseName || asset.name || "")))
+        || (asset.role === "propContinuity" && (propNames.has(asset.name || "") || Array.from(propNames).some((name) => Boolean(asset.name?.includes(name))))),
+    ).forEach((asset) => {
+        const matchingBeatIndexes = contract.actionBeats.flatMap((beat, index) => {
+            const characterMatch = asset.role === "characterIdentity" && [beat.actor, beat.patient].some((name) => name === asset.name || name === asset.baseName);
+            const propMatch = asset.role === "propContinuity" && Boolean(beat.prop && (beat.prop === asset.name || Boolean(asset.name?.includes(beat.prop))));
+            return characterMatch || propMatch ? [Math.min(index, 2)] : [];
+        });
+        const targetSegments = matchingBeatIndexes.length ? Array.from(new Set(matchingBeatIndexes)).map((index) => segments[index]?.content || "") : [timelineText];
+        if (!targetSegments.every((segment) => segment.includes(asset.mention))) block("asset_missing_from_action_timeline", `${asset.mention}只声明了参考职责，没有在每个实际参与的动作时间段中使用`, "videoMotionPrompt");
+    });
+    const startFrame = contract.videoMotionPrompt.match(/【起始画面】([\s\S]*?)【\d+秒时间轴】/)?.[1] || "";
+    contract.assets.filter((asset) => asset.role === "sceneSpace").forEach((asset) => {
+        if (!`${startFrame}\n${segments[0]?.content || ""}`.includes(asset.mention)) block("scene_missing_from_opening", `${asset.mention}必须出现在起始画面或0-3秒建场动作中`, "videoMotionPrompt");
+    });
 }
 
 function productionAssetBinding(reference: StoryboardVideoReference, referenceIndex: number, assetById: Map<string, StoryboardAsset>, assetByMention: Map<string, StoryboardAsset>): StoryboardProductionAssetBinding {

@@ -67,6 +67,8 @@ For Infinite Canvas script-node step 3:
 - `videoMotionPrompt` is for video generation. It should emphasize start/action/end, camera movement, motion continuity, emotion externalized through body details, audio, and constraints.
 - `assetMentions` must contain only exact `@资产名` values that appear in the supplied asset list.
 - If a character has an official actor/base face, describe it as the face identity anchor. Do not output asset IDs.
+- Preserve the first-step four-part action contract: execute the first physical beat while establishing the shot, continue the next beat, show the turn and visible result, then hold the landing. Do not compress detailed first-step actions back into shot labels.
+- Add `[道具设定]` beside scene, character, and blocking settings. A bound scene must appear in the opening frame or opening timeline; every bound visible character or prop must use its exact `@资产名` in the timeline segment where it acts or is used, not only in `assetMentions`.
 
 ## Quality Bar
 
