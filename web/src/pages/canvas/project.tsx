@@ -27,6 +27,7 @@ import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-
 import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
+import { auditStoryboardProductionContract, type StoryboardProductionContractStage } from "@/lib/canvas/storyboard-production-contract";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -264,14 +265,14 @@ const STORYBOARD_SINGLE_EPISODE_CONDENSE_PROMPT = `你是漫剧单集编剧。�
 const STORYBOARD_PLANNED_SHOTS_PROMPT = `你是漫剧单集导演。请把给定故事事实按原文顺序合并为可直接生成的 15 秒视频片段。
 
 只输出 JSON，不要 Markdown，不要解释：
-{"shots":[{"sourceBeatIds":["B001","B002"],"visualBeatIds":["B002"],"voiceoverBeatIds":["B001"],"continuityGroupId":"G001","timeStage":"童年时期","duration":"15s","dramaticFunction":"setup|inciting|escalation|turn|climax|resolution","goal":"当前可见目标","obstacle":"当前可见阻碍或压力","stakes":"失败会造成的具体损失或恶化","tactic":"人物为达成目标采取的具体物理策略","actionBeats":["动作启动","动作推进","动作改变"],"obstacleReaction":"阻力如何对人物动作产生可见反作用","turningAction":"改变场面方向的关键物理动作","result":"片段结束时可见结果","plotRhythm":"loose|medium|tight","emotionRhythm":"light|medium|heavy","valueShift":"开始价值→结束价值","visual":"画面描述","shotSize":"中景","lighting":"光影氛围","dialogue":"对白旁白","sound":"音效","camera":"单一主运镜","imagePrompt":"首帧画面提示词","startState":"片段开始时人物和空间状态","endState":"片段结束时人物和空间状态","transition":"continue|cut|montage|time-jump","usePreviousTailFrame":false,"motionPriority":3}]}
+{"shots":[{"sourceBeatIds":["B001","B002"],"visualBeatIds":["B002"],"voiceoverBeatIds":["B001"],"continuityGroupId":"G001","timeStage":"童年时期","duration":"15s","dramaticFunction":"setup|inciting|escalation|turn|climax|resolution","goal":"当前可见目标","obstacle":"当前可见阻碍或压力","stakes":"失败会造成的具体损失或恶化","tactic":"人物为达成目标采取的具体物理策略","participants":[{"name":"动作执行者","role":"actor","lifeStage":"成年时期","sourceBeatIds":["B002"]},{"name":"动作承受者","role":"patient","lifeStage":"出生时","sourceBeatIds":["B002"]}],"actionBeats":["动作启动","动作推进","动作改变"],"typedActionBeats":[{"actor":"动作执行者","action":"可见物理动作","patient":"动作承受者","prop":"可选道具名","result":"可见变化"}],"obstacleReaction":"阻力如何对人物动作产生可见反作用","turningAction":"改变场面方向的关键物理动作","result":"片段结束时可见结果","plotRhythm":"loose|medium|tight","emotionRhythm":"light|medium|heavy","valueShift":"开始价值→结束价值","visual":"画面描述","shotSize":"中景","lighting":"光影氛围","dialogue":"对白旁白","sound":"音效","camera":"单一主运镜","imagePrompt":"首帧画面提示词","startState":"片段开始时人物和空间状态","endState":"片段结束时人物和空间状态","transition":"continue|cut|montage|time-jump","usePreviousTailFrame":false,"motionPriority":3}]}
 
 固定规则：
 1. 每个事实 id 必须且只需被至少一条 shot 的 sourceBeatIds 引用；事实完整性通过 sourceBeatIds 追踪，不等于一事实一镜。
 2. 每条片段必须把 sourceBeatIds 明确分成 visualBeatIds 和 voiceoverBeatIds：visualBeatIds 只能有 1 个主要可见事实，决定唯一地点、人物时期、画面动作和资产；其余事实放入 voiceoverBeatIds，只能作为旁白背景，不得要求画面切换地点、时期或另演一段剧情。
-3. 每条片段必须继承剧作总纲中的戏剧功能，并形成完整场景卡：goal 是人物此刻想完成的可见目标；obstacle 是同场可见阻力或压力；stakes 是失败后会发生的具体损失、延误或关系恶化；tactic 是人物采取的物理策略。actionBeats 是唯一可执行动作链，按顺序只写 2-3 个动作：第2拍承担阻力反作用，第3拍承担动作转折并导向 result；只有2拍时由第2拍同时完成反作用、转折和结果。obstacleReaction 与 turningAction 只说明对应节拍的剧作功能，允许概括表达，不要求与 actionBeats 使用相同字面文字，也不得扩成额外动作。result 与 valueShift 写清可见结果和价值变化。没有直接冲突的建置或呼吸片段可以使用环境压力、时间限制或关系张力，不得虚构冲突。
+3. 每条片段必须继承剧作总纲中的戏剧功能，并形成完整场景卡：goal 是人物此刻想完成的可见目标；obstacle 是同场可见阻力或压力；stakes 是失败后会发生的具体损失、延误或关系恶化；tactic 是人物采取的物理策略。participants 必须把每个动作参与者标为 actor 或 patient，并用 sourceBeatIds 绑定当前事实；画外成年人双手也必须作为明确 actor，不能凭空写“一双手”。actionBeats 是唯一可执行动作链，按顺序只写 2-3 个动作；typedActionBeats 与其逐项对应，每项固定写 actor、action、patient、可选 prop 和 result。婴儿、幼儿或被照护者只能作为 patient，不得承担包裹、喂养、安置等成人照护动作。第2拍承担阻力反作用，第3拍承担动作转折并导向 result；只有2拍时由第2拍同时完成反作用、转折和结果。obstacleReaction 与 turningAction 只说明对应节拍的剧作功能，不得扩成额外动作。result 与 valueShift 写清可见结果和价值变化。没有直接冲突的建置或呼吸片段可以使用环境压力、时间限制或关系张力，不得虚构冲突。
 4. actionBeats 必须使用能拍摄的物理动词，不能写“意识到、感到、陷入沉思、局势恶化、情绪变化、做出决定”等心理或概括词；前一动作的结果必须触发后一动作，turningAction 必须实际改变人物姿态、物件状态、空间关系、信息掌握或行动结果。visual 必须按发生顺序写出这条动作链和可见结果，不得只写环境、情绪或主题概述；删除本片段后不能让前后故事完全不受影响。
-5. 每条片段固定15秒，围绕 visualBeatIds 的一个叙事目标组织 4 个内部阶段：0-3秒建立同一场景，3-9秒推进同一动作，9-12秒形成阻力反作用或可见结果，12-15秒只让 result 与 valueShift 稳定落点；最后阶段不得出现新人物、新地点、新道具或新事件。visual、dialogue、sound 和 camera 必须写清同一组时间段，旁白说到的事实必须在该时间段有对应可见证据；一个片段只使用一个主运镜。
+5. 每条片段固定15秒，围绕 visualBeatIds 的一个叙事目标组织 4 个内部阶段：0-3秒建立同一场景，3-9秒推进同一动作，9-12秒形成阻力反作用或可见结果，12-15秒只让 result 与 valueShift 稳定落点；最后阶段不得出现新人物、新地点、新道具或新事件。visual、dialogue、sound 和 camera 必须写清同一组时间段；visualBeatIds 对应的旁白必须与同段可见证据直接对应，voiceoverBeatIds 只能补充与当前人物、地点和动作有明确因果关系的背景事实，不得要求画面重演该背景；一个片段只使用一个主运镜。
 6. 同一时间、地点、人物时期且动作直接相承时使用相同 continuityGroupId、transition=continue，并让后一条 startState 精确承接前一条 endState。
 7. 时间、地点、人物年龄或身体状态变化时新建 continuityGroupId，transition 使用 cut 或 time-jump，usePreviousTailFrame=false；不得为了凑片段强行合并不同时空。
 8. 只有同一连续性组内的直接续动作才允许 usePreviousTailFrame=true；首条 shot 必须为 false。
@@ -281,7 +282,7 @@ const STORYBOARD_PLANNED_SHOTS_PROMPT = `你是漫剧单集导演。请把给定
 12. motionPriority 使用 1-5：强动作、关键冲突和情绪高潮为 5；普通生活动作约为 3；空镜、说明和主要由旁白承载的内容为 1。
 13. plotRhythm 与 emotionRhythm 要有张弛对比，最高综合强度留给高潮；相邻三个片段不得无依据地全部使用 tight+heavy。
 14. 所有动作、情绪和价值变化都必须能由摄影机或声音表现，不写“她意识到、他明白了”等不可见心理结论。
-15. sourceBeatIds 必须等于 visualBeatIds 与 voiceoverBeatIds 的并集，三者都只能引用本批事实；保持事实顺序和固定视频预算，不得通过增加片段数解决过载。输出前逐项检查目标、阻力、代价、策略、动作节拍、阻力反作用、动作转折、结果、价值变化和起止状态，任一为空都先重写，再检查本批所有 id 均已覆盖。`;
+15. sourceBeatIds 必须等于 visualBeatIds 与 voiceoverBeatIds 的并集，三者都只能引用本批事实；保持事实顺序和固定视频预算，不得通过增加片段数解决过载。输出前逐项检查目标、阻力、代价、策略、participants、actionBeats 与 typedActionBeats 的逐项对应、阻力反作用、动作转折、结果、价值变化和起止状态；每个动作必须有已绑定的 actor 与 patient，任一为空或职责冲突都先重写，再检查本批所有 id 均已覆盖。`;
 const STORYBOARD_SCREENSHOT_IMPORT_PROMPT = `请识别截图里的分镜脚本表格，并只输出 Markdown 表格。
 
 表格列必须严格为：
@@ -344,12 +345,12 @@ videoMotionPrompt 必须严格按以下模板输出，栏目名称和顺序不�
 2. 按 Seedance 2.0 导演公式组织：主体 + 主叙事目标 + 2-3 个顺序动作节拍 + 场景 + 单一主运镜 + 物理光源/风格 + 音频 + 稳定约束。主体和起始动作必须放在前半句，避免模型抓错重点。
 3. storyboardPrompt 用于首帧图/分镜图，只写静态可见画面：构图、主体外观、环境、光影、道具、静态表情和画风，不要把它写成视频动作脚本。
 4. videoMotionPrompt 用于视频模型，必须严格按以下栏目依次输出：【生成规格】【参考资产绑定】【叙事目标】【起始画面】【N秒时间轴】【镜头运动】【光线与画面质感】【声音时间轴】【连续性与稳定约束】。N 必须等于当前片段时长，正文控制在 2000 字以内。
-5. 【15秒时间轴】固定写 0-3、3-9、9-12、12-15 秒四段，中间不得留空、重叠或超出总时长；四段只能推进 visualBeatIds 对应的同一地点、同一人物时期和同一动作链，依次承担空间建立、动作推进、反作用与可见结果、稳定落点。9-12秒段必须用“可见结果：”明确写出动作造成的物理结果，最后3秒只保持这一结果，不新增人物、地点、道具、事件或转场。【声音时间轴】使用相同分段，让每句 VO 与同一时间段的可见证据直接对应。
+5. 【15秒时间轴】固定写 0-3、3-9、9-12、12-15 秒四段，中间不得留空、重叠或超出总时长；四段只能推进 visualBeatIds 对应的同一地点、同一人物时期和同一动作链，依次承担空间建立、动作推进、反作用与可见结果、稳定落点。9-12秒段必须用“可见结果：”明确写出动作造成的物理结果，最后3秒只保持这一结果，不新增人物、地点、道具、事件或转场。【声音时间轴】使用相同分段；visualBeatIds 对应的旁白必须与同段可见动作对齐，voiceoverBeatIds 只作为背景旁白，不得为了“对应”而虚构第二地点、人物、道具或事件。
 6. 每个片段只围绕 visualBeatIds 的一个主要可见事实和一个叙事目标；voiceoverBeatIds 只能补充不要求新画面的背景事实。必须继承本片段剧作字段中的 dramaticFunction、goal、obstacle、stakes、tactic、actionBeats、result、plotRhythm、emotionRhythm 和 valueShift；四段时间轴只执行 actionBeats 的2-3拍因果链。obstacleReaction 与 turningAction 只用于理解第2拍和第3拍的功能，不得作为额外动作再次写入时间轴。不得把 voiceoverBeatIds 重新演成第二段剧情，不得使用蒙太奇跨越多个地点或人物时期。
 7. 动作用 physical verbs 写清楚演员/物体、力度、速度、幅度、身体部位、物理后果和终点，例如手指攥紧衣角、肩膀微颤后松开、脚步踩进泥水并停住。每个动作必须包含“谁的哪个身体部位/物体 + 做什么 + 造成什么可见变化”，禁止只写“情绪增强、关系恶化、气氛紧张”。
 8. 情绪不要只写“悲伤/愤怒/紧张”等抽象词，要外化为身体细节，例如低头、肩膀微颤、眼神闪躲、手指攥紧衣角、胸口起伏。
 9. 一个片段只指定一种主要运镜，并写清起幅、速度、主体关系和落幅；内部节拍可用固定机位切景别或轻微推拉，但不要同时要求推拉摇移、无人机、环绕和手持。
-10. 有对白时用 {台词} 表示；旁白逐行使用“起止秒 VO：内容”；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。15秒旁白目标36-45个汉字，硬上限48个汉字；对白要短，唇形镜头优先锁定机位或轻微推镜。
+10. 有对白时用 {台词} 表示；旁白逐行使用“起止秒 VO：内容”；有音效时用 <音效> 表示；有背景音乐时用（音乐描述）表示。15秒旁白目标36-45个汉字，硬上限48个汉字；对白要短，唇形镜头优先锁定机位或轻微推镜。旁白涉及 voiceoverBeatIds 的背景事实时，只作为画外信息保留原文，必须明确“画面继续执行当前 visualBeatIds 动作”，不得把背景事实改写成画面动作。
 11. 除非分镜明确要求字幕或屏幕文字，否则加入保持无字幕、不要生成文字、不要生成 Logo、不要生成水印等约束；不要使用负面提示词语法，只用自然语言约束。
 12. 根据 visualBeatIds 从资产列表里选择真正相关的人物、场景、道具；普通片段最多绑定 1 个主要场景资产。画面中可见的角色必须选择准确年龄/时期资产；提到但没有资产的姐姐、弟弟、老师等人物只能作为画外声音、背影或不露脸手部，不得生成可识别新面孔。只有纯空镜或明确无人物资产的 T2V 片段才允许不选择角色资产；不要为了“全面”引用所有资产。
 13. assetMentions 只能包含第二步资产清单里真实存在的 @资产名；两个提示词里如果使用资产，也必须显式写出同一个 @资产名。
@@ -363,7 +364,7 @@ videoMotionPrompt 必须严格按以下模板输出，栏目名称和顺序不�
 21. “本片段事实与连续性计划”是事实约束：必须按顺序覆盖全部 sourceBeats，并让动作从 startState 到 endState；transition=continue 时承接上一片段，cut/time-jump 时明确新起场景，不得为了连续而混合两个时期。
 22. 如素材包含不适合直观呈现的脆弱处境，只调整视觉表达：使用朴素服装、空镜、灯光变化、遗留物件、人物克制反应等间接画面，保留原始因果和关系变化，不得改写成相反结果。
 23. 四段时间轴必须分别写出：空间/站位确认、actionBeats 前段、actionBeats 后段与“可见结果：”、稳定落点；第二段和第三段只能执行 actionBeats 中已有的2-3拍物理动作。obstacleReaction 与 turningAction 只解释动作链中对应节拍的功能，不得追加为第4、第5个动作；第四段只保持 result/endState，不能添加新剧情。
-24. 【声音时间轴】必须同时写全程环境声、动作音效、对白或旁白的精确起止段；生成声音默认开启，除非当前视频设置明确写了关闭。VO 只允许使用第一步已提供的旁白原文，不得把导演说明、同步要求、栏目名或资产绑定说明写成声音。
+24. 【声音时间轴】必须同时写全程环境声、动作音效、对白或旁白的精确起止段；生成声音默认开启，除非当前视频设置明确写了关闭。VO 只允许使用第一步已提供的旁白原文，不得把导演说明、同步要求、栏目名或资产绑定说明写成声音。先锁定 visualBeatIds 的可见动作，再安排 voiceoverBeatIds 的背景旁白；背景旁白不能反向改变画面地点、人物时期或动作链。
 25. videoMotionPrompt 必须在九个主栏目内部使用以下导演脚本小节，并且小节内容只服务当前镜头：
 【生成规格】下写[视频约束]；【参考资产绑定】下写[场景设定]、[人物设定]、[站位设定]；【N秒时间轴】下写[画面时序]；【光线与画面质感】下写[光影与氛围]。小节不重复整段资产描述，而是明确资产职责、站位、起始状态、动作顺序和可见结果。
 26. [人物设定] 必须逐个写出当前画面可见人物的精确资产、叙事身份和可执行职责，例如“@角色A：接生人，负责托住并移动@角色B”；婴儿、被抱持者、被放置物体不能只写成泛称，必须绑定准确资产或明确说明为无资产的不可识别局部。
@@ -2451,6 +2452,15 @@ function InfiniteCanvasPage() {
             if (!scriptNode) return prev;
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows).map((row) => [...row]);
             const linkedDetail = linkStoryboardPromptAssets(scriptNode, completeStoryboardPromptDetailAssets(scriptNode, rows, rowIndex, detail), prev);
+            try {
+                const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[rowIndex]);
+                assertStoryboardVideoPromptFormat(linkedDetail.videoMotionPrompt, duration, linkedDetail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, rowIndex), storyboardAllowsMultipleCharacterStagesForRow(scriptNode, rows, rowIndex));
+                assertStoryboardPromptActionCoverage(linkedDetail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]);
+                assertStoryboardProductionContractReady(scriptNode, rows, rowIndex, linkedDetail, storyboardContractReferencesForDetail(linkedDetail, scriptNode.metadata?.storyboardAssets || []), "prompt");
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                return prev.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardPromptErrors: { ...(node.metadata?.storyboardPromptErrors || {}), [String(rowIndex)]: reason } } } : node);
+            }
             if (rows[rowIndex]) rows[rowIndex][8] = linkedDetail.storyboardPrompt || linkedDetail.videoMotionPrompt;
             const normalized = renumberStoryboardRowsForCanvas(rows);
             const nextScriptNode = {
@@ -2538,7 +2548,7 @@ function InfiniteCanvasPage() {
             let dramaturgySource = checkpoint?.dramaturgySource;
             let dramaturgySkillRoot = checkpoint?.dramaturgySkillRoot;
             const saveCheckpoint = (completedSourceChunks: number, completedShotBatches: number, beats: StoryboardSourceBeat[], shots: PlannedStoryboardShot[], condensed: boolean, originalBeatCount: number) => {
-                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningCheckpoint: { sourceText: planningCheckpointKey, completedSourceChunks, completedShotBatches, beats: beats.map((beat) => ({ ...beat, characters: [...beat.characters] })), shots: shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined } })), condensed, originalBeatCount, dramaturgyPlan, dramaturgySource, dramaturgySkillRoot } } } : item)));
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningCheckpoint: { sourceText: planningCheckpointKey, completedSourceChunks, completedShotBatches, beats: beats.map((beat) => ({ ...beat, characters: [...beat.characters] })), shots: shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined, participants: shot.plan.participants?.map((participant) => ({ ...participant, sourceBeatIds: [...participant.sourceBeatIds] })), typedActionBeats: shot.plan.typedActionBeats?.map((beat) => ({ ...beat })) } })), condensed, originalBeatCount, dramaturgyPlan, dramaturgySource, dramaturgySkillRoot } } } : item)));
             };
             let failedStage = "";
             let failedRawResponse = "";
@@ -2596,7 +2606,7 @@ function InfiniteCanvasPage() {
                         source,
                         `【首次模型返回JSON】\n${answer}`,
                         `【解析后的当前shots】\n${JSON.stringify({ shots: parsed })}`,
-                        `【只修正第${index + 1}项】\n当前问题：${issues.join("、")}\n只就地修正这一项，其他项、事实ID、顺序、主要可见事实、人物时期、连续性组和转场不得改变。actionBeats 是唯一可执行动作链，只写2-3拍：第2拍承担阻力反作用，第3拍承担转折并导向结果；obstacleReaction 与 turningAction 只是功能说明，不得扩成额外动作。只输出 {"shots":[修正后的这一项]}。`,
+                        `【只修正第${index + 1}项】\n当前问题：${issues.join("、")}\n只就地修正这一项，其他项、事实ID、顺序、主要可见事实、人物时期、连续性组和转场不得改变。participants 必须明确当前事实支持的 actor/patient；画外成年人双手也要作为 actor，婴儿/幼儿只能作为 patient。actionBeats 是唯一可执行动作链，只写2-3拍；typedActionBeats 与其逐项对应并明确 actor、action、patient、可选 prop 和 result。obstacleReaction 与 turningAction 只是功能说明，不得扩成额外动作。只输出 {"shots":[修正后的这一项]}。`,
                     ].join("\n\n");
                     let qualityAnswer = "";
                     try {
@@ -2691,7 +2701,7 @@ function InfiniteCanvasPage() {
                     saveCheckpoint(sourceChunks.length, 0, beats, [], beatsCondensed, originalBeatCount);
                 }
                 updatePlanningProgress(30, `剧作总纲已锁定，${beats.length} 个事实将规划为 ${totalClipTarget} 个动态片段`);
-                let plannedShots: PlannedStoryboardShot[] = checkpointHasDramaturgy ? checkpoint?.shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined } })) || [] : [];
+                let plannedShots: PlannedStoryboardShot[] = checkpointHasDramaturgy ? checkpoint?.shots.map((shot) => ({ row: [...shot.row], plan: { ...shot.plan, sourceBeatIds: [...shot.plan.sourceBeatIds], visualBeatIds: shot.plan.visualBeatIds ? [...shot.plan.visualBeatIds] : undefined, voiceoverBeatIds: shot.plan.voiceoverBeatIds ? [...shot.plan.voiceoverBeatIds] : undefined, actionBeats: shot.plan.actionBeats ? [...shot.plan.actionBeats] : undefined, participants: shot.plan.participants?.map((participant) => ({ ...participant, sourceBeatIds: [...participant.sourceBeatIds] })), typedActionBeats: shot.plan.typedActionBeats?.map((beat) => ({ ...beat })) } })) || [] : [];
                 const batches = productionScope === "single" ? [beats] : storyboardBeatBatches(beats);
                 const batchClipTargets = storyboardBatchClipTargets(batches, totalClipTarget);
                 let completedShotBatches = checkpointHasDramaturgy ? Math.min(checkpoint?.completedShotBatches || 0, batches.length) : 0;
@@ -3555,6 +3565,18 @@ function InfiniteCanvasPage() {
                         }
                     }
                     if (detail) {
+                        try {
+                            detail = linkStoryboardPromptAssets(scriptNode, completeStoryboardPromptDetailAssets(scriptNode, rows, index, detail), nodesRef.current);
+                            const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[index]);
+                            assertStoryboardVideoPromptFormat(detail.videoMotionPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, index), storyboardAllowsMultipleCharacterStagesForRow(scriptNode, rows, index));
+                            assertStoryboardPromptActionCoverage(detail.videoMotionPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(index)]);
+                            assertStoryboardProductionContractReady(scriptNode, rows, index, detail, storyboardContractReferencesForDetail(detail, scriptNode.metadata?.storyboardAssets || []), "prompt");
+                        } catch (error) {
+                            lastError = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                            detail = null;
+                        }
+                    }
+                    if (detail) {
                         setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "保存当前片段", status: "running" });
                         updateStoryboardPromptDetail(scriptNode.id, index, detail.promptSource ? detail : { ...detail, promptSource: promptInstruction.source, promptSkillRoot: promptInstruction.skillRoot });
                         completed += 1;
@@ -3689,6 +3711,14 @@ function InfiniteCanvasPage() {
             const workspaceId = existingWorkspace?.id || `storyboard-videos:${scriptNode.id}:${activeEpisodeId || "all"}`;
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
             const draftNode = buildStoryboardVideoDraftNode(scriptNode, row, rowIndex, rowIndex, spec, generationConfig, workspacePosition, nodesRef.current, connectionsRef.current);
+            try {
+                assertStoryboardVideoNodeProductionReady(scriptNode, draftNode, "draft");
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                updateStoryboardPromptError(scriptNode.id, rowIndex, reason);
+                message.error(reason);
+                return;
+            }
             const existingDraftNodes = nodesRef.current.filter((item) => item.type === CanvasNodeType.Video && item.id !== draftNode.id && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardChapterId === activeEpisodeId && item.metadata.storyboardRowIndex !== undefined && !item.metadata.content && !item.metadata.storyboardVideoDraftNodeId);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, [...existingDraftNodes, draftNode], workspacePosition, "storyboard-videos", activeEpisodeId);
             setStoryboardActionKey(`video:${rowIndex}`);
@@ -3704,7 +3734,7 @@ function InfiniteCanvasPage() {
             window.setTimeout(() => window.dispatchEvent(new CustomEvent(STORYBOARD_VIDEO_PROMPT_PREVIEW_EVENT, { detail: draftNode.id })), 120);
             message.success(`已创建待审核视频节点，已绑定 ${draftNode.metadata?.storyboardVideoReferences?.length || 0} 条视觉参考，请确认最终提示词后生成`);
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+        [effectiveConfig, isAiConfigReady, message, openConfigDialog, updateStoryboardPromptError],
     );
 
     const batchGenerateStoryboardImages = useCallback(
@@ -3732,7 +3762,9 @@ function InfiniteCanvasPage() {
             }
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
             const plans = scriptNode.metadata?.storyboardShotPlans || {};
-            const indexes = storyboardActiveRowIndexes(scriptNode, rows).filter((index) => plans[String(index)]?.renderMode !== "still" && scriptNode.metadata?.storyboardPromptDetails?.[String(index)]?.videoMotionPrompt?.trim());
+            const promptDetails = scriptNode.metadata?.storyboardPromptDetails || {};
+            const activeIndexes = storyboardActiveRowIndexes(scriptNode, rows).filter((index) => plans[String(index)]?.renderMode !== "still" && promptDetails[String(index)]?.videoMotionPrompt?.trim());
+            const indexes = activeIndexes;
             if (!indexes.length) {
                 message.warning("当前集没有可用的视频片段，请先合成当前集提示词");
                 return;
@@ -3743,7 +3775,24 @@ function InfiniteCanvasPage() {
             const existingWorkspace = nodesRef.current.find((item) => item.metadata?.workspaceKind === "storyboard-videos" && item.metadata.workspaceSourceNodeId === scriptNode.id && item.metadata.workspaceStoryboardChapterId === activeEpisodeId);
             const workspaceId = existingWorkspace?.id || `storyboard-videos:${scriptNode.id}:${activeEpisodeId || "all"}`;
             const workspacePosition = existingWorkspace?.position || defaultStoryboardVideoWorkspacePosition(scriptNode, nodesRef.current);
-            const videoNodes = indexes.map((rowIndex, order) => buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current, connectionsRef.current));
+            const failedDrafts: Record<string, string> = {};
+            const videoNodes = indexes.flatMap((rowIndex, order) => {
+                const draft = buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, order, spec, generationConfig, workspacePosition, nodesRef.current, connectionsRef.current);
+                try {
+                    assertStoryboardVideoNodeProductionReady(scriptNode, draft, "draft");
+                    return [draft];
+                } catch (error) {
+                    failedDrafts[String(rowIndex)] = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                    return [];
+                }
+            });
+            if (Object.keys(failedDrafts).length) {
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPromptErrors: { ...(item.metadata?.storyboardPromptErrors || {}), ...failedDrafts } } } : item));
+            }
+            if (!videoNodes.length) {
+                message.warning("当前集视频草稿均未通过生产契约校验，请先修正第三步提示词");
+                return;
+            }
             const linkedAssetCount = videoNodes.reduce((total, videoNode) => total + (videoNode.metadata?.storyboardVideoReferences?.length || storyboardVideoAssetReferenceNodes(videoNode, nodesRef.current).length), 0);
             const workspaceNode = buildStoryboardWorkspaceNode(existingWorkspace, workspaceId, scriptNode, videoNodes, workspacePosition, "storyboard-videos", activeEpisodeId);
             setNodes((prev) => {
@@ -3865,6 +3914,20 @@ function InfiniteCanvasPage() {
     }, []);
 
     const handleConfigNodeChange = useCallback((nodeId: string, patch: Partial<CanvasNodeMetadata>) => {
+        const currentNode = nodesRef.current.find((node) => node.id === nodeId);
+        if (currentNode && isStoryboardVideoDraftNode(currentNode) && patch.storyboardVideoFinalPrompt !== undefined) {
+            const scriptNode = nodesRef.current.find((node) => node.id === currentNode.metadata?.storyboardSourceNodeId);
+            if (scriptNode) {
+                try {
+                    assertStoryboardVideoNodeProductionReady(scriptNode, applyNodeConfigPatch(currentNode, patch), "draft");
+                } catch (error) {
+                    const reason = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                    setNodes((prev) => prev.map((node) => node.id === scriptNode.id ? { ...node, metadata: { ...node.metadata, storyboardPromptErrors: { ...(node.metadata?.storyboardPromptErrors || {}), [String(currentNode.metadata?.storyboardRowIndex)]: reason } } } : node));
+                    message.error(reason);
+                    return;
+                }
+            }
+        }
         setNodes((prev) => {
             const sourceNode = prev.find((node) => node.id === nodeId);
             if (!sourceNode) return prev;
@@ -3880,7 +3943,7 @@ function InfiniteCanvasPage() {
                 return applyNodeConfigPatch(node, draftPatch);
             });
         });
-    }, []);
+    }, [message]);
 
     const openPromptAssistant = useCallback((node: CanvasNodeData) => {
         setPromptAssistantNodeId(node.id);
@@ -5192,6 +5255,19 @@ function InfiniteCanvasPage() {
             const retryAudios: ReferenceAudio[] = storyboardVideoAudioReferences.length ? storyboardVideoAudioReferences : context?.referenceAudios || [];
             const storyboardDraftVideo = isStoryboardVideoDraftNode(node);
             const videoPrompt = node.type === CanvasNodeType.Video ? storyboardVideoFinalPrompt || [prompt, storyboardVideoFramePrompt, storyboardVideoAudioPrompt].filter(Boolean).join("\n\n") : "";
+            if (node.type === CanvasNodeType.Video && node.metadata?.storyboardSourceNodeId && node.metadata.storyboardRowIndex !== undefined) {
+                const scriptNode = nodesRef.current.find((item) => item.id === node.metadata?.storyboardSourceNodeId);
+                if (scriptNode) {
+                    try {
+                        assertStoryboardVideoNodeProductionReady(scriptNode, { ...node, metadata: { ...node.metadata, storyboardVideoFinalPrompt: videoPrompt } }, "submit");
+                    } catch (error) {
+                        const reason = error instanceof Error ? error.message : "分镜生产契约校验失败";
+                        setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPromptErrors: { ...(item.metadata?.storyboardPromptErrors || {}), [String(node.metadata?.storyboardRowIndex)]: reason } } } : item.id === node.id ? { ...item, metadata: { ...item.metadata, errorDetails: reason } } : item));
+                        message.error(reason);
+                        return;
+                    }
+                }
+            }
             if (node.type === CanvasNodeType.Video && !existingVideoTask) {
                 if (!(await confirmVideoGeneration({ config: generationConfig, prompt: videoPrompt, references: retryImages, videoReferences: context?.referenceVideos || [], audioReferences: retryAudios }))) return;
                 const nextNodes = nodesRef.current.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, clearVideoTaskMetadataPatch()) : item));
@@ -6239,6 +6315,7 @@ function clearVideoTaskMetadataPatch(): Partial<CanvasNodeMetadata> {
         videoTaskRequestUrl: undefined,
         videoTaskRequestModel: undefined,
         videoTaskRequestFields: undefined,
+        videoTaskRequestSummary: undefined,
         videoGenerationProgress: undefined,
     };
 }
@@ -6254,6 +6331,7 @@ function videoTaskMetadata(task: VideoGenerationTask): Partial<CanvasNodeMetadat
         videoTaskRequestUrl: task.requestUrl,
         videoTaskRequestModel: task.requestModel,
         videoTaskRequestFields: task.requestFields,
+        videoTaskRequestSummary: task.requestSummary,
     };
 }
 
@@ -6272,6 +6350,7 @@ function videoTaskFromMetadata(metadata?: CanvasNodeMetadata, config?: AiConfig)
         requestUrl: metadata.videoTaskRequestUrl,
         requestModel: metadata.videoTaskRequestModel,
         requestFields: metadata.videoTaskRequestFields,
+        requestSummary: metadata.videoTaskRequestSummary,
     };
 }
 
@@ -6425,7 +6504,7 @@ async function resolveStoryboardVideoReferences(references?: StoryboardVideoRefe
         sortStoryboardVideoReferences(references).map(async (reference, index): Promise<ReferenceImage | null> => {
             const source = reference.storageKey || reference.url || "";
             const dataUrl = source.startsWith("image:") ? await resolveImageUrl(source, "") : source;
-            return dataUrl ? { id: reference.assetId || reference.nodeId || `${index}`, name: `${reference.mention || reference.name || `reference-${index}`}.png`, type: "image/png", dataUrl, url: dataUrl, storageKey: reference.storageKey, videoReferenceRole: reference.role || "reference" } : null;
+            return dataUrl ? { id: reference.assetId || reference.nodeId || `${index}`, name: `${reference.mention || reference.name || `reference-${index}`}.png`, type: "image/png", dataUrl, url: dataUrl, storageKey: reference.storageKey, videoReferenceRole: reference.role || "reference", referenceKind: reference.kind } : null;
         }),
     );
     return items.filter((item): item is ReferenceImage => Boolean(item));
@@ -7067,6 +7146,7 @@ function storyboardAssetSceneSheetReference(asset: StoryboardAsset): ReferenceIm
         dataUrl: source,
         url: source,
         storageKey: asset.sceneSheetStorageKey,
+        referenceKind: "scene",
     };
 }
 
@@ -7372,8 +7452,7 @@ function storyboardSafetyComposeText(text: string, strict = false) {
               .replace(/住院|诊所|医院|病床|病房/g, "室内照护空间")
               .replace(/挨打|殴打|打骂|欺凌|推倒|踢打|家暴/g, "家庭冲突")
               .replace(/怀孕|孕妇/g, "家庭准备迎接新成员")
-              .replace(/襁褓|摇篮|婴儿衣物/g, "新成员用品")
-              .replace(/幼年|年幼|孩童|童年/g, "年少时期")
+               .replace(/幼年|年幼|孩童|童年/g, "年少时期")
               .replace(/行动不便|左腿不便|瘫痪/g, "行动受限")
               .replace(/身体不适|健康困境|脑瘤|肿瘤|癌症/g, "长期身体不适")
               .replace(/不想活(?:了)?|轻生|自杀|寻死/g, "情绪陷入低谷")
@@ -7393,7 +7472,7 @@ function isSafetyGenerationError(error: unknown) {
     return /safety system|rejected by the safety|content policy|content review|moderation|内容审查|内容安全|安全系统/i.test(raw);
 }
 
-type ResolvedStoryboardReference = { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] };
+type ResolvedStoryboardReference = { mention: string; node?: CanvasNodeData; reference: ReferenceImage; source?: StoryboardVideoReference["source"]; assetId?: string; kind?: StoryboardAssetKind; sceneGroupId?: string; sceneViewRole?: StoryboardVideoReference["sceneViewRole"] };
 
 function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: number, nodes: CanvasNodeData[]) {
     const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
@@ -7416,6 +7495,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
                 node: assetNode,
                 reference: sceneSheetReference,
                 source: "script",
+                assetId: asset.id,
                 kind: "scene",
                 sceneViewRole: "lock",
             });
@@ -7427,6 +7507,7 @@ function storyboardVideoAssetReferences(scriptNode: CanvasNodeData, rowIndex: nu
                 mention,
                 node: assetNode,
                 reference,
+                assetId: asset?.id,
                 kind: asset?.kind || assetNode.metadata?.storyboardAssetKind,
                 sceneGroupId: assetNode.metadata?.sceneGroupId,
                 sceneViewRole: assetNode.metadata?.sceneViewRole,
@@ -7779,6 +7860,7 @@ function storyboardVideoReferencesFromAssetReferences(assetReferences: ReturnTyp
         mention: item.mention,
         name: item.mention.replace(/^@/, ""),
         status: "bound",
+        assetId: item.assetId,
         nodeId: item.node?.id,
         kind: item.kind,
         url: item.reference.url || item.reference.dataUrl,
@@ -8297,6 +8379,7 @@ function referenceImageFromCanvasNode(node?: CanvasNodeData | null): ReferenceIm
         dataUrl: node.metadata.content,
         url: node.metadata.content,
         storageKey: node.metadata.storageKey,
+        referenceKind: node.metadata.storyboardAssetKind,
     };
 }
 
@@ -8356,8 +8439,12 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const character = assets.find((asset) => asset.kind === "character");
     const sceneAsset = assets.find((asset) => asset.kind === "scene");
     const prop = assets.find((asset) => asset.kind === "prop");
+    const actorParticipant = shotPlan?.participants?.find((participant) => participant.role === "actor");
+    const patientParticipant = shotPlan?.participants?.find((participant) => participant.role === "patient");
+    const actor = storyboardSafetyComposeText(actorParticipant?.name || "画外动作执行者的双手", true);
     const sourceCharacter = visualSourceBeats.flatMap((beat) => beat.characters).find(Boolean);
-    const subject = character ? `@${character.name}` : storyboardSafetyComposeText(sourceCharacter || "当前画面主体", true);
+    const patientAsset = patientParticipant ? assets.find((asset) => asset.kind === "character" && (asset.name === patientParticipant.name || asset.baseName === patientParticipant.name)) : undefined;
+    const subject = patientAsset ? `@${patientAsset.name}` : character ? `@${character.name}` : storyboardSafetyComposeText(patientParticipant?.name || sourceCharacter || "当前画面主体", true);
     const scene = storyboardSafetyComposeText(visualSourceBeats.find((beat) => beat.location)?.location || row[2] || "生活环境", true);
     const visibleBeat = storyboardSafetyComposeText(storyboardPrimaryVisibleBeat(visualSourceBeats, row), true);
     const timeStage = storyboardSafetyComposeText(shotPlan?.timeStage || "", true);
@@ -8375,11 +8462,12 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
     const valueShift = storyboardSafetyComposeText(shotPlan?.valueShift || `${startState}→${endState}`, true);
     const duration = storyboardVideoPromptDurationSeconds(node, row);
     const [establishEnd, actionEnd, changeEnd] = storyboardVideoPromptTimeline(duration);
-    const propAction = prop ? `${subject}的双手自然接触并使用 @${prop.name}` : `${subject}用手部完成一个缓慢、清楚、可见的动作`;
+    const propAction = prop ? `${actor}接触并使用 @${prop.name}，动作明确作用于${subject}` : `${actor}完成一个缓慢、清楚的物理动作，并让${subject}产生可见变化`;
     const dramaticStakes = storyboardSafetyComposeText(shotPlan?.stakes || "当前目标延误，处境继续恶化", true);
     const tactic = storyboardSafetyComposeText(shotPlan?.tactic || propAction, true);
-    const actionBeats = (shotPlan?.actionBeats?.length ? shotPlan.actionBeats : [tactic, `${subject}调整姿态并继续动作`]).map((item) => storyboardSafetyComposeText(item, true));
-    const obstacleReaction = storyboardSafetyComposeText(shotPlan?.obstacleReaction || `${dramaticObstacle}迫使${subject}改变动作节奏`, true);
+    const typedActionBeats = (shotPlan?.typedActionBeats || []).map((beat) => `${storyboardSafetyComposeText(beat.actor, true)}${storyboardSafetyComposeText(beat.action, true)}，动作作用于${storyboardSafetyComposeText(beat.patient, true)}${beat.result ? `，形成${storyboardSafetyComposeText(beat.result, true)}` : ""}`);
+    const actionBeats = (actorParticipant ? (typedActionBeats.length ? typedActionBeats : shotPlan?.actionBeats || []) : [tactic, `${actor}调整位置并继续当前动作`]).map((item) => storyboardSafetyComposeText(item, true));
+    const obstacleReaction = storyboardSafetyComposeText(shotPlan?.obstacleReaction || `${dramaticObstacle}迫使${actor}改变动作节奏`, true);
     const turningAction = storyboardSafetyComposeText(shotPlan?.turningAction || actionBeats.at(-1) || tactic, true);
     const actionStart = actionBeats[0] || tactic;
     const actionMiddle = actionBeats.length > 2 ? actionBeats[1] : "";
@@ -8389,16 +8477,17 @@ function buildStoryboardConservativePromptDetail(node: CanvasNodeData, rows: str
         : "本片段无参考资产，按当前文字描述生成，并保持主体、场景和道具连续。";
     const sceneSetting = `${sceneAsset ? `@${sceneAsset.name}` : scene}：唯一场景空间参考，只控制地点结构、陈设、环境和光线关系。`;
     const characterSetting = assets.filter((asset) => asset.kind === "character").map((asset) => `@${asset.name}：${storyboardAssetRoleHint(asset)}`).join("\n") || "当前画面无可识别人物资产。";
-    const positionSetting = `${subject}位于${scene}的画面主体区域，按照当前分镜站位保持与场景和道具的相对位置不变。`;
+    const positionSetting = `${subject}位于${scene}的画面主体区域，${actor}在画面边缘或画外执行当前动作，按照当前分镜站位保持与场景和道具的相对位置不变。`;
     const generationConstraint = `${duration}秒，单一连续镜头，画幅、分辨率遵循当前视频设置；生成声音：${videoGenerateAudio !== "false" ? "开启" : "关闭"}。严格保留当前镜头已锁定的台词/旁白，不增加、不删减，不生成字幕、文字、Logo 或水印。`;
-    const narrativeGoal = `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${subject}尝试${dramaticGoal}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`;
+    const narrativeGoal = `${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}：${actor}尝试推动${dramaticGoal}，动作作用于${subject}，失败代价是${dramaticStakes}；采用“${tactic}”应对${dramaticObstacle}，阻力反作用后由“${turningAction}”改变场面方向，最终形成${dramaticResult}；价值变化为${valueShift}。`;
     const startFrame = `${sceneAsset ? `@${sceneAsset.name}` : scene}，${framing}。${subject}处于${startState}。`;
     const speech = storyboardSpeechParts(storyboardSafetyComposeText(row[5] || "", true));
     const narrationEnd = speech.dialogues.length ? actionEnd : changeEnd;
     const dialogue = storyboardLockedSpeechForRow(node, rows, rowIndex)?.narration || storyboardNarrationWithinBudget(speech.narration, narrationEnd);
     const [establishVoiceover, actionVoiceover, changeVoiceover] = storyboardSplitNarrationByLimits(dialogue, [Math.round(establishEnd * 3.75), Math.round((actionEnd - establishEnd) * 3.75), ...(speech.dialogues.length ? [] : [Math.round((changeEnd - actionEnd) * 3.75)])]);
     const voiceoverTimeline = [establishVoiceover ? `0-${establishEnd}秒 VO：${establishVoiceover}` : "", actionVoiceover ? `${establishEnd}-${actionEnd}秒 VO：${actionVoiceover}` : "", changeVoiceover ? `${actionEnd}-${changeEnd}秒 VO：${changeVoiceover}` : "", speech.dialogues.length ? `${actionEnd}-${changeEnd}秒 对白：${speech.dialogues.map((item) => `{${item}}`).join("；")}` : ""].filter(Boolean).join("\n");
-    const soundLine = `0-${duration}秒：<${sound}>。${videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline ? `\n${voiceoverTimeline}` : "\n本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"}`;
+    const backgroundVoiceoverNotice = shotPlan?.voiceoverBeatIds?.length ? "导演约束：旁白中的背景事实只作为画外信息保留，画面始终只执行 visualBeatIds 对应的当前动作，不新增第二地点、人物、道具或事件。" : "";
+    const soundLine = [`0-${duration}秒：<${sound}>。`, backgroundVoiceoverNotice, videoGenerateAudio === "false" ? "生成声音已关闭，不生成对白、旁白、音效或背景音乐。" : voiceoverTimeline || "本镜头无对白；保留现场环境声，不额外生成旁白或背景音乐。"].filter(Boolean).join("\n");
     return {
         storyboardPrompt: [assetBinding.replace(/\n/g, "；"), [timeStage, sceneAsset ? `@${sceneAsset.name}` : scene, framing].filter(Boolean).join("，"), `${subject}处于${startState}，正准备${dramaticGoal}，身体保持即将执行“${tactic}”的起始姿态`, `画面承担${storyboardDramaticFunctionText(shotPlan?.dramaticFunction)}功能，预示${valueShift}`, lighting, style, "静态单场景构图，人物身份与画风稳定，无字幕、文字、Logo 或水印"].filter(Boolean).join("。"),
         videoMotionPrompt: [
@@ -8750,6 +8839,66 @@ function assertStoryboardPromptActionCoverage(prompt: string, plan?: StoryboardS
     if (!/稳定|保持|停住|静止|落点|不再/.test(finalSegment)) throw new Error("视频运动提示词格式不完整：12-15秒必须保持结果稳定落点");
 }
 
+function assertStoryboardProductionContractReady(
+    node: CanvasNodeData,
+    rows: string[][],
+    rowIndex: number,
+    detail: StoryboardPromptDetail,
+    orderedReferences: StoryboardVideoReference[],
+    stage: StoryboardProductionContractStage,
+) {
+    const audit = auditStoryboardProductionContract({
+        sourceBeats: node.metadata?.storyboardSourceBeats || [],
+        format: node.metadata?.storyboardDramaturgyPlan?.format,
+        shotPlan: node.metadata?.storyboardShotPlans?.[String(rowIndex)],
+        row: rows[rowIndex] || [],
+        assets: node.metadata?.storyboardAssets || [],
+        promptDetail: detail,
+        orderedReferences,
+    }, stage);
+    const blocked = audit.issues.filter((issue) => issue.level === "blocked");
+    if (blocked.length) throw new Error(`分镜生产契约未通过：${blocked.map((issue) => issue.message).join("；")}`);
+    return audit;
+}
+
+function assertStoryboardVideoNodeProductionReady(scriptNode: CanvasNodeData, videoNode: CanvasNodeData, stage: "draft" | "submit") {
+    const rowIndex = videoNode.metadata?.storyboardRowIndex;
+    if (rowIndex === undefined) throw new Error("分镜生产契约未通过：视频节点缺少分镜序号");
+    const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+    const sourceDetail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
+    const references = videoNode.metadata?.storyboardVideoReferences || [];
+    const finalPrompt = videoNode.metadata?.storyboardVideoFinalPrompt?.trim() || videoNode.metadata?.prompt?.trim() || "";
+    const detail: StoryboardPromptDetail = {
+        ...(sourceDetail || { storyboardPrompt: finalPrompt, videoMotionPrompt: finalPrompt }),
+        storyboardPrompt: sourceDetail?.storyboardPrompt || finalPrompt,
+        videoMotionPrompt: finalPrompt,
+        assetMentions: references.filter((reference) => reference.assetId || reference.kind).map((reference) => normalizeAssetMention(reference.mention)),
+    };
+    const duration = storyboardVideoPromptDurationSeconds(scriptNode, rows[rowIndex] || []);
+    assertStoryboardVideoPromptFormat(finalPrompt, duration, detail, scriptNode.metadata?.storyboardAssets || [], storyboardLockedSpeechForRow(scriptNode, rows, rowIndex), storyboardAllowsMultipleCharacterStagesForRow(scriptNode, rows, rowIndex));
+    assertStoryboardPromptActionCoverage(finalPrompt, scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]);
+    return assertStoryboardProductionContractReady(scriptNode, rows, rowIndex, detail, references, stage);
+}
+
+function storyboardContractReferencesForDetail(detail: StoryboardPromptDetail, assets: StoryboardAsset[]) {
+    const linkByMention = new Map((detail.assetMentionLinks || []).map((link) => [link.mention, link]));
+    return (detail.assetMentions || []).flatMap((mention): StoryboardVideoReference[] => {
+        const asset = assets.find((item) => `@${item.name}` === mention);
+        const link = linkByMention.get(mention);
+        if (!asset && !link) return [];
+        return [{
+            mention,
+            name: asset?.name || link?.name || mention.replace(/^@/, ""),
+            status: link?.status || "bound",
+            assetId: asset?.id || link?.assetId,
+            nodeId: link?.nodeId,
+            kind: asset?.kind || link?.kind,
+            source: link?.source || "script",
+            role: (asset?.kind || link?.kind) === "scene" ? "sceneLock" : "reference",
+        }];
+    });
+}
+
 function storyboardLockedSpeechForRow(node: CanvasNodeData, rows: string[][], rowIndex: number) {
     const chapterId = node.metadata?.storyboardShotPlans?.[String(rowIndex)]?.chapterId;
     if (!chapterId || !node.metadata?.storyboardLockedNarrationChapterIds?.includes(chapterId)) return undefined;
@@ -9006,7 +9155,7 @@ function storyboardDramaturgyContext(node: CanvasNodeData, sourceBeatIds?: strin
 
 function storyboardAssetSafetyText(text: string, strict = false) {
     const safe = storyboardSafetyComposeText(text)
-        .replace(/婴儿|新生儿|宝宝|襁褓|摇篮|婴儿衣物/g, "家庭新成员与相关用品")
+        .replace(/婴儿|新生儿|宝宝/g, "家庭新成员")
         .replace(/怀孕|孕期|孕妇|分娩|生产/g, "家庭准备迎接新成员")
         .replace(/童年|幼年|年幼|孩童/g, "年少时期")
         .replace(/住院|诊所|医院|病床|病房/g, "室内照护空间")

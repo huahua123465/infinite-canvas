@@ -1,4 +1,4 @@
-import type { StoryboardChapter, StoryboardDramaturgyPhase, StoryboardDramaturgyPlan, StoryboardProductionScope, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat } from "@/types/canvas";
+import type { StoryboardChapter, StoryboardDramaturgyPhase, StoryboardDramaturgyPlan, StoryboardProductionScope, StoryboardShotParticipant, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat, StoryboardTypedActionBeat } from "@/types/canvas";
 
 export const STORYBOARD_BEAT_BATCH_SIZE = 20;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
@@ -91,13 +91,14 @@ export function storyboardDramaturgyQualityIssues(plan: StoryboardDramaturgyPlan
         const current = ids.map((id) => beatOrder.get(id) ?? Number.MAX_SAFE_INTEGER);
         return Math.max(...previous) > Math.min(...current);
     });
+    const requiresCharacterArc = plan.format !== "concept";
     return [
-        !plan.want ? "缺少主角可见的外在目标" : "",
-        !plan.need ? "缺少有事实边界的内在变化" : "",
+        requiresCharacterArc && !plan.want ? "缺少主角可见的外在目标" : "",
+        requiresCharacterArc && !plan.need ? "缺少有事实边界的内在变化" : "",
         !plan.turningBeatIds.length ? "缺少关键转折事实" : "",
-        !plan.climaxBeatIds.length ? "缺少高潮事实" : "",
+        requiresCharacterArc && !plan.climaxBeatIds.length ? "缺少高潮事实" : "",
         !plan.endingBeatIds.length ? "缺少结局事实" : "",
-        !plan.arcSummary ? "缺少起点到终点的人物变化" : "",
+        requiresCharacterArc && !plan.arcSummary ? "缺少起点到终点的人物变化" : "",
         plan.rhythmPlan.length < 3 ? "双轨节奏阶段少于3个" : "",
         !plan.dialoguePrinciples.length ? "缺少对白旁白原则" : "",
         causalOrderBroken ? "激励、转折、高潮或结局的事实顺序倒置" : "",
@@ -134,6 +135,8 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
                 stakes: text(item.stakes),
                 tactic: text(item.tactic),
                 actionBeats: stringList(item.actionBeats),
+                participants: parseShotParticipants(item.participants),
+                typedActionBeats: parseTypedActionBeats(item.typedActionBeats),
                 obstacleReaction: text(item.obstacleReaction),
                 turningAction: text(item.turningAction),
                 result: text(item.result),
@@ -156,6 +159,12 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
     const plan = shot.plan;
     const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
     const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
+    const actors = new Set((plan.participants || []).filter((item) => item.role === "actor").map((item) => item.name));
+    const patients = new Set((plan.participants || []).filter((item) => item.role === "patient").map((item) => item.name));
+    const humanRoleRequired = Boolean(plan.participants?.length) || /人物|角色|婴儿|新生儿|宝宝|幼儿|少年|少女|青年|成年|老人|童年|出生时|年轻时期/.test(`${plan.timeStage} ${shot.row[2]} ${shot.row[5]}`);
+    const unboundTypedAction = (plan.typedActionBeats || []).some((item) => !actors.has(item.actor) || !patients.has(item.patient));
+    const infantActor = (plan.participants || []).find((item) => item.role === "actor" && /出生|新生儿|婴儿|宝宝|襁褓|幼儿/.test(`${item.name} ${item.lifeStage || ""}`));
+    const infantCareAction = Boolean(infantActor && (plan.typedActionBeats || []).some((item) => item.actor === infantActor.name && /抱起|抱住|托住|喂养|喂奶|换尿布|照料|照护|护理|包裹|拢紧|整理襁褓|调整包裹|安置|穿衣|擦洗/.test(item.action)));
     return [
         plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
         !plan.goal ? "缺少当前可见目标" : "",
@@ -164,6 +173,12 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
         !plan.tactic ? "缺少人物采取的具体策略" : "",
         (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
         (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
+        humanRoleRequired && !actors.size ? "缺少明确动作执行者 actor" : "",
+        humanRoleRequired && !patients.size ? "缺少明确动作承受者 patient" : "",
+        (plan.typedActionBeats?.length || 0) < 2 ? "类型化动作节拍少于2个" : "",
+        (plan.typedActionBeats?.length || 0) > 3 ? "类型化动作节拍超过3个" : "",
+        humanRoleRequired && unboundTypedAction ? "类型化动作节拍引用了未绑定的执行者或承受者" : "",
+        humanRoleRequired && infantCareAction ? "婴儿/幼儿不能作为成人照护动作的执行者" : "",
         narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
         !plan.obstacleReaction ? "缺少阻力反作用" : "",
         !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
@@ -172,6 +187,31 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
         !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
         abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
     ].filter(Boolean);
+}
+
+function parseShotParticipants(value: unknown): StoryboardShotParticipant[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item): StoryboardShotParticipant[] => {
+        if (!item || typeof item !== "object") return [];
+        const record = item as Record<string, unknown>;
+        const name = text(record.name);
+        const role = text(record.role);
+        if (!name || (role !== "actor" && role !== "patient")) return [];
+        return [{ name, role, lifeStage: text(record.lifeStage) || undefined, sourceBeatIds: stringList(record.sourceBeatIds) }];
+    });
+}
+
+function parseTypedActionBeats(value: unknown): StoryboardTypedActionBeat[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item): StoryboardTypedActionBeat[] => {
+        if (!item || typeof item !== "object") return [];
+        const record = item as Record<string, unknown>;
+        const actor = text(record.actor);
+        const action = text(record.action);
+        const patient = text(record.patient);
+        if (!actor || !action || !patient) return [];
+        return [{ actor, action, patient, prop: text(record.prop) || undefined, result: text(record.result) || undefined }];
+    });
 }
 
 export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], scope: StoryboardProductionScope = "series") {

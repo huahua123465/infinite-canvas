@@ -1,3 +1,5 @@
+import type { VideoRequestSummary } from "@/types/media";
+
 export type Position = {
     x: number;
     y: number;
@@ -32,6 +34,20 @@ export type StoryboardProductionMode = "economy" | "documentary" | "detailed" | 
 export type StoryboardProductionScope = "single" | "series";
 export type StoryboardShotRenderMode = "video" | "still";
 export type StoryboardPromptSource = "skill" | "builtin" | "fallback";
+export type StoryboardShotParticipantRole = "actor" | "patient";
+export type StoryboardShotParticipant = {
+    name: string;
+    role: StoryboardShotParticipantRole;
+    lifeStage?: string;
+    sourceBeatIds: string[];
+};
+export type StoryboardTypedActionBeat = {
+    actor: string;
+    action: string;
+    patient: string;
+    prop?: string;
+    result?: string;
+};
 export const STORYBOARD_PROMPT_SOURCE_TEXT: Record<StoryboardPromptSource, string> = { skill: "技能包生成", builtin: "内置规则", fallback: "安全兜底" };
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 export type CanvasVideoFrameRole = "first" | "last";
@@ -179,6 +195,8 @@ export type StoryboardShotPlan = {
     stakes?: string;
     tactic?: string;
     actionBeats?: string[];
+    participants?: StoryboardShotParticipant[];
+    typedActionBeats?: StoryboardTypedActionBeat[];
     obstacleReaction?: string;
     turningAction?: string;
     result?: string;
@@ -306,6 +324,7 @@ export type CanvasNodeMetadata = {
     videoTaskRequestUrl?: string;
     videoTaskRequestModel?: string;
     videoTaskRequestFields?: string[];
+    videoTaskRequestSummary?: VideoRequestSummary;
     workspaceKind?: "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceStoryboardChapterId?: string;

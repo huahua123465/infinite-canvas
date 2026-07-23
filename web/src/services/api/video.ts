@@ -12,7 +12,7 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig 
 import { runModelScript } from "@/services/api/model-script-runtime";
 import { resolveModelScript } from "@/stores/use-model-script-store";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
 
 type VideoResponseData = {
     id?: string;
@@ -24,6 +24,10 @@ type VideoResponseData = {
     result_url?: string;
     video_url?: string;
     content?: { video_url?: string; url?: string } | null;
+    error?: { code?: string; message?: string } | string | null;
+    error_code?: string;
+    message?: string;
+    fail_reason?: string;
     video?: { url?: string };
     raw_data?: { video_url?: string; url?: string };
 };
@@ -36,6 +40,7 @@ type VideoResponse = {
     error?: { code?: string; message?: string };
     error_code?: string;
     message?: string;
+    fail_reason?: string;
     url?: string;
     result_url?: string;
     video_url?: string;
@@ -76,6 +81,7 @@ export type VideoGenerationTask = {
     requestUrl?: string;
     requestModel?: string;
     requestFields?: string[];
+    requestSummary?: VideoRequestSummary;
 };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
@@ -369,7 +375,20 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         }
         const taskId = cangyuanVideoTaskId(created);
         if (!taskId) throw new Error("视频接口没有返回任务 ID");
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: modelName, requestFields };
+        const requestSummary = await buildVideoRequestSummary(
+            modelName,
+            requestPrompt,
+            {
+                aspectRatio: normalizeCangyuanVideoRatio(config.size),
+                duration: normalizeCangyuanVideoDuration(config.videoSeconds),
+                ...(fixedResolution ? { fixedResolution } : { resolution: normalizeCangyuanSeedanceResolution(config.vquality), generateAudio: boolConfig(config.videoGenerateAudio, true) }),
+                transport: useMultipartImage ? "multipart" : "json",
+            },
+            requestReferences,
+            videoReferences,
+            audioReferences,
+        );
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: modelName, requestFields, requestSummary };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
@@ -413,7 +432,15 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         const taskId = cangyuanVideoTaskId(created);
         if (!taskId) throw new Error("SD5 Seedance 视频接口没有返回任务 ID");
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload) };
+        const requestSummary = await buildVideoRequestSummary(
+            payload.model,
+            requestPrompt,
+            { duration: payload.duration, aspectRatio: payload.aspect_ratio, generateAudio: payload.generate_audio, resolution: payload.resolution, referenceMode: payload.reference_mode || "none" },
+            references.slice(0, limits.images),
+            videoReferences.slice(0, limits.videos),
+            audioReferences.slice(0, limits.audios),
+        );
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload), requestSummary };
     } catch (error) {
         throw new Error(readAxiosError(error, "SD5 Seedance 视频任务创建失败", modelName));
     }
@@ -442,11 +469,102 @@ function buildCangyuanSeedancePrompt(prompt: string, images: ReferenceImage[], v
     const labels = [...images.map((_, index) => `@image${index + 1}`), ...videos.map((_, index) => `@video${index + 1}`), ...audios.map((_, index) => `@audio${index + 1}`)];
     const missing = labels.filter((label) => !new RegExp(`${label}(?!\\d)`, "i").test(text));
     const bindings = [
-        ...images.map((item, index) => `@image${index + 1}=${referenceDisplayName(item.name, index)}（锁定主体身份、脸部、发型、服装与画风）`),
+        ...images.map((item, index) => `@image${index + 1}=${referenceDisplayName(item.name, index)}（${referenceImageBindingDescription(item)}）`),
         ...videos.map((item, index) => `@video${index + 1}=${referenceDisplayName(item.name, index)}（仅参考动作与运镜）`),
         ...audios.map((item, index) => `@audio${index + 1}=${referenceDisplayName(item.name, index)}（仅参考声音与节奏）`),
     ];
     return bindings.length ? `参考素材绑定（顺序与实际上传数组一致）：${bindings.join("；")}。${missing.length ? `已绑定但正文未点名：${missing.join("、")}。` : ""}\n\n${text}` : text;
+}
+
+function referenceImageBindingDescription(image: ReferenceImage) {
+    const role = referenceImageSemanticRole(image);
+    if (role === "firstFrame") return "首帧参考，锁定起始构图、人物站位与画面状态";
+    if (role === "lastFrame") return "尾帧参考，锁定结束构图、人物站位与画面状态";
+    if (role === "scene") return "场景空间参考，锁定地点结构、陈设、材质与光线，不控制人物身份";
+    if (role === "prop") return "关键道具参考，锁定道具外观、材质、尺寸与使用连续性，不控制人物身份";
+    if (role === "character") return "人物参考，锁定对应人物的身份、脸部、发型、服装、年龄状态与画风";
+    return "素材参考，仅锁定该素材对应主体的外观、材质与画风，不控制人物身份";
+}
+
+function referenceImageSemanticRole(image: ReferenceImage): VideoRequestReferenceSummary["role"] {
+    if (image.videoReferenceRole === "firstFrame") return "firstFrame";
+    if (image.videoReferenceRole === "lastFrame") return "lastFrame";
+    if (image.videoReferenceRole === "sceneLock") return "scene";
+    if (image.referenceKind) return image.referenceKind;
+    const name = referenceDisplayName(image.name, 0);
+    if (/(道具|襁褓|婴儿篮|摇篮|竹篮|行李|信件|钥匙|武器|佩剑|刀具|手枪|手机|书本|雨伞|箱子|杯子|桌椅|器具)/i.test(name)) return "prop";
+    if (/(场景|空间|室内|室外|卧房|卧室|客厅|厨房|房间|木屋|山村|街道|庭院|店铺|教室|医院|办公室|山林|海边|多角度锁定图)/i.test(name)) return "scene";
+    if (/(人物|角色|主角|配角|婴儿|幼儿|男孩|女孩|少年|少女|青年|中年|老年|出生时|幼年时|少年时|青年时|中年时|老年时)/i.test(name)) return "character";
+    return "reference";
+}
+
+async function buildVideoRequestSummary(
+    model: string,
+    prompt: string,
+    parameters: VideoRequestSummary["parameters"],
+    images: ReferenceImage[],
+    videos: ReferenceVideo[],
+    audios: ReferenceAudio[],
+): VideoRequestSummary {
+    const imageSummaries: VideoRequestReferenceSummary[] = images.map((item, index) => ({
+        order: index + 1,
+        mediaType: "image",
+        name: referenceDisplayName(item.name, index),
+        role: referenceImageSemanticRole(item),
+        mimeType: item.type || undefined,
+        source: referenceSource(item.storageKey, item.url || item.dataUrl),
+        bytes: dataUrlByteLength(item.dataUrl),
+    }));
+    const videoSummaries: VideoRequestReferenceSummary[] = videos.map((item, index) => ({
+        order: imageSummaries.length + index + 1,
+        mediaType: "video",
+        name: referenceDisplayName(item.name, index),
+        role: "reference",
+        mimeType: item.type || undefined,
+        source: referenceSource(item.storageKey, item.url),
+        bytes: item.bytes,
+        width: item.width,
+        height: item.height,
+        durationMs: item.durationMs,
+    }));
+    const audioSummaries: VideoRequestReferenceSummary[] = audios.map((item, index) => ({
+        order: imageSummaries.length + videoSummaries.length + index + 1,
+        mediaType: "audio",
+        name: referenceDisplayName(item.name, index),
+        role: "reference",
+        mimeType: item.type || undefined,
+        source: referenceSource(item.storageKey, item.url),
+        durationMs: item.durationMs,
+    }));
+    let promptSha256 = "unavailable";
+    try {
+        if (globalThis.crypto?.subtle) promptSha256 = Array.from(new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(prompt)))).map((value) => value.toString(16).padStart(2, "0")).join("");
+    } catch {
+        // Request diagnostics must never invalidate an already-created provider task.
+    }
+    return { model, promptLength: prompt.length, promptSha256, parameters, references: [...imageSummaries, ...videoSummaries, ...audioSummaries] };
+}
+
+function referenceSource(storageKey: string | undefined, value: string | undefined): VideoRequestReferenceSummary["source"] {
+    if (storageKey) return "stored";
+    if (value?.startsWith("data:")) return "inline";
+    if (value && /^(?:https?:)?\/\//i.test(value)) return "remote";
+    return "unknown";
+}
+
+function dataUrlByteLength(value: string) {
+    if (!value.startsWith("data:")) return undefined;
+    const commaIndex = value.indexOf(",");
+    if (commaIndex < 0) return undefined;
+    const content = value.slice(commaIndex + 1);
+    if (!value.slice(0, commaIndex).includes(";base64")) {
+        try {
+            return new TextEncoder().encode(decodeURIComponent(content)).byteLength;
+        } catch {
+            return new TextEncoder().encode(content).byteLength;
+        }
+    }
+    return Math.max(0, Math.floor((content.length * 3) / 4) - (content.endsWith("==") ? 2 : content.endsWith("=") ? 1 : 0));
 }
 
 function referenceDisplayName(name: string, index: number) {
@@ -895,8 +1013,9 @@ async function cangyuanVideoResult(config: AiConfig, task: VideoGenerationTask, 
 }
 
 function cangyuanVideoStatus(video: VideoResponse) {
-    const nestedStatus = !Array.isArray(video.data) ? stringValue(video.data?.status) || stringValue(video.data?.state) : "";
-    return (video.status || video.state || nestedStatus).toLowerCase();
+    const nested = Array.isArray(video.data) ? video.data : video.data ? [video.data] : [];
+    const nestedStatus = nested.map((item) => stringValue(item.status) || stringValue(item.state)).find(Boolean);
+    return (nestedStatus || stringValue(video.status) || stringValue(video.state)).toLowerCase();
 }
 
 function isCangyuanVideoCompleted(status: string) {
@@ -904,7 +1023,7 @@ function isCangyuanVideoCompleted(status: string) {
 }
 
 function isCangyuanVideoFailed(status: string) {
-    return ["failed", "fail", "error", "cancelled", "canceled", "expired", "timeout"].includes(status);
+    return ["failed", "failure", "fail", "error", "cancelled", "canceled", "expired", "timeout"].includes(status);
 }
 
 function cangyuanVideoProgress(video: VideoResponse) {
@@ -925,9 +1044,12 @@ function cangyuanVideoUrl(video: VideoResponse) {
 }
 
 function cangyuanVideoError(video: VideoResponse) {
-    const message = stringValue(video.error?.message) || stringValue(video.message);
-    const code = stringValue(video.error_code) || stringValue(video.error?.code);
-    return [message || "视频生成失败", code].filter(Boolean).join("：");
+    const details = collectVideoErrorDetails(video);
+    const code = details.codes[0];
+    if (code?.toUpperCase() === "GENERATION_FAILED") {
+        return "上游已接单并进入生成阶段，但未返回可定位的具体失败原因（provider code: GENERATION_FAILED）。请保留任务 ID 与请求摘要后重试；若重复失败，再据此排查素材、提示词或上游服务。";
+    }
+    return [details.messages[0] || "视频生成失败", code ? `provider code: ${code}` : ""].filter(Boolean).join("；");
 }
 
 function normalizeProgress(value: unknown) {
@@ -1003,17 +1125,40 @@ function extractErrorMessage(payload: unknown) {
     if (!payload) return "";
     if (typeof payload === "string") return payload;
     if (typeof payload !== "object") return String(payload);
-    const record = payload as Record<string, unknown>;
-    const directMessage = stringValue(record.msg) || stringValue(record.message) || stringValue(record.detail);
-    if (directMessage) return directMessage;
-    const errorValue = record.error;
-    if (typeof errorValue === "string") return errorValue;
-    if (errorValue && typeof errorValue === "object") {
-        const errorRecord = errorValue as Record<string, unknown>;
-        const parts = [stringValue(errorRecord.message), stringValue(errorRecord.code), stringValue(errorRecord.param), stringValue(errorRecord.type)].filter(Boolean);
-        if (parts.length) return parts.join("；");
-    }
+    const details = collectVideoErrorDetails(payload);
+    if (details.messages.length || details.codes.length) return [...details.messages.slice(0, 1), ...details.codes.slice(0, 1)].join("；");
     return `接口返回参数错误：${safeJsonPreview(payload)}`;
+}
+
+function collectVideoErrorDetails(payload: unknown, depth = 0): { messages: string[]; codes: string[] } {
+    if (!payload || depth > 4) return { messages: [], codes: [] };
+    if (typeof payload === "string") return { messages: [payload], codes: [] };
+    if (typeof payload !== "object") return { messages: [], codes: [] };
+    if (Array.isArray(payload)) return mergeVideoErrorDetails(payload.map((item) => collectVideoErrorDetails(item, depth + 1)));
+    const record = payload as Record<string, unknown>;
+    const nested = mergeVideoErrorDetails([collectVideoErrorDetails(record.data, depth + 1), collectVideoErrorDetails(record.error, depth + 1)]);
+    const messages = [
+        ...nested.messages,
+        stringValue(record.fail_reason),
+        stringValue(record.msg),
+        stringValue(record.message),
+        stringValue(record.detail),
+        nonUrlMessage(record.result_url),
+    ].filter(Boolean);
+    const codes = [...nested.codes, stringValue(record.error_code), stringValue(record.code), stringValue(record.type)].filter(Boolean);
+    return { messages: [...new Set(messages)], codes: [...new Set(codes)] };
+}
+
+function mergeVideoErrorDetails(items: Array<{ messages: string[]; codes: string[] }>) {
+    return {
+        messages: items.flatMap((item) => item.messages),
+        codes: items.flatMap((item) => item.codes),
+    };
+}
+
+function nonUrlMessage(value: unknown) {
+    const message = stringValue(value);
+    return message && !/^(?:https?:|data:|blob:)/i.test(message) ? message : "";
 }
 
 function stringValue(value: unknown) {

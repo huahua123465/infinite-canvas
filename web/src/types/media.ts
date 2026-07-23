@@ -18,3 +18,24 @@ export type ReferenceAudio = {
     storageKey?: string;
     durationMs?: number;
 };
+
+export type VideoRequestReferenceSummary = {
+    order: number;
+    mediaType: "image" | "video" | "audio";
+    name: string;
+    role: "character" | "scene" | "prop" | "firstFrame" | "lastFrame" | "reference";
+    mimeType?: string;
+    source: "stored" | "inline" | "remote" | "unknown";
+    bytes?: number;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+};
+
+export type VideoRequestSummary = {
+    model: string;
+    promptLength: number;
+    promptSha256: string;
+    parameters: Record<string, string | number | boolean>;
+    references: VideoRequestReferenceSummary[];
+};

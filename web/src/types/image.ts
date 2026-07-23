@@ -6,4 +6,5 @@ export type ReferenceImage = {
     url?: string;
     storageKey?: string;
     videoReferenceRole?: "reference" | "sceneLock" | "firstFrame" | "lastFrame";
+    referenceKind?: "character" | "scene" | "prop";
 };
