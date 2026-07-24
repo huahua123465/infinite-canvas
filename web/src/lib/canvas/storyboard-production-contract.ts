@@ -322,7 +322,20 @@ function sameList(first: string[], second: string[]) {
 
 function addCharacterStage(groups: Map<string, Set<string>>, name: string, stage?: string) {
     if (!name.trim() || !stage?.trim()) return;
-    groups.set(name.trim(), new Set([...(groups.get(name.trim()) || []), stage.trim()]));
+    const normalizedStage = normalizeCharacterStage(stage);
+    groups.set(name.trim(), new Set([...(groups.get(name.trim()) || []), normalizedStage]));
+}
+
+function normalizeCharacterStage(value: string) {
+    const stage = normalizeTimeStage(value);
+    if (/出生|新生|婴儿|襁褓/.test(stage)) return "婴儿";
+    if (/童年|年少|儿童|幼年/.test(stage)) return "年少";
+    if (/少年/.test(stage)) return "少年";
+    if (/青年|年轻/.test(stage)) return "青年";
+    if (/中年/.test(stage)) return "中年";
+    if (/老年|晚年|年老/.test(stage)) return "晚年";
+    if (/成年|成人/.test(stage)) return "成年";
+    return stage;
 }
 
 function atLeast(stage: StoryboardProductionContractStage, expected: StoryboardProductionContractStage) {

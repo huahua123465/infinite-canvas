@@ -370,7 +370,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             model={node.metadata?.model || config.textModel || config.model}
                             onModelChange={(model) => onModelChange(node.id, model)}
                             onSave={(detail) => onPromptDetailChange(node.id, promptEditorRowIndex, detail)}
-                            onRegenerate={() => onComposeFinalPrompt(node, promptEditorRowIndex)}
+                            onRegenerate={() => onComposeFinalPrompt(node, promptEditorRowIndex, true)}
                             onGenerateImage={() => onGenerateImage(node, promptEditorRowIndex)}
                             onGenerateVideo={() => onGenerateVideo(node, promptEditorRowIndex)}
                             onClose={() => setPromptEditorRowIndex(null)}
@@ -691,7 +691,7 @@ function storyboardShotFactRoleTitle(plan?: StoryboardShotPlan) {
     return [`主要可见事实：${plan.visualBeatIds?.join("、") || "未指定"}`, `旁白承载事实：${plan.voiceoverBeatIds?.join("、") || "无"}`].join("\n");
 }
 
-function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, dynamicPromptCount, dynamicShotCount, staticShotCount }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; dynamicPromptCount: number; dynamicShotCount: number; staticShotCount: number }) {
+function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, dynamicPromptCount, dynamicShotCount, staticShotCount }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; dynamicPromptCount: number; dynamicShotCount: number; staticShotCount: number }) {
     return (
         <>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
@@ -754,7 +754,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                                 ],
                                                 onClick: ({ key }) => {
                                                     if (key === "open") onOpenPrompt(rowIndex);
-                                                    if (key === "compose") onComposeFinalPrompt(node, rowIndex);
+                                                    if (key === "compose") onComposeFinalPrompt(node, rowIndex, true);
                                                     if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(detail, row[8] || ""));
                                                     if (key === "image") onGenerateImage(node, rowIndex);
                                                     if (key === "video") onGenerateVideo(node, rowIndex);
@@ -1214,7 +1214,7 @@ function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount
 function PromptStepToolbar({ node, actionKey, promptProgress, dynamicPromptCount, dynamicShotCount, pendingPromptCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onRecomposeAll, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" }; dynamicPromptCount: number; dynamicShotCount: number; pendingPromptCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onRecomposeAll: () => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
     const remaining = pendingPromptCount;
     const generating = actionKey === "prompt:all";
-    const progressText = promptProgress?.status === "running" ? `第 ${promptProgress.current}/${promptProgress.total} 镜：${promptProgress.phase}` : promptProgress?.status === "completed" ? "本轮合成已完成" : promptProgress?.status === "paused" ? "合成已暂停，已保留已完成结果" : promptProgress?.status === "error" ? "合成遇到错误；再次合成会产生新的模型请求" : "";
+    const progressText = promptProgress?.status === "running" ? `第 ${promptProgress.current}/${promptProgress.total} 镜：${promptProgress.phase}` : promptProgress?.status === "completed" ? "本轮合成已完成" : promptProgress?.status === "paused" ? "合成已暂停，已保留已完成结果" : promptProgress?.status === "error" ? "合成遇到错误；再次执行会先免费重校正已保存的模型结果" : "";
     return (
         <div className="flex shrink-0 items-center gap-4">
             {generating ? (
@@ -1226,7 +1226,7 @@ function PromptStepToolbar({ node, actionKey, promptProgress, dynamicPromptCount
             )}
             <div className="text-sm font-semibold">{dynamicPromptCount}/{dynamicShotCount} 个视频片段完成</div>
             {progressText ? <div className={`max-w-[300px] text-xs ${promptProgress?.status === "error" ? "text-red-300" : promptProgress?.status === "running" ? "text-cyan-200" : "text-[#9f9f9f]"}`}>{promptProgress?.status === "running" ? <LoaderCircle className="mr-1 inline-block size-3.5 animate-spin" /> : null}{progressText}</div> : null}
-            {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount} · 再次合成会重新调用模型</div> : null}
+            {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount} · 先重校正已付费结果，仍失败才请求模型</div> : null}
             {staticShotCount ? <div className="text-xs text-[#8f8f8f]">{staticShotCount} 个静态片段暂不调用模型</div> : null}
         </div>
     );
