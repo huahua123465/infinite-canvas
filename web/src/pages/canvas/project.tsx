@@ -2444,6 +2444,46 @@ function InfiniteCanvasPage() {
         }));
     }, []);
 
+    const repairStoryboardNarration = useCallback(async (node: CanvasNodeData, rowIndex: number) => {
+        const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+        const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+        const row = rows[rowIndex];
+        const plan = scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)];
+        if (!row || !plan?.qualityError || !/旁白超过48字/.test(plan.qualityError)) return;
+        const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+        if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+            openConfigDialog(true);
+            return;
+        }
+        const facts = (scriptNode.metadata?.storyboardSourceBeats || []).filter((beat) => plan.sourceBeatIds.includes(beat.id));
+        const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
+        setStoryboardActionKey(`shot-fix:${rowIndex}`);
+        try {
+            const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: [
+                "你是中文短剧旁白编辑。只压缩当前镜头的旁白，不修改画面动作、事实、人物关系、叙事视角和情感落点，也不得新增原文没有的信息。",
+                "删除0-3秒等时间标签、重复的“旁白：”前缀和导演说明；改写为1-2句自然、完整、可朗读的中文旁白，目标36-45个汉字，硬上限48个汉字。",
+                "只输出合法JSON：{\"dialogue\":\"压缩后的旁白\"}，不要输出解释或Markdown。",
+                `【当前事实】\n${JSON.stringify(facts)}`,
+                `【当前画面】\n${row[2] || ""}`,
+                `【需要压缩的对白旁白】\n${row[5] || ""}`,
+            ].join("\n\n") }], () => {}, { signal: controller.signal });
+            const repairedNarration = storyboardNarrationWithinBudget(parseStoryboardNarrationRepairAnswer(answer), 15);
+            if (!repairedNarration) throw new Error("模型没有返回可用旁白");
+            const nextRow = [...row];
+            nextRow[5] = repairedNarration;
+            const issues = storyboardShotQualityIssuesForShot({ row: nextRow, plan });
+            updateStoryboardRows(scriptNode.id, (currentRows) => currentRows.map((item, index) => index === rowIndex ? nextRow : item));
+            updateStoryboardShotPlan(scriptNode.id, rowIndex, { qualityError: issues.join("、") || undefined, renderMode: issues.length ? "still" : "video" });
+            if (issues.length) message.warning(`旁白已自动压缩，本镜仍有 ${issues.length} 项需要修正`);
+            else message.success(`第 ${row[0] || rowIndex + 1} 镜旁白已自动修正并恢复为动态视频`);
+        } catch (error) {
+            if (!isGenerationCanceled(error)) message.error(error instanceof Error ? `自动修正失败：${error.message}` : "自动修正失败");
+        } finally {
+            finishGenerationRequest(scriptNode.id, controller);
+            setStoryboardActionKey(null);
+        }
+    }, [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardRows, updateStoryboardShotPlan]);
+
     const deleteStoryboardAsset = useCallback((nodeId: string, assetId: string) => {
         setNodes((prev) => prev.map((node) => {
             if (node.id !== nodeId) return node;
@@ -5960,6 +6000,7 @@ function InfiniteCanvasPage() {
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
+                    onRepairNarration={(node, rowIndex) => void repairStoryboardNarration(node, rowIndex)}
                     onComposeFinalPrompt={(node, rowIndex, replaceExisting) => void composeStoryboardFinalPrompt(node, rowIndex, replaceExisting)}
                     onStopPromptGeneration={stopStoryboardPromptGeneration}
                     onPromptDetailChange={updateStoryboardPromptDetail}
@@ -8593,6 +8634,29 @@ function storyboardNarrationWithinBudget(value: string, duration: number) {
         result += sentence;
     }
     return result || Array.from(text).slice(0, limit).join("");
+}
+
+function parseStoryboardNarrationRepairAnswer(answer: string) {
+    const start = answer.indexOf("{");
+    const end = answer.lastIndexOf("}");
+    let value = "";
+    if (start >= 0 && end <= start) return "";
+    if (start >= 0 && end > start) {
+        try {
+            const parsed = JSON.parse(answer.slice(start, end + 1)) as { dialogue?: unknown };
+            if (typeof parsed.dialogue === "string") value = parsed.dialogue;
+        } catch {
+            return "";
+        }
+    }
+    return (value || answer)
+        .replace(/^```(?:json|text)?\s*/i, "")
+        .replace(/```$/i, "")
+        .replace(/(?:^|\n)\s*\d+(?:\.\d+)?\s*[-—–~至]\s*\d+(?:\.\d+)?\s*秒\s*[：:]?\s*/g, " ")
+        .replace(/(?:旁白|VO)\s*[：:]\s*/gi, " ")
+        .replace(/^[“"]|[”"]$/g, "")
+        .replace(/\s+/g, "")
+        .trim();
 }
 
 function storyboardSplitNarrationByLimits(value: string, limits: number[]) {
