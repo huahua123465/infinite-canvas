@@ -115,7 +115,7 @@ export function assembleStoryboardProductionContract(input: StoryboardProduction
         visualFact,
         location: visualFact?.location.trim() || "",
         timeStage: plan?.timeStage?.trim() || visualFact?.timeStage.trim() || "",
-        timeStages: unique([plan?.timeStage || "", visualFact?.timeStage || ""].map(normalizeTimeStage).filter(Boolean)),
+        timeStages: mergeKnownCharacterAgeStages(plan?.timeStage || "", visualFact?.timeStage || ""),
         participants: plan?.participants || [],
         sceneAsset: bindings.find((binding) => binding.role === "sceneSpace"),
         propAssets: bindings.filter((binding) => binding.role === "propContinuity"),
@@ -153,11 +153,12 @@ export function validateStoryboardProductionContract(contract: StoryboardProduct
     const hasHumanRole = contract.assets.some((asset) => asset.kind === "character") || Boolean(contract.visualFact?.characters.length) || contract.participants.some((participant) => /人物|角色|婴儿|新生儿|宝宝|幼儿|少年|少女|青年|成人|老人/.test(`${participant.name} ${participant.lifeStage || ""}`));
     if (video && hasHumanRole && !contract.timeStage) block("character_stage_missing", "包含人物的动态镜头缺少唯一人物时期", "timeStage");
     if (video && contract.format !== "concept" && contract.timeStages.length > 1) block("multiple_time_stages", `单个动态镜头包含多个故事时期：${contract.timeStages.join("、")}`, "timeStage");
-    const characterStages = new Map<string, Set<string>>();
+    const characterStages = new Map<string, string[][]>();
     contract.participants.forEach((item) => addCharacterStage(characterStages, item.name, item.lifeStage));
     contract.assets.filter((item) => item.kind === "character").forEach((item) => addCharacterStage(characterStages, item.baseName || item.name || "", item.lifeStage));
-    for (const [name, values] of characterStages) {
-        if (values.size > 1) block("multiple_character_stages", `人物“${name}”在同一镜头绑定了多个年龄/时期：${Array.from(values).join("、")}`, "participants");
+    for (const [name, evidenceStages] of characterStages) {
+        const sharedStages = evidenceStages.reduce((shared, stages, index) => index ? shared.filter((stage) => stages.includes(stage)) : stages, [] as string[]);
+        if (evidenceStages.length > 1 && !sharedStages.length) block("multiple_character_stages", `人物“${name}”在同一镜头绑定了多个年龄/时期：${unique(evidenceStages.map((stages) => stages.join("/"))).join("、")}`, "participants");
     }
     if (!contract.duration) block("duration_missing", "镜头时长无效或缺失", "duration");
     if (!contract.continuity.groupId) warn("continuity_group_missing", "镜头没有连续性分组，后续片段无法可靠承接", "continuityGroupId");
@@ -320,22 +321,79 @@ function sameList(first: string[], second: string[]) {
     return first.length === second.length && first.every((value, index) => value === second[index]);
 }
 
-function addCharacterStage(groups: Map<string, Set<string>>, name: string, stage?: string) {
+function addCharacterStage(groups: Map<string, string[][]>, name: string, stage?: string) {
     if (!name.trim() || !stage?.trim()) return;
-    const normalizedStage = normalizeCharacterStage(stage);
-    groups.set(name.trim(), new Set([...(groups.get(name.trim()) || []), normalizedStage]));
+    const normalizedStage = normalizeTimeStage(stage);
+    const candidates = normalizeKnownCharacterAgeStages(normalizedStage);
+    groups.set(name.trim(), [...(groups.get(name.trim()) || []), candidates.length ? candidates : [normalizedStage]]);
 }
 
-function normalizeCharacterStage(value: string) {
+function normalizeKnownCharacterAgeStages(value: string) {
     const stage = normalizeTimeStage(value);
-    if (/出生|新生|婴儿|襁褓/.test(stage)) return "婴儿";
-    if (/童年|年少|儿童|幼年/.test(stage)) return "年少";
-    if (/少年/.test(stage)) return "少年";
-    if (/青年|年轻/.test(stage)) return "青年";
-    if (/中年/.test(stage)) return "中年";
-    if (/老年|晚年|年老/.test(stage)) return "晚年";
-    if (/成年|成人/.test(stage)) return "成年";
-    return stage;
+    const age = parseCharacterAge(stage);
+    if (age !== undefined) {
+        const [minAge, maxAge] = Array.isArray(age) ? age : [age, age];
+        const ranges: Array<[number, number, string]> = [[0, 2, "婴儿"], [3, 11, "年少"], [12, 17, "少年"], [18, 39, "青年"], [40, 59, "中年"], [60, 120, "晚年"]];
+        return ranges.filter(([min, max]) => maxAge >= min && minAge <= max).map(([, , label]) => label);
+    }
+    if (/出生|新生|婴儿|宝宝|襁褓/.test(stage)) return ["婴儿"];
+    if (/童年|年少|儿童|幼年|年幼|孩童|幼儿|儿时/.test(stage)) return ["年少"];
+    if (/少年|少女|青春期/.test(stage)) return ["少年"];
+    if (/青年|年轻/.test(stage)) return ["青年"];
+    if (/中年|壮年/.test(stage)) return ["中年"];
+    if (/老年|晚年|年老/.test(stage)) return ["晚年"];
+    if (/成年|成人/.test(stage)) return ["成年"];
+    return [];
+}
+
+function mergeKnownCharacterAgeStages(firstValue: string, secondValue: string) {
+    const first = normalizeKnownCharacterAgeStages(firstValue);
+    const second = normalizeKnownCharacterAgeStages(secondValue);
+    if (!first.length) return second.length ? [second.join("/")] : [];
+    if (!second.length) return [first.join("/")];
+    const shared = first.filter((stage) => second.includes(stage));
+    return shared.length ? [shared.join("/")] : unique([...first, ...second]);
+}
+
+function parseCharacterAge(value: string) {
+    const arabicAge = value.match(/(?:^|\D)(\d{1,3})岁/)?.[1];
+    if (arabicAge !== undefined) {
+        const age = Number(arabicAge);
+        return validCharacterAge(age) ? age : undefined;
+    }
+    const chineseAge = value.match(/(?:^|[^零〇一二两三四五六七八九十百])([零〇一二两三四五六七八九十百]{1,5})岁/)?.[1];
+    if (!chineseAge) return undefined;
+    const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+    const hundredAge = chineseAge.match(/^一百(?:零([一二两三四五六七八九])|([一二两三四五六七八九])十([一二两三四五六七八九])?)?$/);
+    if (hundredAge) {
+        const age = 100 + (hundredAge[1] ? digits[hundredAge[1]] : hundredAge[2] ? digits[hundredAge[2]] * 10 + (digits[hundredAge[3]] || 0) : 0);
+        return validCharacterAge(age) ? age : undefined;
+    }
+    const rangePatterns: Array<[RegExp, (match: RegExpMatchArray) => [number, number]]> = [
+        [/^([一二两三四五六七八九])([一二两三四五六七八九])$/, (match) => [digits[match[1]], digits[match[2]]]],
+        [/^十([一二两三四五六七八九])([一二两三四五六七八九])$/, (match) => [10 + digits[match[1]], 10 + digits[match[2]]]],
+        [/^([一二两三四五六七八九])十([一二两三四五六七八九])([一二两三四五六七八九])$/, (match) => [digits[match[1]] * 10 + digits[match[2]], digits[match[1]] * 10 + digits[match[3]]]],
+        [/^([一二两三四五六七八九])([一二两三四五六七八九])十$/, (match) => [digits[match[1]] * 10, digits[match[2]] * 10]],
+    ];
+    for (const [pattern, toRange] of rangePatterns) {
+        const match = chineseAge.match(pattern);
+        if (match) return normalizeCharacterAgeRange(...toRange(match));
+    }
+    const exact = chineseAge.match(/^十([一二两三四五六七八九])?$/)
+        ? 10 + (digits[chineseAge.slice(1)] || 0)
+        : chineseAge.match(/^([一二两三四五六七八九])十([一二两三四五六七八九])?$/)
+            ? digits[chineseAge[0]] * 10 + (digits[chineseAge.slice(2)] || 0)
+            : digits[chineseAge];
+    return validCharacterAge(exact) ? exact : undefined;
+}
+
+function normalizeCharacterAgeRange(first: number, second: number): [number, number] | undefined {
+    if (!validCharacterAge(first) || !validCharacterAge(second)) return undefined;
+    return [Math.min(first, second), Math.max(first, second)];
+}
+
+function validCharacterAge(age: number) {
+    return Number.isFinite(age) && age >= 0 && age <= 120;
 }
 
 function atLeast(stage: StoryboardProductionContractStage, expected: StoryboardProductionContractStage) {
