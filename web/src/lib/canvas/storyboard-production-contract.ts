@@ -115,7 +115,7 @@ export function assembleStoryboardProductionContract(input: StoryboardProduction
         visualFact,
         location: visualFact?.location.trim() || "",
         timeStage: plan?.timeStage?.trim() || visualFact?.timeStage.trim() || "",
-        timeStages: unique([plan?.timeStage || "", ...sourceBeats.map((beat) => beat.timeStage)].map((value) => value.trim()).filter(Boolean)),
+        timeStages: unique([plan?.timeStage || "", visualFact?.timeStage || ""].map(normalizeTimeStage).filter(Boolean)),
         participants: plan?.participants || [],
         sceneAsset: bindings.find((binding) => binding.role === "sceneSpace"),
         propAssets: bindings.filter((binding) => binding.role === "propContinuity"),
@@ -150,10 +150,8 @@ export function validateStoryboardProductionContract(contract: StoryboardProduct
     if (contract.visualFactId && !contract.sourceBeatIds.includes(contract.visualFactId)) block("visual_fact_outside_source", "主要可见事实不在镜头事实 ID 中", "visualBeatIds");
     if (contract.visualFactId && !contract.visualFact) block("visual_fact_unknown", `主要可见事实不存在：${contract.visualFactId}`, "visualBeatIds");
     if (video && !contract.location) block("location_missing", "主要可见事实缺少地点", "location");
-    const hasHumanRole = contract.assets.some((asset) => asset.kind === "character") || contract.sourceBeats.some((beat) => beat.characters.length > 0) || contract.participants.some((participant) => /人物|角色|婴儿|新生儿|宝宝|幼儿|少年|少女|青年|成人|老人/.test(`${participant.name} ${participant.lifeStage || ""}`));
+    const hasHumanRole = contract.assets.some((asset) => asset.kind === "character") || Boolean(contract.visualFact?.characters.length) || contract.participants.some((participant) => /人物|角色|婴儿|新生儿|宝宝|幼儿|少年|少女|青年|成人|老人/.test(`${participant.name} ${participant.lifeStage || ""}`));
     if (video && hasHumanRole && !contract.timeStage) block("character_stage_missing", "包含人物的动态镜头缺少唯一人物时期", "timeStage");
-    const locations = unique(contract.sourceBeats.map((beat) => beat.location.trim()).filter(Boolean));
-    if (video && locations.length > 1) block("multiple_locations", `单个动态镜头包含多个地点：${locations.join("、")}`, "sourceBeatIds");
     if (video && contract.format !== "concept" && contract.timeStages.length > 1) block("multiple_time_stages", `单个动态镜头包含多个故事时期：${contract.timeStages.join("、")}`, "timeStage");
     const characterStages = new Map<string, Set<string>>();
     contract.participants.forEach((item) => addCharacterStage(characterStages, item.name, item.lifeStage));
@@ -312,6 +310,10 @@ function mention(value: string) {
 
 function unique(values: string[]) {
     return Array.from(new Set(values));
+}
+
+function normalizeTimeStage(value: string) {
+    return value.trim().replace(/\s+/g, "").replace(/(?:时期|阶段|时候)$/, "");
 }
 
 function sameList(first: string[], second: string[]) {

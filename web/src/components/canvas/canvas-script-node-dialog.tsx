@@ -747,7 +747,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                             menu={{
                                                 items: [
                                                     { key: "open", label: "打开合成提示词", icon: <Sparkles className="size-3.5" /> },
-                                                    { key: "compose", label: hasPrompt ? "重新合成此片段" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "compose", label: promptError ? "再次合成此片段（会调用模型）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
                                                     { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt },
                                                     { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !detail?.videoMotionPrompt?.trim() },
@@ -856,7 +856,7 @@ function PromptComposeModal({ node, row, rowIndex, detail, config, model, action
                     <div className="flex shrink-0 items-center gap-2">
                         <ModelPicker config={config} value={model} capability="text" className="!h-9 !rounded-lg !border-[#444] !bg-[#242424] !text-[#f4f4f4]" onChange={onModelChange} />
                         <Button className="!h-9 !rounded-lg" icon={loading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />} disabled={loading || actionKey !== null} onClick={onRegenerate}>
-                            重新合成
+                            重新合成（会调用模型）
                         </Button>
                     </div>
                 </div>
@@ -1214,19 +1214,19 @@ function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount
 function PromptStepToolbar({ node, actionKey, promptProgress, dynamicPromptCount, dynamicShotCount, pendingPromptCount, failedPromptCount, staticShotCount, onComposeFinalPrompt, onRecomposeAll, onStopPromptGeneration }: { node: CanvasNodeData; actionKey?: string | null; promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" }; dynamicPromptCount: number; dynamicShotCount: number; pendingPromptCount: number; failedPromptCount: number; staticShotCount: number; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onRecomposeAll: () => void; onStopPromptGeneration: (node: CanvasNodeData) => void }) {
     const remaining = pendingPromptCount;
     const generating = actionKey === "prompt:all";
-    const progressText = promptProgress?.status === "running" ? `第 ${promptProgress.current}/${promptProgress.total} 镜：${promptProgress.phase}${promptProgress.attempt && promptProgress.attempt > 1 ? `（第 ${promptProgress.attempt} 次尝试）` : ""}` : promptProgress?.status === "completed" ? "本轮合成已完成" : promptProgress?.status === "paused" ? "合成已暂停，已保留已完成结果" : promptProgress?.status === "error" ? "合成遇到错误，可继续重试" : "";
+    const progressText = promptProgress?.status === "running" ? `第 ${promptProgress.current}/${promptProgress.total} 镜：${promptProgress.phase}` : promptProgress?.status === "completed" ? "本轮合成已完成" : promptProgress?.status === "paused" ? "合成已暂停，已保留已完成结果" : promptProgress?.status === "error" ? "合成遇到错误；再次合成会产生新的模型请求" : "";
     return (
         <div className="flex shrink-0 items-center gap-4">
             {generating ? (
                 <Button danger className="!h-10 !rounded-lg !px-7" icon={<Square className="size-4" />} onClick={() => onStopPromptGeneration(node)}>暂停合成</Button>
             ) : (
                 <Button type="primary" className="!h-10 !rounded-lg !px-7" disabled={!dynamicShotCount || actionKey !== null} icon={remaining ? <Sparkles className="size-4" /> : <RefreshCw className="size-4" />} onClick={() => remaining ? onComposeFinalPrompt(node) : onRecomposeAll()}>
-                    {remaining ? failedPromptCount ? `重试失败及剩余 ${remaining} 个` : dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个视频片段` : `重新合成全部 ${dynamicShotCount} 个`}
+                    {remaining ? failedPromptCount ? `再次合成失败及剩余 ${remaining} 个` : dynamicPromptCount ? `继续合成剩余 ${remaining} 个` : `批量合成 ${dynamicShotCount} 个视频片段` : `重新合成全部 ${dynamicShotCount} 个`}
                 </Button>
             )}
             <div className="text-sm font-semibold">{dynamicPromptCount}/{dynamicShotCount} 个视频片段完成</div>
             {progressText ? <div className={`max-w-[300px] text-xs ${promptProgress?.status === "error" ? "text-red-300" : promptProgress?.status === "running" ? "text-cyan-200" : "text-[#9f9f9f]"}`}>{promptProgress?.status === "running" ? <LoaderCircle className="mr-1 inline-block size-3.5 animate-spin" /> : null}{progressText}</div> : null}
-            {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount}</div> : null}
+            {failedPromptCount ? <div className="text-xs font-semibold text-red-300">失败 {failedPromptCount} · 再次合成会重新调用模型</div> : null}
             {staticShotCount ? <div className="text-xs text-[#8f8f8f]">{staticShotCount} 个静态片段暂不调用模型</div> : null}
         </div>
     );
