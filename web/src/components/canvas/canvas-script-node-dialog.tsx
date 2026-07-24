@@ -46,7 +46,8 @@ type CanvasScriptNodeDialogProps = {
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
     onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
-    onRepairNarration: (node: CanvasNodeData, rowIndex: number) => void;
+    onRepairShot: (node: CanvasNodeData, rowIndex: number) => void;
+    onRepairAllShots: (node: CanvasNodeData) => void;
     onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void;
     onStopPromptGeneration: (node: CanvasNodeData) => void;
     onPromptDetailChange: (nodeId: string, rowIndex: number, detail: StoryboardPromptDetail) => void;
@@ -64,7 +65,7 @@ type CanvasScriptNodeDialogProps = {
     promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" };
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRepairNarration, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRepairShot, onRepairAllShots, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -353,7 +354,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     ) : view === "videos" ? (
                         <VideoGenerationView node={node} rows={rows} rowIndexes={dynamicIndexes} promptDetails={promptDetails} actionKey={actionKey} draftCount={videoDraftCount} resultCount={videoResultCount} onGenerateVideo={onGenerateVideo} onBatchGenerateVideos={onBatchGenerateVideos} />
                     ) : (
-                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onValidateCell={revalidateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onRepairNarration={onRepairNarration} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
+                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onValidateCell={revalidateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onRepairShot={onRepairShot} onRepairAllShots={onRepairAllShots} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
                     <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
@@ -527,13 +528,15 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRepairNarration, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRepairNarration: (node: CanvasNodeData, rowIndex: number) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
+function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRepairShot, onRepairAllShots, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRepairShot: (node: CanvasNodeData, rowIndex: number) => void; onRepairAllShots: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     const plans = node.metadata?.storyboardShotPlans || {};
     const chapters = node.metadata?.storyboardChapters || [];
     const activeEpisode = chapters.find((chapter) => chapter.id === node.metadata?.storyboardActiveChapterId) || chapters[0];
     const videoRowIndexes = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "video");
     const narrationRowIndexes = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "video" || Boolean(plans[String(index)]?.qualityError));
+    const qualityErrorIndexes = rowIndexes.filter((index) => Boolean(plans[String(index)]?.qualityError));
+    const repairProgress = actionKey?.match(/^shot-fix:all:(\d+):(\d+)$/);
     const videoCount = videoRowIndexes.length;
     const stillCount = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "still").length;
     const videoSeconds = rowIndexes.reduce((total, index) => total + (plans[String(index)]?.renderMode === "video" ? Number(rows[index]?.[1]?.match(/\d+(?:\.\d+)?/)?.[0] || 0) : 0), 0);
@@ -568,6 +571,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                     <span className="text-emerald-200">{videoCount} 个动态视频</span>
                     <span>约 {Math.floor(videoSeconds / 60)}分{Math.round(videoSeconds % 60)}秒</span>
                     {stillCount ? <span className="text-cyan-100">{stillCount} 个静态片段</span> : null}
+                    {qualityErrorIndexes.length ? <Button size="small" type="primary" icon={repairProgress ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />} disabled={Boolean(actionKey)} onClick={() => onRepairAllShots(node)}>{repairProgress ? `自动修正 ${repairProgress[1]}/${repairProgress[2]}` : `一键自动修正全部 ${qualityErrorIndexes.length} 项`}</Button> : null}
                     <span className="ml-auto text-[#8f8f8f]">{productionScope === "single" && node.metadata?.storyboardOriginalBeatCount ? `原文 ${node.metadata.storyboardOriginalBeatCount} 个事实已浓缩为 ${node.metadata?.storyboardCoverage?.total || 0} 个核心事实` : `完整故事共 ${chapters.length} 集；资产跨集复用`}</span>
                     {productionScope === "series" ? <Button size="small" icon={<PanelsTopLeft className="size-3.5" />} onClick={() => onCreateChapterNodes(node)}>同步章节节点</Button> : null}
                 </div>
@@ -609,9 +613,9 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                 <td className="border-b border-[#303030] px-3 py-3">
                                     <div className="mb-2 text-center text-[11px]">
                                         {plans[String(rowIndex)]?.qualityError ? (
-                                            <button type="button" disabled={Boolean(actionKey)} className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-200 transition hover:bg-amber-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 disabled:cursor-not-allowed disabled:opacity-60" title={/旁白超过48字/.test(plans[String(rowIndex)]?.qualityError || "") ? "点击让 AI 压缩本镜旁白并重新检查" : "点击定位需要修正的内容"} onClick={() => /旁白超过48字/.test(plans[String(rowIndex)]?.qualityError || "") ? onRepairNarration(node, rowIndex) : focusStoryboardQualityIssue(rowIndex, plans[String(rowIndex)]?.qualityError || "", onOpenShotPlan)}>
+                                            <button type="button" disabled={Boolean(actionKey)} className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-200 transition hover:bg-amber-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 disabled:cursor-not-allowed disabled:opacity-60" title="点击让 AI 修正本镜并重新检查" onClick={() => onRepairShot(node, rowIndex)}>
                                                 {actionKey === `shot-fix:${rowIndex}` ? <LoaderCircle className="size-3 animate-spin" /> : null}
-                                                {/旁白超过48字/.test(plans[String(rowIndex)]?.qualityError || "") ? actionKey === `shot-fix:${rowIndex}` ? "修正中" : "自动修正" : "待修正"}
+                                                {actionKey === `shot-fix:${rowIndex}` ? "修正中" : "自动修正"}
                                             </button>
                                         ) : (
                                             <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
@@ -673,15 +677,6 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
 
 function dramaticFunctionLabel(value?: string) {
     return ({ setup: "建置", inciting: "激励", escalation: "升级", turn: "转折", climax: "高潮", resolution: "结局" } as Record<string, string>)[value || ""] || "推进";
-}
-
-function focusStoryboardQualityIssue(rowIndex: number, issue: string, onOpenShotPlan: (rowIndex: number) => void) {
-    const colIndex = /旁白|对白|声音文本/.test(issue) ? 5 : /画面描述|时间轴/.test(issue) ? 2 : null;
-    if (colIndex === null) return onOpenShotPlan(rowIndex);
-    const field = document.querySelector<HTMLTextAreaElement>(`textarea[data-storyboard-cell="${rowIndex}-${colIndex}"]`);
-    field?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    field?.focus({ preventScroll: true });
-    field?.select();
 }
 
 function storyboardShotDramaturgyTitle(plan?: StoryboardShotPlan) {
