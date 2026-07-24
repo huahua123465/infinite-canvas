@@ -89,7 +89,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const activeRowIndexes = rows.map((_, index) => index).filter((index) => !activeEpisodeId || shotPlans[String(index)]?.chapterId === activeEpisodeId);
     const dynamicIndexes = activeRowIndexes.filter((index) => shotPlans[String(index)]?.renderMode !== "still");
     const allDynamicCount = Object.values(shotPlans).filter((plan) => plan.renderMode !== "still").length;
-    const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)])).length;
+    const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)]) && !promptErrors[String(index)]).length;
     const failedPromptCount = dynamicIndexes.filter((index) => Boolean(promptErrors[String(index)])).length;
     const pendingPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) || Boolean(promptErrors[String(index)])).length;
     const staticShotCount = activeRowIndexes.length - dynamicIndexes.length;
@@ -723,8 +723,9 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                             <div className={`max-h-24 px-3 py-3 leading-5 ${colIndex < 2 ? "overflow-hidden text-center font-semibold" : "thin-scrollbar overflow-y-auto text-[#ececec]"}`}>{row[colIndex] || "-"}</div>
                                         </td>
                                     ))}
-                                    <td className="border-b border-r border-[#303030] align-top">
+                                    <td className={`border-b border-r border-[#303030] align-top ${promptError ? "bg-red-500/5" : ""}`}>
                                         <button className="block min-h-24 w-full px-3 py-3 text-left leading-5 outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
+                                            {promptError ? <span className="mb-2 line-clamp-3 rounded bg-red-500/15 px-2 py-1.5 text-[11px] font-semibold leading-4 text-red-200" title={promptError}>校验失败：{promptError}</span> : null}
                                             {hasPrompt ? (
                                                 <>
                                                     <span className="block text-[10px] font-semibold text-cyan-200">首帧提示词</span>
@@ -736,9 +737,9 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                                     </span>
                                                 </>
                                             ) : (
-                                                <span className={promptError ? "line-clamp-3 text-red-300" : isDynamic ? "text-[#858585]" : "text-cyan-100/70"}>{promptError || (isDynamic ? "待生成片段提示词" : "静态片段，不参与本轮批量合成")}</span>
+                                                <span className={promptError ? "text-red-200/70" : isDynamic ? "text-[#858585]" : "text-cyan-100/70"}>{promptError ? "原提示词不可用，等待修正" : isDynamic ? "待生成片段提示词" : "静态片段，不参与本轮批量合成"}</span>
                                             )}
-                                            <span className={`mt-2 inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${isDynamic ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{isDynamic ? "动态视频" : "静态事实"}</span>
+                                            <span className={`mt-2 inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${promptError ? "bg-red-500/15 text-red-200" : isDynamic ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{promptError ? "待修正" : isDynamic ? "动态视频" : "静态事实"}</span>
                                         </button>
                                     </td>
                                     <td className="border-b border-[#303030] px-3 py-3 text-center">
@@ -750,7 +751,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                                     { key: "compose", label: promptError ? "再次合成此片段（会调用模型）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
                                                     { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt || detail?.promptSource === "fallback" },
-                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !hasVideoPrompt(detail) },
+                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !hasVideoPrompt(detail) || Boolean(promptError) },
                                                 ],
                                                 onClick: ({ key }) => {
                                                     if (key === "open") onOpenPrompt(rowIndex);
