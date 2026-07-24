@@ -2464,25 +2464,45 @@ function InfiniteCanvasPage() {
                 const row = rows[rowIndex];
                 const plan = plans[String(rowIndex)];
                 setStoryboardActionKey(rowIndexes.length > 1 ? `shot-fix:all:${itemIndex + 1}:${rowIndexes.length}` : `shot-fix:${rowIndex}`);
+                const shotController = createLinkedAbortController(controller);
+                let timedOut = false;
+                const timeoutId = setTimeout(() => {
+                    timedOut = true;
+                    shotController.abort();
+                }, STORYBOARD_SHOT_REPAIR_TIMEOUT_MS);
                 try {
-                    const repaired = await requestStoryboardShotQualityRepair(generationConfig, scriptNode, row, plan, controller.signal);
+                    const repaired = await requestStoryboardShotQualityRepair(generationConfig, scriptNode, row, plan, shotController.signal);
                     updateStoryboardRows(scriptNode.id, (currentRows) => currentRows.map((item, index) => index === rowIndex ? repaired.row : item));
                     updateStoryboardShotPlan(scriptNode.id, rowIndex, { ...repaired.plan, qualityError: undefined, renderMode: "video" });
                     repairedCount += 1;
                 } catch (error) {
+                    if (timedOut) {
+                        failed.push(`镜${row[0] || rowIndex + 1}：模型请求超过${STORYBOARD_SHOT_REPAIR_TIMEOUT_MS / 1000}秒，已跳过`);
+                        continue;
+                    }
                     if (isGenerationCanceled(error)) throw error;
                     failed.push(`镜${row[0] || rowIndex + 1}：${error instanceof Error ? error.message : "修正失败"}`);
+                } finally {
+                    clearTimeout(timeoutId);
                 }
             }
             if (failed.length) message.warning(`自动修正完成：成功 ${repairedCount} 项，失败 ${failed.length} 项；失败项已保留`, 6);
             else message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频`);
         } catch (error) {
-            if (!isGenerationCanceled(error)) message.error(error instanceof Error ? `自动修正失败：${error.message}` : "自动修正失败");
+            if (isGenerationCanceled(error)) message.info(`自动修正已暂停，已保留成功的 ${repairedCount} 项`);
+            else message.error(error instanceof Error ? `自动修正失败：${error.message}` : "自动修正失败");
         } finally {
             finishGenerationRequest(scriptNode.id, controller);
             setStoryboardActionKey(null);
         }
     }, [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, updateStoryboardRows, updateStoryboardShotPlan]);
+
+    const stopStoryboardShotRepair = useCallback((node: CanvasNodeData) => {
+        if (!storyboardActionKey?.startsWith("shot-fix:")) return;
+        stopGenerationByRunningId(node.id);
+        setStoryboardActionKey(null);
+        message.info("已暂停自动修正，已保留成功项");
+    }, [message, storyboardActionKey, stopGenerationByRunningId]);
 
     const deleteStoryboardAsset = useCallback((nodeId: string, assetId: string) => {
         setNodes((prev) => prev.map((node) => {
@@ -6002,6 +6022,7 @@ function InfiniteCanvasPage() {
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onRepairShot={(node, rowIndex) => void repairStoryboardShots(node, [rowIndex])}
                     onRepairAllShots={(node) => void repairStoryboardShots(node)}
+                    onStopShotRepair={stopStoryboardShotRepair}
                     onComposeFinalPrompt={(node, rowIndex, replaceExisting) => void composeStoryboardFinalPrompt(node, rowIndex, replaceExisting)}
                     onStopPromptGeneration={stopStoryboardPromptGeneration}
                     onPromptDetailChange={updateStoryboardPromptDetail}
@@ -8623,6 +8644,8 @@ function storyboardVideoPromptDurationSeconds(node: CanvasNodeData, row: string[
 function storyboardVideoPromptTimeline(duration: number): [number, number, number] {
     return duration === 15 ? [3, 9, 12] : [Math.max(1, Math.round(duration * 0.2)), Math.max(2, Math.round(duration * 0.6)), Math.max(3, Math.round(duration * 0.8))];
 }
+
+const STORYBOARD_SHOT_REPAIR_TIMEOUT_MS = 90_000;
 
 async function requestStoryboardShotQualityRepair(config: AiConfig, node: CanvasNodeData, row: string[], plan: StoryboardShotPlan, signal: AbortSignal): Promise<PlannedStoryboardShot> {
     const issues = storyboardShotQualityIssuesForShot({ row, plan });
