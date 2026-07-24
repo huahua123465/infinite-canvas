@@ -749,8 +749,8 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                                     { key: "open", label: "打开合成提示词", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "compose", label: promptError ? "再次合成此片段（会调用模型）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
-                                                    { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt },
-                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !detail?.videoMotionPrompt?.trim() },
+                                                    { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt || detail?.promptSource === "fallback" },
+                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !hasVideoPrompt(detail) },
                                                 ],
                                                 onClick: ({ key }) => {
                                                     if (key === "open") onOpenPrompt(rowIndex);
@@ -801,7 +801,7 @@ function VideoGenerationView({ node, rows, rowIndexes, promptDetails, actionKey,
             <div>
                 {rowIndexes.map((rowIndex) => {
                     const row = rows[rowIndex];
-                    const ready = Boolean(promptDetails[String(rowIndex)]?.videoMotionPrompt?.trim());
+                    const ready = hasVideoPrompt(promptDetails[String(rowIndex)]);
                     return (
                         <div key={rowIndex} className="grid grid-cols-[90px_90px_minmax(0,1fr)_132px] items-center gap-4 border-b border-[#2b2b2b] px-8 py-4 text-sm">
                             <span className="font-semibold text-white">第 {row?.[0] || rowIndex + 1} 镜</span>
@@ -1026,7 +1026,7 @@ function initialPromptDetail(detail: StoryboardPromptDetail | null, row: string[
 }
 
 function hasVideoPrompt(detail?: StoryboardPromptDetail) {
-    return Boolean(detail?.videoMotionPrompt?.trim());
+    return Boolean(detail?.videoMotionPrompt?.trim() && detail.promptSource !== "fallback");
 }
 
 function promptTextForCopy(detail: StoryboardPromptDetail | undefined, fallback: string) {

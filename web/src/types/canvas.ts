@@ -48,7 +48,7 @@ export type StoryboardTypedActionBeat = {
     prop?: string;
     result?: string;
 };
-export const STORYBOARD_PROMPT_SOURCE_TEXT: Record<StoryboardPromptSource, string> = { skill: "技能包生成", builtin: "内置规则", fallback: "安全兜底" };
+export const STORYBOARD_PROMPT_SOURCE_TEXT: Record<StoryboardPromptSource, string> = { skill: "模型生成·技能包规则", builtin: "模型生成·内置规则", fallback: "旧版本地兜底" };
 export type SceneViewRole = "lock" | "front_left_45" | "front" | "front_right_45" | "left" | "top" | "right" | "back_left_45" | "back" | "back_right_45";
 export type CanvasVideoFrameRole = "first" | "last";
 
