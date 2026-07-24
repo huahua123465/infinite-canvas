@@ -8647,22 +8647,52 @@ function storyboardVideoPromptTimeline(duration: number): [number, number, numbe
 
 const STORYBOARD_SHOT_REPAIR_TIMEOUT_MS = 90_000;
 
+function repairStoryboardStableLanding(row: string[], plan: StoryboardShotPlan, issues: string[]): PlannedStoryboardShot | null {
+    if (!issues.some((issue) => /12-15秒/.test(issue))) return null;
+    const landing = [plan.result, plan.endState].filter(Boolean).join("；");
+    if (!landing) return null;
+    const nextRow = [...row];
+    const lines = (nextRow[2] || "").split(/\r?\n/);
+    const landingIndex = lines.findIndex((line) => /^\s*12\s*[-—–~至]\s*15\s*秒\s*[：:]/.test(line));
+    const stableText = `保持${landing}，人物姿态和场景结构稳定不变，停在当前结果落点，画面不再增加新动作。`;
+    if (landingIndex >= 0) {
+        const prefix = lines[landingIndex].match(/^\s*12\s*[-—–~至]\s*15\s*秒\s*[：:]/)?.[0] || "12-15秒：";
+        lines[landingIndex] = `${prefix}${stableText}`;
+    } else if (lines.length === 3) {
+        lines.push(`12-15秒：${stableText}`);
+    } else {
+        return null;
+    }
+    nextRow[2] = lines.join("\n");
+    return { row: nextRow, plan: { ...plan, qualityError: undefined, renderMode: "video" } };
+}
+
 async function requestStoryboardShotQualityRepair(config: AiConfig, node: CanvasNodeData, row: string[], plan: StoryboardShotPlan, signal: AbortSignal): Promise<PlannedStoryboardShot> {
-    const issues = storyboardShotQualityIssuesForShot({ row, plan });
+    let currentRow = [...row];
+    let currentPlan = plan;
+    let issues = storyboardShotQualityIssuesForShot({ row: currentRow, plan: currentPlan });
     if (!issues.length) return { row: [...row], plan: { ...plan, qualityError: undefined, renderMode: "video" } };
-    const facts = (node.metadata?.storyboardSourceBeats || []).filter((beat) => plan.sourceBeatIds.includes(beat.id));
+    const stableLandingRepair = repairStoryboardStableLanding(currentRow, currentPlan, issues);
+    if (stableLandingRepair) {
+        const repairedIssues = storyboardShotQualityIssuesForShot(stableLandingRepair);
+        if (!repairedIssues.length) return stableLandingRepair;
+        currentRow = stableLandingRepair.row;
+        currentPlan = stableLandingRepair.plan;
+        issues = repairedIssues;
+    }
+    const facts = (node.metadata?.storyboardSourceBeats || []).filter((beat) => currentPlan.sourceBeatIds.includes(beat.id));
     if (issues.every((issue) => issue.startsWith("旁白超过48字"))) {
         const answer = await requestImageQuestion(config, [{ role: "user", content: [
             "你是中文短剧旁白编辑。只压缩当前镜头旁白，不修改画面动作、事实、人物关系、叙事视角和情感落点，也不得新增原文没有的信息。",
             "删除秒数标签、重复的“旁白：”前缀和导演说明；改写为1-2句自然、完整、可朗读的中文旁白，目标36-45个汉字，硬上限48个汉字。",
             "只输出合法JSON：{\"dialogue\":\"压缩后的旁白\"}，不要输出解释或Markdown。",
             `【当前事实】\n${JSON.stringify(facts)}`,
-            `【当前画面】\n${row[2] || ""}`,
-            `【需要压缩的对白旁白】\n${row[5] || ""}`,
+            `【当前画面】\n${currentRow[2] || ""}`,
+            `【需要压缩的对白旁白】\n${currentRow[5] || ""}`,
         ].join("\n\n") }], () => {}, { signal });
         const narration = storyboardNarrationWithinBudget(parseStoryboardNarrationRepairAnswer(answer), 15);
         if (!narration) throw new Error("模型没有返回可用旁白");
-        const repaired = { row: row.map((cell, index) => index === 5 ? narration : cell), plan: { ...plan, qualityError: undefined, renderMode: "video" as const } };
+        const repaired = { row: currentRow.map((cell, index) => index === 5 ? narration : cell), plan: { ...currentPlan, qualityError: undefined, renderMode: "video" as const } };
         const repairedIssues = storyboardShotQualityIssuesForShot(repaired);
         if (repairedIssues.length) throw new Error(repairedIssues.join("、"));
         return repaired;
@@ -8675,7 +8705,7 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
             immutableRules,
             `【当前事实】\n${JSON.stringify(facts)}`,
             `【当前问题】\n${retryIssues.join("、")}`,
-            `【当前片段JSON】\n${JSON.stringify({ shots: [{ row, plan }] })}`,
+            `【当前片段JSON】\n${JSON.stringify({ shots: [{ row: currentRow, plan: currentPlan }] })}`,
             "只输出合法JSON：{\"shots\":[修正后的这一项]}，不要输出解释或Markdown。",
         ].join("\n\n") }], () => {}, { signal });
         let parsed: PlannedStoryboardShot[];
@@ -8688,23 +8718,23 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
         const candidate = parsed[0];
         if (!candidate) throw new Error("模型没有返回修正后的场景卡");
         const repaired: PlannedStoryboardShot = {
-            row: candidate.row.map((cell, index) => index === 0 ? row[0] : index === 1 ? row[1] : cell),
+            row: candidate.row.map((cell, index) => index === 0 ? currentRow[0] : index === 1 ? currentRow[1] : cell),
             plan: {
                 ...candidate.plan,
-                shotId: plan.shotId,
-                sourceBeatIds: [...plan.sourceBeatIds],
-                visualBeatIds: plan.visualBeatIds ? [...plan.visualBeatIds] : undefined,
-                voiceoverBeatIds: plan.voiceoverBeatIds ? [...plan.voiceoverBeatIds] : undefined,
-                continuityGroupId: plan.continuityGroupId,
-                timeStage: plan.timeStage,
-                chapterId: plan.chapterId,
-                chapterTitle: plan.chapterTitle,
-                transition: plan.transition,
-                usePreviousTailFrame: plan.usePreviousTailFrame,
-                dramaticFunction: plan.dramaticFunction,
-                plotRhythm: plan.plotRhythm,
-                emotionRhythm: plan.emotionRhythm,
-                motionPriority: plan.motionPriority,
+                shotId: currentPlan.shotId,
+                sourceBeatIds: [...currentPlan.sourceBeatIds],
+                visualBeatIds: currentPlan.visualBeatIds ? [...currentPlan.visualBeatIds] : undefined,
+                voiceoverBeatIds: currentPlan.voiceoverBeatIds ? [...currentPlan.voiceoverBeatIds] : undefined,
+                continuityGroupId: currentPlan.continuityGroupId,
+                timeStage: currentPlan.timeStage,
+                chapterId: currentPlan.chapterId,
+                chapterTitle: currentPlan.chapterTitle,
+                transition: currentPlan.transition,
+                usePreviousTailFrame: currentPlan.usePreviousTailFrame,
+                dramaticFunction: currentPlan.dramaticFunction,
+                plotRhythm: currentPlan.plotRhythm,
+                emotionRhythm: currentPlan.emotionRhythm,
+                motionPriority: currentPlan.motionPriority,
                 qualityError: undefined,
                 renderMode: "video",
             },
