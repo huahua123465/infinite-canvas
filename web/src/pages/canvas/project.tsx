@@ -3880,14 +3880,14 @@ function InfiniteCanvasPage() {
         const currentNodes = nodesRef.current;
         const additions: CanvasNodeData[] = [];
         const workspaceUpdates = new Map<string, CanvasNodeData>();
-        const promptErrors = new Map<string, Record<string, string>>();
+        const scriptUpdates = new Map<string, CanvasNodeData>();
         currentNodes.filter((item) => item.type === CanvasNodeType.Workspace && item.metadata?.workspaceKind === "storyboard-videos").forEach((workspace) => {
-            const scriptNode = currentNodes.find((item) => item.id === workspace.metadata?.workspaceSourceNodeId && item.type === CanvasNodeType.Script);
+            let scriptNode = scriptUpdates.get(workspace.metadata?.workspaceSourceNodeId || "") || currentNodes.find((item) => item.id === workspace.metadata?.workspaceSourceNodeId && item.type === CanvasNodeType.Script);
             if (!scriptNode) return;
-            const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
-            const indexes = storyboardVideoDraftRowIndexes(scriptNode, rows);
+            let rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+            const indexes = storyboardVideoDraftCandidateRowIndexes(scriptNode, rows);
             const chapterId = workspace.metadata?.workspaceStoryboardChapterId;
-            const existingDrafts = currentNodes.filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardChapterId === chapterId);
+            const existingDrafts = [...currentNodes, ...additions].filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardChapterId === chapterId);
             const existingRows = new Set(existingDrafts.map((item) => item.metadata?.storyboardRowIndex));
             const missingIndexes = indexes.filter((rowIndex) => scriptNode.metadata?.storyboardShotPlans?.[String(rowIndex)]?.chapterId === chapterId && !existingRows.has(rowIndex));
             if (!missingIndexes.length) return;
@@ -3895,28 +3895,51 @@ function InfiniteCanvasPage() {
             const spec = storyboardNodeSize(CanvasNodeType.Video, generationConfig.size);
             const occupiedDrafts = [...existingDrafts];
             const drafts = missingIndexes.flatMap((rowIndex) => {
-                const draft = buildStoryboardVideoDraftNode(scriptNode, rows[rowIndex], rowIndex, storyboardNextVideoDraftGridOrder(occupiedDrafts, workspace.position, spec), spec, generationConfig, workspace.position, currentNodes, connectionsRef.current);
+                const sourceDetail = scriptNode.metadata?.storyboardPromptDetails?.[String(rowIndex)];
+                if (!sourceDetail) return [];
                 try {
-                    assertStoryboardVideoNodeProductionReady(scriptNode, draft, "draft");
+                    const detail = prepareStoryboardPromptDetailForSave(scriptNode, rows, rowIndex, sourceDetail, currentNodes, true);
+                    const nextRows = rows.map((row) => [...row]);
+                    if (nextRows[rowIndex]) nextRows[rowIndex][8] = detail.storyboardPrompt || detail.videoMotionPrompt;
+                    const normalizedRows = renumberStoryboardRowsForCanvas(nextRows);
+                    const promptErrors = { ...(scriptNode.metadata?.storyboardPromptErrors || {}) };
+                    delete promptErrors[String(rowIndex)];
+                    const preparedScriptNode: CanvasNodeData = {
+                        ...scriptNode,
+                        metadata: {
+                            ...scriptNode.metadata,
+                            content: storyboardRowsToMarkdownForCanvas(normalizedRows),
+                            storyboardRows: [STORYBOARD_COLUMNS, ...normalizedRows],
+                            storyboardStep: "prompts",
+                            storyboardPromptDetails: { ...(scriptNode.metadata?.storyboardPromptDetails || {}), [String(rowIndex)]: detail },
+                            storyboardPromptErrors: promptErrors,
+                        },
+                    };
+                    const draft = buildStoryboardVideoDraftNode(preparedScriptNode, normalizedRows[rowIndex], rowIndex, storyboardNextVideoDraftGridOrder(occupiedDrafts, workspace.position, spec), spec, generationConfig, workspace.position, currentNodes, connectionsRef.current);
+                    assertStoryboardVideoNodeProductionReady(preparedScriptNode, draft, "draft");
+                    scriptNode = preparedScriptNode;
+                    rows = normalizedRows;
+                    scriptUpdates.set(scriptNode.id, scriptNode);
                     occupiedDrafts.push(draft);
                     return [draft];
                 } catch (error) {
-                    promptErrors.set(scriptNode.id, { ...(promptErrors.get(scriptNode.id) || {}), [String(rowIndex)]: error instanceof Error ? error.message : "分镜生产契约校验失败" });
+                    scriptNode = { ...scriptNode, metadata: { ...scriptNode.metadata, storyboardPromptErrors: { ...(scriptNode.metadata?.storyboardPromptErrors || {}), [String(rowIndex)]: error instanceof Error ? error.message : "分镜生产契约校验失败" } } };
+                    scriptUpdates.set(scriptNode.id, scriptNode);
                     return [];
                 }
             });
             if (!drafts.length) return;
             additions.push(...drafts);
-            const activeIndexSet = new Set(indexes);
+            const activeIndexSet = new Set(storyboardVideoDraftRowIndexes(scriptNode, rows));
             const results = currentNodes.filter((item) => item.type === CanvasNodeType.Video && Boolean(item.metadata?.storyboardVideoDraftNodeId) && item.metadata?.storyboardSourceNodeId === scriptNode.id && item.metadata.storyboardChapterId === chapterId && activeIndexSet.has(item.metadata.storyboardRowIndex ?? -1));
             workspaceUpdates.set(workspace.id, buildStoryboardWorkspaceNode(workspace, workspace.id, scriptNode, [...existingDrafts, ...drafts, ...results], workspace.position, "storyboard-videos", chapterId));
         });
-        if (!additions.length && !promptErrors.size) return;
+        if (!additions.length && !scriptUpdates.size) return;
         setNodes((prev) => {
             const existingIds = new Set(prev.map((item) => item.id));
             return [...prev.map((item) => {
-                const errors = promptErrors.get(item.id);
-                if (errors) return { ...item, metadata: { ...item.metadata, storyboardPromptErrors: { ...(item.metadata?.storyboardPromptErrors || {}), ...errors } } };
+                const scriptUpdate = scriptUpdates.get(item.id);
+                if (scriptUpdate) return scriptUpdate;
                 return workspaceUpdates.get(item.id) || item;
             }), ...additions.filter((item) => !existingIds.has(item.id))];
         });
@@ -7815,10 +7838,14 @@ function storyboardCompletedPromptDetailForRow(scriptNode: CanvasNodeData, rowIn
 }
 
 function storyboardVideoDraftRowIndexes(scriptNode: CanvasNodeData, rows: string[][]) {
+    const promptErrors = scriptNode.metadata?.storyboardPromptErrors || {};
+    return storyboardVideoDraftCandidateRowIndexes(scriptNode, rows).filter((index) => !promptErrors[String(index)]);
+}
+
+function storyboardVideoDraftCandidateRowIndexes(scriptNode: CanvasNodeData, rows: string[][]) {
     const plans = scriptNode.metadata?.storyboardShotPlans || {};
     const promptDetails = scriptNode.metadata?.storyboardPromptDetails || {};
-    const promptErrors = scriptNode.metadata?.storyboardPromptErrors || {};
-    return storyboardActiveRowIndexes(scriptNode, rows).filter((index) => plans[String(index)]?.renderMode !== "still" && promptDetails[String(index)]?.videoMotionPrompt?.trim() && promptDetails[String(index)]?.promptSource !== "fallback" && !promptErrors[String(index)]);
+    return storyboardActiveRowIndexes(scriptNode, rows).filter((index) => plans[String(index)]?.renderMode !== "still" && promptDetails[String(index)]?.videoMotionPrompt?.trim() && promptDetails[String(index)]?.promptSource !== "fallback");
 }
 
 function storyboardSceneContinuityAssetReferences(scriptNode: CanvasNodeData, current: Map<string, ResolvedStoryboardReference>, nodes: CanvasNodeData[]): ResolvedStoryboardReference[] {
@@ -8777,16 +8804,17 @@ function completeStoryboardPromptDetailAssets(node: CanvasNodeData, rows: string
 }
 
 function normalizeStoryboardModelPromptDetail(node: CanvasNodeData, rows: string[][], rowIndex: number, detail: StoryboardPromptDetail) {
-    const plan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
-    if (!plan) return detail;
-    const assets = (node.metadata?.storyboardAssets || []).filter((asset) => detail.assetMentions?.includes(`@${asset.name}`));
     const duration = storyboardVideoPromptDurationSeconds(node, rows[rowIndex] || []);
+    const withLockedSpeech = (videoMotionPrompt: string) => ({ ...detail, videoMotionPrompt: normalizeStoryboardModelPromptSpeech(node, rows, rowIndex, videoMotionPrompt, duration) });
+    const plan = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+    if (!plan) return withLockedSpeech(detail.videoMotionPrompt);
+    const assets = (node.metadata?.storyboardAssets || []).filter((asset) => detail.assetMentions?.includes(`@${asset.name}`));
     const timelinePattern = new RegExp(`(【${duration}秒时间轴】)([\\s\\S]*?)(?=【镜头运动】)`);
     const timeline = detail.videoMotionPrompt.match(timelinePattern)?.[2];
-    if (!timeline) return detail;
+    if (!timeline) return withLockedSpeech(detail.videoMotionPrompt);
     const segmentLines = timeline.split("\n");
     const segmentIndexes = segmentLines.flatMap((line, lineIndex) => /^\s*\d+(?:\.\d+)?\s*[-—–~至]\s*\d+(?:\.\d+)?\s*秒\s*[：:]/.test(line) ? [lineIndex] : []);
-    if (segmentIndexes.length !== 4) return detail;
+    if (segmentIndexes.length !== 4) return withLockedSpeech(detail.videoMotionPrompt);
     const participantNames = new Set((plan.participants || []).map((participant) => participant.name));
     const actionPropNames = new Set((plan.typedActionBeats || []).map((beat) => beat.prop).filter((name): name is string => Boolean(name)));
     const matchingSegments = (asset: StoryboardAsset) => (plan.typedActionBeats || []).flatMap((beat, beatIndex) => {
@@ -8817,7 +8845,7 @@ function normalizeStoryboardModelPromptDetail(node: CanvasNodeData, rows: string
         segmentLines[lineIndex] = `${match[1]}-${match[2]}秒：${content}`;
     });
     const videoMotionPrompt = detail.videoMotionPrompt.replace(timelinePattern, (_, marker: string) => `${marker}${segmentLines.join("\n")}`);
-    return { ...detail, videoMotionPrompt: normalizeStoryboardModelPromptSpeech(node, rows, rowIndex, videoMotionPrompt, duration) };
+    return withLockedSpeech(videoMotionPrompt);
 }
 
 function normalizeStoryboardModelPromptSpeech(node: CanvasNodeData, rows: string[][], rowIndex: number, prompt: string, duration: number) {
