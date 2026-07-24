@@ -6,9 +6,9 @@ import { ModelPicker } from "@/components/model-picker";
 import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
 import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
-import { storyboardPlanningConfigKey, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
+import { storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
-import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotPlan } from "@/types/canvas";
+import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotParticipant, type StoryboardShotPlan, type StoryboardTypedActionBeat } from "@/types/canvas";
 
 const COLUMNS = ["镜号", "时长", "画面描述", "景别", "光影氛围", "对白旁白", "音效", "运镜", "最终提示词"];
 const COL_WIDTHS = [64, 70, 300, 86, 220, 260, 190, 210, 270];
@@ -91,7 +91,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const pendingPromptCount = dynamicIndexes.filter((index) => !hasVideoPrompt(promptDetails[String(index)]) || Boolean(promptErrors[String(index)])).length;
     const staticShotCount = activeRowIndexes.length - dynamicIndexes.length;
     const narrationLocked = Boolean(activeEpisodeId && node?.metadata?.storyboardLockedNarrationChapterIds?.includes(activeEpisodeId));
-    const narrationIssues = storyboardNarrationIssues(rows, dynamicIndexes);
+    const narrationIndexes = activeRowIndexes.filter((index) => shotPlans[String(index)]?.renderMode !== "still" || Boolean(shotPlans[String(index)]?.qualityError));
+    const narrationIssues = storyboardNarrationIssues(rows, narrationIndexes);
     const readyAssets = assets.filter(storyboardAssetReady).length;
     const missingAssets = assets.length - readyAssets;
     const visibleAssetError = assets.length > 0 && missingAssets === 0 ? "" : assetError;
@@ -107,6 +108,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const [shotPlanEditorRowIndex, setShotPlanEditorRowIndex] = useState<number | null>(null);
     const [shotImportOpen, setShotImportOpen] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement>(null);
+    const editedStoryboardCellKeys = useRef(new Set<string>());
     const editingAsset = assets.find((asset) => asset.id === editingAssetId) || null;
     const editingAssetFinalPrompt = editingAsset ? storyboardAssetImagePrompt(editingAsset, { hasReferenceImage: Boolean(editingAsset.imageUrl || editingAsset.storageKey) }) : "";
     const previewSceneSheetAsset = assets.find((asset) => asset.id === previewSceneSheetAssetId) || null;
@@ -123,6 +125,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     useEffect(() => {
         setEditingAssetId(null);
         setPromptEditorRowIndex(null);
+        editedStoryboardCellKeys.current.clear();
     }, [node?.id]);
 
     useEffect(() => {
@@ -154,11 +157,27 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     };
 
     const updateCell = (rowIndex: number, colIndex: number, value: string) => {
+        editedStoryboardCellKeys.current.add(`${rowIndex}-${colIndex}`);
         saveRows((currentRows) => {
             const nextRows = currentRows.map((row) => [...row]);
             if (nextRows[rowIndex]) nextRows[rowIndex][colIndex] = value;
             return nextRows;
         });
+    };
+
+    const revalidateShot = (rowIndex: number, row: string[], patch: Partial<StoryboardShotPlan> = {}) => {
+        if (!node) return;
+        const current = node.metadata?.storyboardShotPlans?.[String(rowIndex)];
+        if (!current) return;
+        const issues = storyboardShotQualityIssuesForShot({ row, plan: { ...current, ...patch } });
+        onShotPlanChange(node.id, rowIndex, { ...patch, qualityError: issues.join("、") || undefined, renderMode: issues.length ? "still" : "video" });
+    };
+
+    const revalidateCell = (rowIndex: number, colIndex: number, value: string) => {
+        if (!editedStoryboardCellKeys.current.delete(`${rowIndex}-${colIndex}`)) return;
+        const row = [...(rows[rowIndex] || [])];
+        row[colIndex] = value;
+        revalidateShot(rowIndex, row);
     };
 
     const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, "15s", "", "", "", "", "", "", ""]]);
@@ -255,7 +274,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             <Step index="4" title="视频生成" detail={`当前章 ${videoResultCount}/${dynamicIndexes.length} 已生成 · 15秒/条`} active={view === "videos"} done={dynamicIndexes.length > 0 && videoResultCount >= dynamicIndexes.length} onClick={openVideos} />
                         </div>
                         {view === "shots" ? <div className="shrink-0 text-xs text-[#a8a8a8]">{episodes.length ? `自动拆为 ${episodes.length} 章 · ${allDynamicCount} 条 × 15 秒` : "完整故事自动拆章 · 每条 15 秒"}</div> : null}
-                        {!planningStale && productionScope === "series" && episodes.length ? <Select value={activeEpisodeId} className="!min-w-56" options={episodes.map((episode) => ({ value: episode.id, label: `${episode.title}（${episode.shotIndexes.length}片段 / ${Math.round(episode.durationSeconds || 0)}秒）` }))} onChange={(episodeId) => onActiveEpisodeChange(node.id, episodeId)} /> : null}
+                        {!planningStale && productionScope === "series" && episodes.length ? <Select value={activeEpisodeId} className="!min-w-56" options={episodes.map((episode) => ({ value: episode.id, label: `${episode.title}（${episode.shotIndexes.length}片段 / ${episode.shotIndexes.reduce((total, index) => total + (shotPlans[String(index)]?.renderMode === "video" ? storyboardDurationSeconds(rows[index]?.[1]) : 0), 0)}秒）` }))} onChange={(episodeId) => onActiveEpisodeChange(node.id, episodeId)} /> : null}
                         {view === "assets" ? (
                             <AssetPrepToolbar
                                 node={node}
@@ -333,7 +352,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     ) : view === "videos" ? (
                         <VideoGenerationView node={node} rows={rows} rowIndexes={dynamicIndexes} promptDetails={promptDetails} actionKey={actionKey} draftCount={videoDraftCount} resultCount={videoResultCount} onGenerateVideo={onGenerateVideo} onBatchGenerateVideos={onBatchGenerateVideos} />
                     ) : (
-                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
+                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onValidateCell={revalidateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
                     <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
@@ -378,7 +397,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             plan={node.metadata.storyboardShotPlans[String(shotPlanEditorRowIndex)]}
                             onClose={() => setShotPlanEditorRowIndex(null)}
                             onSave={(patch) => {
-                                onShotPlanChange(node.id, shotPlanEditorRowIndex, patch);
+                                revalidateShot(shotPlanEditorRowIndex, rows[shotPlanEditorRowIndex] || [], patch);
                                 setShotPlanEditorRowIndex(null);
                             }}
                         />
@@ -507,12 +526,13 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
+function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     const plans = node.metadata?.storyboardShotPlans || {};
     const chapters = node.metadata?.storyboardChapters || [];
     const activeEpisode = chapters.find((chapter) => chapter.id === node.metadata?.storyboardActiveChapterId) || chapters[0];
     const videoRowIndexes = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "video");
+    const narrationRowIndexes = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "video" || Boolean(plans[String(index)]?.qualityError));
     const videoCount = videoRowIndexes.length;
     const stillCount = rowIndexes.filter((index) => plans[String(index)]?.renderMode === "still").length;
     const videoSeconds = rowIndexes.reduce((total, index) => total + (plans[String(index)]?.renderMode === "video" ? Number(rows[index]?.[1]?.match(/\d+(?:\.\d+)?/)?.[0] || 0) : 0), 0);
@@ -552,7 +572,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                 </div>
             ) : null}
             {!planningStale && productionScope === "series" && activeEpisode ? (
-                <ChapterNarrationPanel node={node} rows={rows} rowIndexes={videoRowIndexes} chapterId={activeEpisode.id} locked={narrationLocked} issues={narrationIssues} onLockChange={onNarrationLockChange} />
+                <ChapterNarrationPanel node={node} rows={rows} rowIndexes={narrationRowIndexes} chapterId={activeEpisode.id} locked={narrationLocked} issues={narrationIssues} onLockChange={onNarrationLockChange} />
             ) : null}
             <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
                 <table className="min-w-[1880px] border-collapse text-left text-[12px]">
@@ -580,16 +600,20 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                                     {detail?.videoMotionPrompt ? <><span className="mt-2 block text-[10px] font-semibold text-emerald-200">视频运动初稿</span><span className="line-clamp-2 text-emerald-100/80">{detail.videoMotionPrompt}</span></> : null}
                                                 </button>
                                             ) : (
-                                                <textarea readOnly={colIndex === 5 && narrationLocked} title={colIndex === 5 && narrationLocked ? "本章旁白已锁定，先在旁白主稿区解锁" : undefined} className={`block h-full min-h-[78px] w-full resize-none overflow-y-auto bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""} ${colIndex === 5 && narrationLocked ? "cursor-not-allowed opacity-65" : ""}`} style={{ color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} />
+                                                <textarea data-storyboard-cell={`${rowIndex}-${colIndex}`} readOnly={colIndex === 5 && narrationLocked} title={colIndex === 5 && narrationLocked ? "本章旁白已锁定，先在旁白主稿区解锁" : undefined} className={`block h-full min-h-[78px] w-full resize-none overflow-y-auto bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""} ${colIndex === 5 && narrationLocked ? "cursor-not-allowed opacity-65" : ""}`} style={{ color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} onBlur={(event) => onValidateCell(rowIndex, colIndex, event.target.value)} />
                                             )}
                                         </td>
                                     );
                                 })}
                                 <td className="border-b border-[#303030] px-3 py-3">
                                     <div className="mb-2 text-center text-[11px]">
-                                        <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.qualityError ? "bg-amber-500/15 text-amber-200" : plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
-                                            {plans[String(rowIndex)]?.qualityError ? "待修正" : plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
-                                        </span>
+                                        {plans[String(rowIndex)]?.qualityError ? (
+                                            <button type="button" className="inline-flex rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-200 transition hover:bg-amber-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300" title="点击定位需要修正的内容" onClick={() => focusStoryboardQualityIssue(rowIndex, plans[String(rowIndex)]?.qualityError || "", onOpenShotPlan)}>待修正</button>
+                                        ) : (
+                                            <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
+                                                {plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
+                                            </span>
+                                        )}
                                         {plans[String(rowIndex)]?.qualityError ? <div className="mt-1 line-clamp-2 text-left text-[10px] text-amber-200/85" title={plans[String(rowIndex)]?.qualityError}>原因：{plans[String(rowIndex)]?.qualityError}</div> : null}
                                         {plans[String(rowIndex)]?.chapterTitle ? <div className="mt-1 truncate text-[#858585]" title={plans[String(rowIndex)]?.chapterTitle}>{plans[String(rowIndex)]?.chapterTitle}</div> : null}
                                         {plans[String(rowIndex)]?.dramaticFunction ? <div className="mt-1 truncate font-semibold text-amber-200/80" title={storyboardShotDramaturgyTitle(plans[String(rowIndex)])}>{dramaticFunctionLabel(plans[String(rowIndex)]?.dramaticFunction)}</div> : null}
@@ -645,6 +669,15 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
 
 function dramaticFunctionLabel(value?: string) {
     return ({ setup: "建置", inciting: "激励", escalation: "升级", turn: "转折", climax: "高潮", resolution: "结局" } as Record<string, string>)[value || ""] || "推进";
+}
+
+function focusStoryboardQualityIssue(rowIndex: number, issue: string, onOpenShotPlan: (rowIndex: number) => void) {
+    const colIndex = /旁白|对白|声音文本/.test(issue) ? 5 : /画面描述|时间轴/.test(issue) ? 2 : null;
+    if (colIndex === null) return onOpenShotPlan(rowIndex);
+    const field = document.querySelector<HTMLTextAreaElement>(`textarea[data-storyboard-cell="${rowIndex}-${colIndex}"]`);
+    field?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    field?.focus({ preventScroll: true });
+    field?.select();
 }
 
 function storyboardShotDramaturgyTitle(plan?: StoryboardShotPlan) {
@@ -1037,6 +1070,8 @@ function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, sty
 function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; plan: StoryboardShotPlan; onClose: () => void; onSave: (patch: Partial<StoryboardShotPlan>) => void }) {
     const { message } = App.useApp();
     const [draft, setDraft] = useState<StoryboardShotPlan>(() => ({ ...plan, actionBeats: [...(plan.actionBeats || [])] }));
+    const [participantsText, setParticipantsText] = useState(() => (plan.participants || []).map((item) => [item.name, item.role, item.lifeStage || ""].join("｜")).join("\n"));
+    const [typedActionBeatsText, setTypedActionBeatsText] = useState(() => (plan.typedActionBeats || []).map((item) => [item.actor, item.action, item.patient, item.prop || "-", item.result || ""].join("｜")).join("\n"));
     const update = (key: keyof StoryboardShotPlan, value: string | string[]) => setDraft((current) => ({ ...current, [key]: value }));
     const fields: Array<[keyof StoryboardShotPlan, string, string]> = [
         ["goal", "当前目标", "人物此刻要完成的可见动作"],
@@ -1052,12 +1087,32 @@ function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; pl
     ];
     return <Modal open centered footer={null} width={860} closeIcon={<X className="size-5" />} onCancel={onClose} title={`第 ${row[0] || ""} 镜 · 编剧场景卡`}>
         <div className="grid max-h-[72vh] gap-3 overflow-y-auto pr-1">
-            <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">当前片段必须保持一个主要可见事实、一个地点和一个人物时期。动作要写演员或物体实际做什么，不要只写心理变化。</div>
+            <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">{plan.qualityError ? `当前问题：${plan.qualityError}` : "当前片段必须保持一个主要可见事实、一个地点和一个人物时期。动作要写演员或物体实际做什么，不要只写心理变化。"}</div>
+            {plan.sourceBeatIds.length ? <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>主要可见事实</span><Select value={draft.visualBeatIds?.[0]} options={plan.sourceBeatIds.map((id) => ({ value: id, label: id }))} placeholder="选择当前画面唯一承载的事实" onChange={(value) => update("visualBeatIds", [value])} /></label> : null}
             {fields.map(([key, label, placeholder]) => <label key={String(key)} className="grid gap-1 text-xs text-[#bdbdbd]"><span>{label}</span><Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} value={String(draft[key] || "")} placeholder={placeholder} onChange={(event) => update(key, event.target.value)} /></label>)}
+            <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>人物职责（每行：人物｜actor/patient｜人物时期）</span><Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} value={participantsText} placeholder="白秋妹｜actor｜童年时期\n木杖｜patient｜" onChange={(event) => setParticipantsText(event.target.value)} /></label>
             <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>2-3 个因果动作节拍</span><Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} value={(draft.actionBeats || []).join("\n")} placeholder="每行一个动作，后一行由前一行结果触发" onChange={(event) => update("actionBeats", event.target.value.split(/\n+/).map((item) => item.trim()).filter(Boolean).slice(0, 3))} /></label>
+            <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>类型化动作节拍（每行：执行者｜动作｜承受者｜道具或-｜物理结果）</span><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={typedActionBeatsText} placeholder="白秋妹｜右手把木杖压进泥地｜身体｜木杖｜木杖固定，身体重心前移" onChange={(event) => setTypedActionBeatsText(event.target.value)} /></label>
         </div>
-        <div className="mt-4 flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" onClick={() => { onSave({ goal: draft.goal, obstacle: draft.obstacle, stakes: draft.stakes, tactic: draft.tactic, actionBeats: draft.actionBeats, obstacleReaction: draft.obstacleReaction, turningAction: draft.turningAction, result: draft.result, valueShift: draft.valueShift, startState: draft.startState, endState: draft.endState }); message.success(`第 ${row[0] || ""} 镜场景卡已保存，旧视频提示词已清除，请重新合成`); }}>保存场景卡</Button></div>
+        <div className="mt-4 flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" onClick={() => { onSave({ visualBeatIds: draft.visualBeatIds, goal: draft.goal, obstacle: draft.obstacle, stakes: draft.stakes, tactic: draft.tactic, participants: parseShotPlanParticipants(participantsText, plan), actionBeats: draft.actionBeats, typedActionBeats: parseShotPlanTypedActionBeats(typedActionBeatsText), obstacleReaction: draft.obstacleReaction, turningAction: draft.turningAction, result: draft.result, valueShift: draft.valueShift, startState: draft.startState, endState: draft.endState }); message.success(`第 ${row[0] || ""} 镜场景卡已保存并重新检查，旧视频提示词已清除`); }}>保存并重新检查</Button></div>
     </Modal>;
+}
+
+function parseShotPlanParticipants(value: string, plan: StoryboardShotPlan): StoryboardShotParticipant[] {
+    return value.split(/\n+/).flatMap((line) => {
+        const [name, rawRole, lifeStage] = line.split(/[|｜]/).map((item) => item.trim());
+        const role = /^(actor|执行者)$/.test(rawRole) ? "actor" : /^(patient|承受者)$/.test(rawRole) ? "patient" : "";
+        if (!name || !role) return [];
+        const current = plan.participants?.find((item) => item.name === name && item.role === role);
+        return [{ name, role, lifeStage: lifeStage || undefined, sourceBeatIds: current?.sourceBeatIds || [...plan.sourceBeatIds] }];
+    });
+}
+
+function parseShotPlanTypedActionBeats(value: string): StoryboardTypedActionBeat[] {
+    return value.split(/\n+/).flatMap((line) => {
+        const [actor, action, patient, prop, result] = line.split(/[|｜]/).map((item) => item.trim());
+        return actor && action && patient ? [{ actor, action, patient, prop: prop && prop !== "-" ? prop : undefined, result: result || undefined }] : [];
+    }).slice(0, 3);
 }
 
 function BatchSceneSheetButton({ node, actionKey, scenes, onBatchGenerateSceneSheets, onStopSceneSheets }: { node: CanvasNodeData; actionKey?: string | null; scenes: StoryboardAsset[]; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void }) {

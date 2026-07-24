@@ -2423,8 +2423,11 @@ function InfiniteCanvasPage() {
             const locked = new Set(node.metadata?.storyboardLockedNarrationChapterIds || []);
             if (chapterId) locked.delete(chapterId);
             const currentWasFailed = Boolean(current.qualityError);
-            const plans = { ...(node.metadata?.storyboardShotPlans || {}), [String(rowIndex)]: { ...current, ...patch, ...(currentWasFailed ? { qualityError: undefined, renderMode: "video" as const } : { qualityError: current.qualityError }), usePreviousTailFrame: patch.usePreviousTailFrame ?? (currentWasFailed ? false : current.usePreviousTailFrame) } };
-            if (currentWasFailed) {
+            const qualityChecked = Object.prototype.hasOwnProperty.call(patch, "qualityError");
+            const qualityError = qualityChecked ? patch.qualityError : current.qualityError;
+            const plans = { ...(node.metadata?.storyboardShotPlans || {}), [String(rowIndex)]: { ...current, ...patch, qualityError, renderMode: qualityError ? "still" as const : patch.renderMode ?? current.renderMode, usePreviousTailFrame: qualityError ? false : patch.usePreviousTailFrame ?? current.usePreviousTailFrame } };
+            const validityChanged = currentWasFailed !== Boolean(qualityError) || current.renderMode !== plans[String(rowIndex)].renderMode;
+            if (validityChanged) {
                 const previous = plans[String(rowIndex - 1)];
                 const restored = plans[String(rowIndex)];
                 const canUseTail = (plan?: StoryboardShotPlan, prior?: StoryboardShotPlan) => Boolean(plan?.renderMode === "video" && prior?.renderMode === "video" && plan.chapterId && plan.chapterId === prior.chapterId && plan.continuityGroupId && plan.continuityGroupId === prior.continuityGroupId && plan.transition === "continue");
@@ -2436,7 +2439,8 @@ function InfiniteCanvasPage() {
             const promptErrors = { ...(node.metadata?.storyboardPromptErrors || {}) };
             delete promptDetails[String(rowIndex)];
             delete promptErrors[String(rowIndex)];
-            return { ...node, metadata: { ...node.metadata, storyboardShotPlans: plans, storyboardPromptDetails: promptDetails, storyboardPromptErrors: promptErrors, storyboardLockedNarrationChapterIds: Array.from(locked) } };
+            const remainingQualityErrors = Object.values(plans).filter((plan) => Boolean(plan.qualityError)).length;
+            return { ...node, metadata: { ...node.metadata, storyboardShotPlans: plans, storyboardPromptDetails: promptDetails, storyboardPromptErrors: promptErrors, storyboardLockedNarrationChapterIds: Array.from(locked), storyboardPlanningErrorStage: remainingQualityErrors ? `部分场景卡待人工修正（${remainingQualityErrors}项）` : undefined, storyboardPlanningRawResponse: remainingQualityErrors ? node.metadata?.storyboardPlanningRawResponse : undefined } };
         }));
     }, []);
 
