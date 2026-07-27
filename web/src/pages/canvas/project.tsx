@@ -8860,7 +8860,12 @@ function normalizeStoryboardModelPromptSpeech(node: CanvasNodeData, rows: string
         ...narrationParts.map((part, index) => part ? `${ranges[index][0]}-${ranges[index][1]}秒 VO：${part}` : ""),
         locked.dialogues.length ? `${ranges[2][0]}-${ranges[2][1]}秒 对白：${locked.dialogues.map((item) => `{${item}}`).join("；")}` : "",
     ].filter(Boolean);
-    return prompt.replace(/(【声音时间轴】)[\s\S]*?(?=【连续性与稳定约束】)/, (_, marker: string) => `${marker}\n${lines.join("\n")}\n`);
+    const marker = "【声音时间轴】";
+    const endMarker = "【连续性与稳定约束】";
+    const start = prompt.indexOf(marker);
+    const end = start >= 0 ? prompt.indexOf(endMarker, start + marker.length) : -1;
+    if (start < 0 || end < 0) return prompt;
+    return `${prompt.slice(0, start)}${marker}\n${lines.join("\n")}\n${prompt.slice(end)}`;
 }
 
 function splitStoryboardLockedNarration(value: string, weights: number[]) {
