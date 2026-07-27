@@ -69,7 +69,10 @@ function actualReferenceFields(config: AiConfig, model: string, input: VideoPref
     const normalized = model.toLowerCase();
     const requestConfig = resolveModelRequestConfig(config, config.model || config.videoModel);
     const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
-    if (isCangyuanSd5SeedanceModel(model)) return [input.references.length ? "images" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
+    if (isCangyuanSd5SeedanceModel(model)) {
+        const framePair = isCangyuanSeedanceFramePair(input.references, input.videoReferences.length, input.audioReferences.length);
+        return [framePair ? "reference_mode=frame" : input.references.length || input.videoReferences.length || input.audioReferences.length ? "reference_mode=media" : "", framePair ? "first_image_url" : "", framePair ? "last_image_url" : "", !framePair && input.references.length ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
+    }
     if (isOmniImageVideoModel(model)) return input.references.length ? [input.references.length === 1 ? "image_url" : "input_reference（multipart）"] : [];
     if (isOmniVideoToVideoModel(model)) return input.videoReferences.length ? [/^https?:\/\//i.test(input.videoReferences[0].url) ? "video_url" : "input_video（multipart）"] : [];
     if (isSoraVideoModel(model) || isVeoVideoModel(model)) return input.references.length ? ["images"] : [];

@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { cangyuanEffectiveVideoReferenceLimits, isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -321,10 +321,10 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isOmniVideoToVideoModel(model)) return createCangyuanOmniVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isVeoVideoModel(model)) return createCangyuanVeoVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isCangyuanSd5SeedanceModel(model)) return createCangyuanSd5SeedanceVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
-    const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
+    const limits = cangyuanEffectiveVideoReferenceLimits(model, videoReferences.length) || SEEDANCE_REFERENCE_LIMITS;
     const modelName = cangyuanSeedanceMiniModelName(model);
     const fixedResolution = seedanceModelFixedResolution(modelName);
-    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
+    if (references.length > limits.images) throw new Error(videoReferences.length && limits.images < (videoReferenceLimits(model)?.images || limits.images) ? `当前沧元 VIDEO 混合参考线路最多支持 ${limits.images} 张参考图，请移除多余图片后重试` : `${modelName} 参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
@@ -410,6 +410,7 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if (references.length + videoReferences.length + audioReferences.length > CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT) throw new Error(`${modelName} 三类参考素材合计不能超过 ${CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT} 个`);
     const selectedReferences = references;
+    const framePair = isCangyuanSeedanceFramePair(selectedReferences, videoReferences.length, audioReferences.length);
     const requestPrompt = buildCangyuanSd5SeedancePrompt(prompt, references, videoReferences, audioReferences);
     if (requestPrompt.length > 1200) throw new Error(`${modelName} 视频提示词不能超过 1200 个字符，请精简提示词或参考素材名称`);
     const selectedVideos = videoReferences;
@@ -426,6 +427,11 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
         await deleteTemporaryReferenceMedia(imageUrls.filter(isTemporaryReferenceMediaUrl));
         throw error;
     }
+    const firstFrameIndex = framePair ? selectedReferences.findIndex((image) => image.videoReferenceRole === "firstFrame") : -1;
+    const lastFrameIndex = framePair ? selectedReferences.findIndex((image) => image.videoReferenceRole === "lastFrame") : -1;
+    const firstImageUrl = firstFrameIndex >= 0 ? imageUrls[firstFrameIndex] || "" : "";
+    const lastImageUrl = lastFrameIndex >= 0 ? imageUrls[lastFrameIndex] || "" : "";
+    const hasMediaReferences = !framePair && Boolean(imageUrls.length || referenceVideos.length || referenceAudios.length);
     const payload = {
         model: modelName,
         prompt: requestPrompt,
@@ -433,10 +439,11 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
         aspect_ratio: normalizeCangyuanVideoRatio(config.size) === "9:16" ? "9:16" : "16:9",
         generate_audio: boolConfig(config.videoGenerateAudio, true),
         resolution: normalizeCangyuanSeedanceResolution(config.vquality),
-        ...(imageUrls.length || referenceVideos.length || referenceAudios.length ? { reference_mode: "media" } : {}),
-        ...(imageUrls.length ? { images: imageUrls } : {}),
-        ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
-        ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
+        ...(framePair ? { reference_mode: "frame", first_image_url: firstImageUrl, last_image_url: lastImageUrl } : {}),
+        ...(hasMediaReferences ? { reference_mode: "media" } : {}),
+        ...(hasMediaReferences && imageUrls.length ? { reference_image_urls: imageUrls } : {}),
+        ...(hasMediaReferences && referenceVideos.length ? { reference_videos: referenceVideos } : {}),
+        ...(hasMediaReferences && referenceAudios.length ? { reference_audios: referenceAudios } : {}),
     };
     try {
         const requestUrl = aiApiUrl(config, "/videos");

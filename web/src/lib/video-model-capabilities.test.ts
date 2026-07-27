@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isCangyuanSeedanceFramePair, videoReferenceLimits } from "./video-model-capabilities";
+import { cangyuanEffectiveVideoReferenceLimits, isCangyuanSeedanceFramePair, videoReferenceLimits } from "./video-model-capabilities";
 
 describe("Cangyuan public video model reference limits", () => {
     it.each([
@@ -39,5 +39,15 @@ describe("Cangyuan Seedance reference mode", () => {
 
     it("keeps all images in full-reference mode when a reference video is present", () => {
         expect(isCangyuanSeedanceFramePair([firstFrame, lastFrame], 1, 0)).toBe(false);
+    });
+});
+
+describe("Cangyuan observed route limits", () => {
+    it("keeps the public 9-image limit without a reference video", () => {
+        expect(cangyuanEffectiveVideoReferenceLimits("seedance-2.0-720p", 0)?.images).toBe(9);
+    });
+
+    it.each(["seedance-2.0-720p", "seedance-2.0-mini-720p"])("protects %s mixed-video requests at four images", (model) => {
+        expect(cangyuanEffectiveVideoReferenceLimits(model, 1)?.images).toBe(4);
     });
 });
