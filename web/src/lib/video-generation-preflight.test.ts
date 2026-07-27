@@ -28,4 +28,27 @@ describe("validateVideoGenerationParameters", () => {
 
         expect(issues.filter((issue) => issue.level === "blocked")).toEqual([]);
     });
+
+    it("allows a local Cangyuan Seedance video for automatic temporary publishing", () => {
+        const model = "seedance-2.0";
+        const issues = validateVideoGenerationParameters({
+            config: {
+                ...defaultConfig,
+                baseUrl: "https://ai.cangyuansuanli.cn/v1",
+                apiFormat: "cangyuan",
+                channels: [{ id: "cangyuan", name: "沧元算力", baseUrl: "https://ai.cangyuansuanli.cn/v1", apiKey: "test", apiFormat: "cangyuan", models: [model] }],
+                model,
+                videoModel: model,
+                videoSeconds: "8",
+                vquality: "720p",
+                size: "16:9",
+            },
+            prompt: "参考@image1的人物和@video1的动作生成视频",
+            references: [{ id: "image", name: "image.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }],
+            videoReferences: [{ id: "video", name: "video.mp4", type: "video/mp4", url: "blob:local-video", storageKey: "video:local", width: 1280, height: 720, durationMs: 8_000 }],
+            audioReferences: [],
+        });
+
+        expect(issues.filter((issue) => issue.level === "blocked")).toEqual([]);
+    });
 });

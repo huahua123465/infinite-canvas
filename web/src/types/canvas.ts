@@ -247,7 +247,7 @@ export type StoryboardAssetBatchProgress = {
 export type VideoGenerationProgress = {
     percent: number;
     text: string;
-    stage?: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed";
+    stage?: "uploading-references" | "submitting" | "submitted" | "queued" | "running" | "saving" | "failed";
     providerStatus?: string;
 };
 

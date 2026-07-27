@@ -5,6 +5,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { deleteTemporaryReferenceVideos, isTemporaryReferenceVideoUrl, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isCangyuanSd5SeedanceModel, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -82,8 +83,9 @@ export type VideoGenerationTask = {
     requestModel?: string;
     requestFields?: string[];
     requestSummary?: VideoRequestSummary;
+    temporaryReferenceUrls?: string[];
 };
-export type VideoGenerationProgress = { percent: number; text: string; stage: "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
+export type VideoGenerationProgress = { percent: number; text: string; stage: "uploading-references" | "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
 export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
 type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void };
@@ -150,10 +152,12 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
         }
         if (state.status === "completed") {
             options?.onProgress?.({ percent: 96, text: "视频已生成，正在保存到画布", stage: "saving", providerStatus: state.providerStatus });
+            await deleteTemporaryReferenceVideos(task.temporaryReferenceUrls || []);
             return state.result;
         }
         if (state.status === "failed") {
             options?.onProgress?.({ percent: 98, text: state.error, stage: "failed", providerStatus: state.providerStatus });
+            await deleteTemporaryReferenceVideos(task.temporaryReferenceUrls || []);
             throw new Error(state.error);
         }
         const background = Date.now() - startedAt >= VIDEO_ACTIVE_WAIT_MS;
@@ -328,14 +332,16 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     const firstFrameIndex = limitedReferences.findIndex((image) => image.videoReferenceRole === "firstFrame");
     const requestReferences = firstFrameIndex > 0 ? [limitedReferences[firstFrameIndex], ...limitedReferences.filter((_, index) => index !== firstFrameIndex)] : limitedReferences;
     const imageUrls = await Promise.all(requestReferences.map((image) => resolveSeedanceImageUrl(config, image)));
-    const referenceVideos = videoReferences.slice(0, limits.videos).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考视频 ${index + 1}`));
+    const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, requestReferences, videoReferences, audioReferences);
+    if (requestPrompt.length > 5000) throw new Error(`${modelName} 最终视频提示词不能超过 5000 个字符，请精简提示词或参考素材名称`);
+    const selectedVideos = videoReferences.slice(0, limits.videos);
+    if (selectedVideos.some((item) => !isPublicMediaUrl(item.url))) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${selectedVideos.filter((item) => !isPublicMediaUrl(item.url)).length} 条本地参考视频，生成结束后自动删除`, stage: "uploading-references" });
+    const referenceVideos = await publishCangyuanReferenceVideos(selectedVideos, options?.signal);
     const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
     const hasFirstFrame = firstFrameIndex >= 0;
     const requiresPrimaryImage = hasFirstFrame || Boolean(referenceVideos.length || referenceAudios.length);
     const primaryImageUrl = requiresPrimaryImage ? imageUrls[0] || "" : "";
     const referenceImageUrls = requiresPrimaryImage ? imageUrls.slice(1) : imageUrls;
-    const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, requestReferences, videoReferences, audioReferences);
-    if (requestPrompt.length > 5000) throw new Error(`${modelName} 最终视频提示词不能超过 5000 个字符，请精简提示词或参考素材名称`);
     try {
         const requestUrl = aiApiUrl(config, "/videos");
         let created: VideoResponse;
@@ -388,8 +394,9 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
             videoReferences,
             audioReferences,
         );
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: modelName, requestFields, requestSummary };
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: modelName, requestFields, requestSummary, temporaryReferenceUrls: referenceVideos.filter(isTemporaryReferenceVideoUrl) };
     } catch (error) {
+        await deleteTemporaryReferenceVideos(referenceVideos.filter(isTemporaryReferenceVideoUrl));
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
 }
@@ -411,10 +418,12 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if (references.length + videoReferences.length + audioReferences.length > CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT) throw new Error(`${modelName} 三类参考素材合计不能超过 ${CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT} 个`);
     const imageUrls = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
-    const referenceVideos = videoReferences.slice(0, limits.videos).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考视频 ${index + 1}`));
-    const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
     const requestPrompt = buildCangyuanSd5SeedancePrompt(prompt, references, videoReferences, audioReferences);
     if (requestPrompt.length > 1200) throw new Error(`${modelName} 视频提示词不能超过 1200 个字符，请精简提示词或参考素材名称`);
+    const selectedVideos = videoReferences.slice(0, limits.videos);
+    if (selectedVideos.some((item) => !isPublicMediaUrl(item.url))) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${selectedVideos.filter((item) => !isPublicMediaUrl(item.url)).length} 条本地参考视频，生成结束后自动删除`, stage: "uploading-references" });
+    const referenceVideos = await publishCangyuanReferenceVideos(selectedVideos, options?.signal);
+    const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
     const payload = {
         model: modelName,
         prompt: requestPrompt,
@@ -440,8 +449,9 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
             videoReferences.slice(0, limits.videos),
             audioReferences.slice(0, limits.audios),
         );
-        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload), requestSummary };
+        return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload), requestSummary, temporaryReferenceUrls: referenceVideos.filter(isTemporaryReferenceVideoUrl) };
     } catch (error) {
+        await deleteTemporaryReferenceVideos(referenceVideos.filter(isTemporaryReferenceVideoUrl));
         throw new Error(readAxiosError(error, "SD5 Seedance 视频任务创建失败", modelName));
     }
 }
@@ -1255,6 +1265,15 @@ function isPublicMediaUrl(value: string) {
 function resolveCangyuanHttpsReferenceUrl(value: string, label: string) {
     if (/^https:\/\//i.test(value || "")) return value;
     throw new Error(`${label}已本地上传，但当前沧元 Seedance 只能读取公网 HTTPS URL；需要图片与视频同时参考时请先上传视频到公网，只需单条本地视频重绘时可改用 omni-v2v`);
+}
+
+async function publishCangyuanReferenceVideos(videos: ReferenceVideo[], signal?: AbortSignal) {
+    const settled = await Promise.allSettled(videos.map((video) => publishReferenceVideo(video, signal)));
+    const urls = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failed = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (!failed) return urls;
+    await deleteTemporaryReferenceVideos(urls.filter(isTemporaryReferenceVideoUrl));
+    throw failed.reason;
 }
 
 function delay(ms: number, signal?: AbortSignal) {
