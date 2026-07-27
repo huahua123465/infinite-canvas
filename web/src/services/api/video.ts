@@ -170,6 +170,7 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
 export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
+    if (/fail_to_fetch_task|请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元上游任务查询失败", advice: "素材已提交，但固定档位上游没有返回合法任务状态；失败任务通常不计费，请稍后重试，重复出现时改用标准 Seedance 2.0 的 720p。" };
     if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
     if (/内容策略|内容审查|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "原任务已被平台终止，查询不会改变结果。请先移除真人正脸、版权 IP 或敏感题材，换用更中性的提示词或非写实参考图后再创建新任务。" };
     if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
