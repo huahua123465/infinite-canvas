@@ -106,7 +106,7 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const referenceLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length, audioCount: audioReferences.length }) || SEEDANCE_REFERENCE_LIMITS;
+    const referenceLimits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
     const referenceImageMaxBytes = isOmniImageVideoModel(model) ? 5 * 1024 * 1024 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 10 * 1024 * 1024 : SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
     const canGenerate = Boolean(prompt.trim());
 
@@ -127,11 +127,7 @@ export default function VideoPage() {
         const imageCandidates = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= referenceImageMaxBytes);
         const videoCandidates = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes);
         const audioCandidates = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes);
-        const uploadLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length + videoCandidates.length, audioCount: audioReferences.length + audioCandidates.length }) || referenceLimits;
-        if (videoCandidates.length && references.length > uploadLimits.images) {
-            message.warning(`添加参考视频后当前线路最多支持 ${uploadLimits.images} 张参考图，请先移除多余图片`);
-            return;
-        }
+        const uploadLimits = referenceLimits;
         const imageSlots = Math.max(0, uploadLimits.images - references.length);
         const videoSlots = Math.max(0, uploadLimits.videos - videoReferences.length);
         const audioSlots = Math.max(0, uploadLimits.audios - audioReferences.length);
@@ -311,7 +307,7 @@ export default function VideoPage() {
             const stored = await uploadImage(payload.dataUrl);
             setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         } else if (payload.kind === "video") {
-            const nextLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length + 1, audioCount: audioReferences.length }) || referenceLimits;
+            const nextLimits = referenceLimits;
             if (references.length > nextLimits.images) {
                 message.warning(`添加参考视频后当前线路最多支持 ${nextLimits.images} 张参考图，请先移除多余图片`);
                 return;

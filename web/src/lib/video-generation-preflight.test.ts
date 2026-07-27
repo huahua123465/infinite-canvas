@@ -29,7 +29,7 @@ describe("validateVideoGenerationParameters", () => {
         expect(issues.filter((issue) => issue.level === "blocked")).toEqual([]);
     });
 
-    it("blocks the fifth image before a Cangyuan 720p reference-video request reaches videos-4", () => {
+    it("allows five images with a reference video for Cangyuan 720p 933 mode", () => {
         const model = "seedance-2.0-720p";
         const requestModel = encodeChannelModel("cangyuan", model);
         const references: ReferenceImage[] = Array.from({ length: 5 }, (_, index) => ({ id: `${index}`, name: `reference-${index + 1}.png`, type: "image/png", dataUrl: "data:image/png;base64,AA==" }));
@@ -54,7 +54,7 @@ describe("validateVideoGenerationParameters", () => {
             audioReferences: [],
         });
 
-        expect(issues.find((issue) => issue.code === "seedance_images")?.message).toBe("当前线路最多支持 4 张参考图，请移除多余图片");
+        expect(issues.filter((issue) => issue.level === "blocked")).toEqual([]);
     });
 
     it("allows a local Cangyuan Seedance video for automatic temporary publishing", () => {

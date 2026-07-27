@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceCapability, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -170,7 +170,7 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
 export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
     const referenceImageLimit = readReferenceImageLimit(value);
-    if (referenceImageLimit) return { kind: "input_invalid", label: "参考图数量超限", advice: `当前线路最多支持 ${referenceImageLimit} 张参考图，请移除多余图片。` };
+    if (referenceImageLimit) return { kind: "upstream_rejected", label: "平台线路能力不一致", advice: `平台内部线路返回最多 ${referenceImageLimit} 张参考图，与模型广场公开能力不一致；前端未裁剪素材，请保留请求 ID 联系平台，或临时减少图片后重试。` };
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
     if (/请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元请求体解析失败", advice: "沧元异步上游未能解析请求体；请保留原始错误与请求 ID 后排查转发链路。" };
     if (/fail_to_fetch_task/.test(value)) return { kind: "upstream_rejected", label: "沧元任务转发失败", advice: "请先查看原始错误中的 detail；若没有更具体原因，再联系平台核对当前模型线路。" };
@@ -321,14 +321,10 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isOmniVideoToVideoModel(model)) return createCangyuanOmniVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isVeoVideoModel(model)) return createCangyuanVeoVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isCangyuanSd5SeedanceModel(model)) return createCangyuanSd5SeedanceVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
-    const capability = videoReferenceCapability(model, { config, videoCount: videoReferences.length, audioCount: audioReferences.length });
-    const limits = capability?.limits || SEEDANCE_REFERENCE_LIMITS;
+    const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
     const modelName = cangyuanSeedanceMiniModelName(model);
     const fixedResolution = seedanceModelFixedResolution(modelName);
-    if (references.length > limits.images) {
-        if (capability?.route && capability.routeImageLimit === limits.images) throw new Error(`当前线路最多支持 ${limits.images} 张参考图，请移除多余图片`);
-        throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
-    }
+    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
@@ -1226,7 +1222,7 @@ function safeJsonPreview(value: unknown) {
 
 function normalizeVideoErrorMessage(message: string, model = "") {
     const referenceImageLimit = readReferenceImageLimit(message);
-    if (referenceImageLimit) return `当前线路最多支持 ${referenceImageLimit} 张参考图，请移除多余图片。\n\n原始错误：${message}`;
+    if (referenceImageLimit) return `平台内部线路返回最多 ${referenceImageLimit} 张参考图，与模型广场公开能力不一致；前端未裁剪素材，请保留请求 ID 联系平台，或临时减少图片后重试。\n\n原始错误：${message}`;
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
         return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。\n\n原始错误：${message}`;
     }
