@@ -748,7 +748,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                             menu={{
                                                 items: [
                                                     { key: "open", label: "打开合成提示词", icon: <Sparkles className="size-3.5" /> },
-                                                    { key: "compose", label: promptError ? "再次合成此片段（先免费校正）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
+                                                    { key: "compose", label: promptError ? "再次合成此片段（会调用模型）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
                                                     { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
                                                     { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt || detail?.promptSource === "fallback" },
                                                     { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !hasVideoPrompt(detail) || Boolean(promptError) },
