@@ -8313,7 +8313,8 @@ function buildStoryboardVideoDraftNode(scriptNode: CanvasNodeData, row: string[]
     const existingResults = nodes.filter((node) => node.metadata?.storyboardVideoDraftNodeId === draftId);
     const latestResult = [...existingResults].sort((a, b) => (b.metadata?.storyboardVideoVariantIndex || 0) - (a.metadata?.storyboardVideoVariantIndex || 0))[0];
     const detail = storyboardCompletedPromptDetailForRow(scriptNode, rowIndex);
-    const prompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "", true);
+    const sanitizedPrompt = safetyNeutralStoryboardPrompt(detail?.videoMotionPrompt?.trim() || row?.[8]?.trim() || row?.[2]?.trim() || "", true);
+    const prompt = normalizeStoryboardModelPromptSpeech(scriptNode, parseStoryboardRows(scriptNode.metadata?.storyboardRows), rowIndex, sanitizedPrompt, storyboardVideoPromptDurationSeconds(scriptNode, row));
     const assetReferences = storyboardVideoAssetReferences(scriptNode, rowIndex, nodes);
     const audioReferences = storyboardVideoAudioReferences(scriptNode, rowIndex);
     const assetMentionLinks = detail ? linkStoryboardPromptAssets(scriptNode, detail, nodes).assetMentionLinks || [] : [];
