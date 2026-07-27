@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceCapability, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -169,8 +169,11 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
 
 export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
+    const referenceImageLimit = readReferenceImageLimit(value);
+    if (referenceImageLimit) return { kind: "input_invalid", label: "参考图数量超限", advice: `当前线路最多支持 ${referenceImageLimit} 张参考图，请移除多余图片。` };
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
-    if (/fail_to_fetch_task|请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元固定档位转发失败", advice: "沧元异步上游返回了非法 JSON；本地多图已改为短 HTTPS 引用，更新后重试。若仍重复出现，则属于平台固定档位线路故障。" };
+    if (/请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元请求体解析失败", advice: "沧元异步上游未能解析请求体；请保留原始错误与请求 ID 后排查转发链路。" };
+    if (/fail_to_fetch_task/.test(value)) return { kind: "upstream_rejected", label: "沧元任务转发失败", advice: "请先查看原始错误中的 detail；若没有更具体原因，再联系平台核对当前模型线路。" };
     if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
     if (/内容策略|内容审查|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "原任务已被平台终止，查询不会改变结果。请先移除真人正脸、版权 IP 或敏感题材，换用更中性的提示词或非写实参考图后再创建新任务。" };
     if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
@@ -318,10 +321,14 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isOmniVideoToVideoModel(model)) return createCangyuanOmniVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isVeoVideoModel(model)) return createCangyuanVeoVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isCangyuanSd5SeedanceModel(model)) return createCangyuanSd5SeedanceVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
-    const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
+    const capability = videoReferenceCapability(model, { config, videoCount: videoReferences.length, audioCount: audioReferences.length });
+    const limits = capability?.limits || SEEDANCE_REFERENCE_LIMITS;
     const modelName = cangyuanSeedanceMiniModelName(model);
     const fixedResolution = seedanceModelFixedResolution(modelName);
-    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
+    if (references.length > limits.images) {
+        if (capability?.route && capability.routeImageLimit === limits.images) throw new Error(`当前线路最多支持 ${limits.images} 张参考图，请移除多余图片`);
+        throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
+    }
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
@@ -329,13 +336,12 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     }
     assertSeedanceVideoReferences(videoReferences, fixedResolution ? 2_000 : 4_000, fixedResolution ? { minSize: 300, maxSize: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 } : undefined);
     assertSeedanceAudioReferences(audioReferences);
-    const limitedReferences = references.slice(0, limits.images);
-    const firstFrameIndex = limitedReferences.findIndex((image) => image.videoReferenceRole === "firstFrame");
-    const requestReferences = firstFrameIndex > 0 ? [limitedReferences[firstFrameIndex], ...limitedReferences.filter((_, index) => index !== firstFrameIndex)] : limitedReferences;
+    const firstFrameIndex = references.findIndex((image) => image.videoReferenceRole === "firstFrame");
+    const requestReferences = firstFrameIndex > 0 ? [references[firstFrameIndex], ...references.filter((_, index) => index !== firstFrameIndex)] : references;
     const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, requestReferences, videoReferences, audioReferences);
     if (requestPrompt.length > 5000) throw new Error(`${modelName} 最终视频提示词不能超过 5000 个字符，请精简提示词或参考素材名称`);
-    const selectedVideos = videoReferences.slice(0, limits.videos);
-    const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
+    const selectedVideos = videoReferences;
+    const referenceAudios = audioReferences.map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
     const publishLocalImages = Boolean(selectedVideos.length || audioReferences.length || (fixedResolution && requestReferences.length > 4));
     const localImageCount = publishLocalImages ? requestReferences.filter((item) => !isPublicMediaUrl(item.url || item.dataUrl)).length : 0;
     const localVideoCount = selectedVideos.filter((item) => !isPublicMediaUrl(item.url)).length;
@@ -427,11 +433,11 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if (references.length + videoReferences.length + audioReferences.length > CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT) throw new Error(`${modelName} 三类参考素材合计不能超过 ${CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT} 个`);
-    const selectedReferences = references.slice(0, limits.images);
+    const selectedReferences = references;
     const requestPrompt = buildCangyuanSd5SeedancePrompt(prompt, references, videoReferences, audioReferences);
     if (requestPrompt.length > 1200) throw new Error(`${modelName} 视频提示词不能超过 1200 个字符，请精简提示词或参考素材名称`);
-    const selectedVideos = videoReferences.slice(0, limits.videos);
-    const referenceAudios = audioReferences.slice(0, limits.audios).map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
+    const selectedVideos = videoReferences;
+    const referenceAudios = audioReferences.map((item, index) => resolveCangyuanHttpsReferenceUrl(item.url, `参考音频 ${index + 1}`));
     const publishLocalImages = Boolean(selectedVideos.length || audioReferences.length || selectedReferences.length > 4);
     const localImageCount = publishLocalImages ? selectedReferences.filter((item) => !isPublicMediaUrl(item.url || item.dataUrl)).length : 0;
     const localVideoCount = selectedVideos.filter((item) => !isPublicMediaUrl(item.url)).length;
@@ -465,9 +471,9 @@ async function createCangyuanSd5SeedanceVideoTask(config: AiConfig, model: strin
             payload.model,
             requestPrompt,
             { duration: payload.duration, aspectRatio: payload.aspect_ratio, generateAudio: payload.generate_audio, resolution: payload.resolution, referenceMode: payload.reference_mode || "none" },
-            references.slice(0, limits.images),
-            videoReferences.slice(0, limits.videos),
-            audioReferences.slice(0, limits.audios),
+            references,
+            videoReferences,
+            audioReferences,
         );
         const temporaryReferenceUrls = [...imageUrls, ...referenceVideos].filter(isTemporaryReferenceMediaUrl);
         return { id: taskId, provider: "cangyuan", model, cangyuanEndpoint: "videos", requestMethod: "POST", requestUrl, requestModel: payload.model, requestFields: Object.keys(payload), requestSummary, temporaryReferenceUrls };
@@ -625,7 +631,7 @@ async function createCangyuanVeoVideoTask(config: AiConfig, model: string, promp
     const limits = videoReferenceLimits(modelName)!;
     if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length || audioReferences.length) throw new Error(`${modelName} 不支持参考视频或参考音频`);
-    const images = await Promise.all(references.slice(0, limits.images).map((image) => resolveSeedanceImageUrl(config, image)));
+    const images = await Promise.all(references.map((image) => resolveSeedanceImageUrl(config, image)));
     const payload = {
         model: modelName,
         prompt,
@@ -1080,7 +1086,7 @@ function cangyuanVideoError(video: VideoResponse) {
     if (code?.toUpperCase() === "GENERATION_FAILED") {
         return "上游已接单并进入生成阶段，但未返回可定位的具体失败原因（provider code: GENERATION_FAILED）。请保留任务 ID 与请求摘要后重试；若重复失败，再据此排查素材、提示词或上游服务。";
     }
-    return [details.messages[0] || "视频生成失败", code ? `provider code: ${code}` : ""].filter(Boolean).join("；");
+    return [preferredVideoErrorMessage(details.messages) || "视频生成失败", code ? `provider code: ${code}` : ""].filter(Boolean).join("；");
 }
 
 function normalizeProgress(value: unknown) {
@@ -1091,7 +1097,7 @@ function normalizeProgress(value: unknown) {
 function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
     if (!payload) throw new Error("接口没有返回视频任务");
     if (isApiVideoEnvelope(payload)) {
-        if (payload.code !== 0 && payload.code !== "0") throw new Error(payload.msg || payload.message || payload.error?.message || "请求失败");
+        if (payload.code !== 0 && payload.code !== "0") throw new Error(extractErrorMessage(payload) || "请求失败");
         if (!payload.data) throw new Error("接口没有返回视频任务");
         return payload.data;
     }
@@ -1131,7 +1137,8 @@ function readAxiosError(error: unknown, fallback: string, model = "") {
         return normalizeVideoErrorMessage(extractErrorMessage(responseData) || statusMessage(error.response?.status, fallback), model);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return normalizeVideoErrorMessage(error instanceof Error ? error.message : fallback, model);
+    const message = error instanceof Error ? error.message : fallback;
+    return normalizeVideoErrorMessage(extractErrorMessage(message) || message, model);
 }
 
 function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number, progress?: number): VideoGenerationProgress {
@@ -1154,26 +1161,35 @@ function videoPollingProgress(provider: VideoGenerationTask["provider"], status:
 
 function extractErrorMessage(payload: unknown) {
     if (!payload) return "";
-    if (typeof payload === "string") return payload;
+    if (typeof payload === "string") {
+        const details = collectVideoErrorDetails(payload);
+        return [preferredVideoErrorMessage(details.messages), ...details.codes.slice(0, 1)].filter(Boolean).join("；") || payload;
+    }
     if (typeof payload !== "object") return String(payload);
     const details = collectVideoErrorDetails(payload);
-    if (details.messages.length || details.codes.length) return [...details.messages.slice(0, 1), ...details.codes.slice(0, 1)].join("；");
+    if (details.messages.length || details.codes.length) return [preferredVideoErrorMessage(details.messages), ...details.codes.slice(0, 1)].filter(Boolean).join("；");
     return `接口返回参数错误：${safeJsonPreview(payload)}`;
 }
 
 function collectVideoErrorDetails(payload: unknown, depth = 0): { messages: string[]; codes: string[] } {
-    if (!payload || depth > 4) return { messages: [], codes: [] };
-    if (typeof payload === "string") return { messages: [payload], codes: [] };
+    if (!payload || depth > 6) return { messages: [], codes: [] };
+    if (typeof payload === "string") {
+        const parsed = parseNestedErrorJson(payload);
+        return parsed === undefined ? { messages: [payload], codes: [] } : collectVideoErrorDetails(parsed, depth + 1);
+    }
     if (typeof payload !== "object") return { messages: [], codes: [] };
     if (Array.isArray(payload)) return mergeVideoErrorDetails(payload.map((item) => collectVideoErrorDetails(item, depth + 1)));
     const record = payload as Record<string, unknown>;
-    const nested = mergeVideoErrorDetails([collectVideoErrorDetails(record.data, depth + 1), collectVideoErrorDetails(record.error, depth + 1)]);
+    const nested = mergeVideoErrorDetails([
+        collectVideoErrorDetails(record.detail, depth + 1),
+        collectVideoErrorDetails(record.error, depth + 1),
+        collectVideoErrorDetails(record.data, depth + 1),
+        collectVideoErrorDetails(record.fail_reason, depth + 1),
+        collectVideoErrorDetails(record.message, depth + 1),
+        collectVideoErrorDetails(record.msg, depth + 1),
+    ]);
     const messages = [
         ...nested.messages,
-        stringValue(record.fail_reason),
-        stringValue(record.msg),
-        stringValue(record.message),
-        stringValue(record.detail),
         nonUrlMessage(record.result_url),
     ].filter(Boolean);
     const codes = [...nested.codes, stringValue(record.error_code), stringValue(record.code), stringValue(record.type)].filter(Boolean);
@@ -1185,6 +1201,10 @@ function mergeVideoErrorDetails(items: Array<{ messages: string[]; codes: string
         messages: items.flatMap((item) => item.messages),
         codes: items.flatMap((item) => item.codes),
     };
+}
+
+function preferredVideoErrorMessage(messages: string[]) {
+    return messages.find((message) => readReferenceImageLimit(message)) || messages[0] || "";
 }
 
 function nonUrlMessage(value: unknown) {
@@ -1205,6 +1225,8 @@ function safeJsonPreview(value: unknown) {
 }
 
 function normalizeVideoErrorMessage(message: string, model = "") {
+    const referenceImageLimit = readReferenceImageLimit(message);
+    if (referenceImageLimit) return `当前线路最多支持 ${referenceImageLimit} 张参考图，请移除多余图片。\n\n原始错误：${message}`;
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {
         return `方舟拒绝了这次参考图：输入图片可能包含真人或真人脸部。即使图片是 AI 生成，只要画面高度写实、接近真人演员定妆照，也可能触发真人脸风控。请在“编辑参考”里换成更明显的二次元、3D 卡通或非真人虚拟角色参考图。\n\n原始错误：${message}`;
     }
@@ -1218,6 +1240,23 @@ function normalizeVideoErrorMessage(message: string, model = "") {
         return `当前模型、Endpoint 或视频参数与 Seedance 2.0 REST 接口不匹配。请确认视频模型使用官方 Seedance Model ID（例如 doubao-seedance-2-0-260128），Base URL 为 https://ark.cn-beijing.volces.com/api/v3，并使用官方支持的比例、时长和 480P/720P/1080P 分辨率。\n\n原始错误：${message}`;
     }
     return message;
+}
+
+function parseNestedErrorJson(value: string) {
+    const text = value.trim();
+    if (text.length > 32 * 1024 || !(/^[{[]/.test(text) || /^"/.test(text))) return undefined;
+    try {
+        const parsed = JSON.parse(text) as unknown;
+        return parsed === value ? undefined : parsed;
+    } catch {
+        return undefined;
+    }
+}
+
+function readReferenceImageLimit(message: string) {
+    const english = /supports\s+at\s+most\s+(\d+)\s+reference[\s_-]*images?\b/i.exec(message);
+    const chinese = /当前线路最多支持\s*(\d+)\s*张参考图/.exec(message);
+    return Number(english?.[1] || chinese?.[1] || 0);
 }
 
 function isRetryableVideoPollError(error: unknown) {

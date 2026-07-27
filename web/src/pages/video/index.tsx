@@ -106,7 +106,7 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const referenceLimits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
+    const referenceLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length, audioCount: audioReferences.length }) || SEEDANCE_REFERENCE_LIMITS;
     const referenceImageMaxBytes = isOmniImageVideoModel(model) ? 5 * 1024 * 1024 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 10 * 1024 * 1024 : SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
     const canGenerate = Boolean(prompt.trim());
 
@@ -124,9 +124,23 @@ export default function VideoPage() {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考素材，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= referenceImageMaxBytes).slice(0, Math.max(0, referenceLimits.images - references.length));
-        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, Math.max(0, referenceLimits.videos - videoReferences.length));
-        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, Math.max(0, referenceLimits.audios - audioReferences.length));
+        const imageCandidates = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= referenceImageMaxBytes);
+        const videoCandidates = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes);
+        const audioCandidates = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes);
+        const uploadLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length + videoCandidates.length, audioCount: audioReferences.length + audioCandidates.length }) || referenceLimits;
+        if (videoCandidates.length && references.length > uploadLimits.images) {
+            message.warning(`添加参考视频后当前线路最多支持 ${uploadLimits.images} 张参考图，请先移除多余图片`);
+            return;
+        }
+        const imageSlots = Math.max(0, uploadLimits.images - references.length);
+        const videoSlots = Math.max(0, uploadLimits.videos - videoReferences.length);
+        const audioSlots = Math.max(0, uploadLimits.audios - audioReferences.length);
+        const imageFiles = imageCandidates.slice(0, imageSlots);
+        const videoFiles = videoCandidates.slice(0, videoSlots);
+        const audioFiles = audioCandidates.slice(0, audioSlots);
+        if (imageCandidates.length > imageSlots) message.warning(`当前线路最多支持 ${uploadLimits.images} 张参考图，请移除多余图片`);
+        if (videoCandidates.length > videoSlots) message.warning(`当前模型最多支持 ${uploadLimits.videos} 条参考视频，已忽略多余视频`);
+        if (audioCandidates.length > audioSlots) message.warning(`当前模型最多支持 ${uploadLimits.audios} 条参考音频，已忽略多余音频`);
         if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > referenceImageMaxBytes)) message.warning(`已忽略超过 ${referenceImageMaxBytes / 1024 / 1024}MB 的参考图`);
         if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 50MB 的参考视频");
         if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
@@ -152,9 +166,9 @@ export default function VideoPage() {
             ),
             message.warning,
         );
-        setReferences((value) => [...value, ...nextReferences].slice(0, referenceLimits.images));
-        setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, referenceLimits.videos));
-        setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, referenceLimits.audios));
+        setReferences((value) => [...value, ...nextReferences]);
+        setVideoReferences((value) => [...value, ...nextVideoReferences]);
+        setAudioReferences((value) => [...value, ...nextAudioReferences]);
     };
 
     const addReferencesFromClipboard = async () => {
@@ -165,13 +179,15 @@ export default function VideoPage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            const imageSlots = Math.max(0, referenceLimits.images - references.length);
+            if (blobs.length > imageSlots) message.warning(`当前线路最多支持 ${referenceLimits.images} 张参考图，已忽略多余图片`);
             const nextReferences = await Promise.all(
-                blobs.slice(0, Math.max(0, referenceLimits.images - references.length)).map(async (blob, index) => {
+                blobs.slice(0, imageSlots).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, referenceLimits.images));
+            setReferences((value) => [...value, ...nextReferences]);
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -288,10 +304,23 @@ export default function VideoPage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
+            if (references.length >= referenceLimits.images) {
+                message.warning(`当前线路最多支持 ${referenceLimits.images} 张参考图，请先移除多余图片`);
+                return;
+            }
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, referenceLimits.images));
+            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         } else if (payload.kind === "video") {
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, referenceLimits.videos));
+            const nextLimits = videoReferenceLimits(model, { config: effectiveConfig, videoCount: videoReferences.length + 1, audioCount: audioReferences.length }) || referenceLimits;
+            if (references.length > nextLimits.images) {
+                message.warning(`添加参考视频后当前线路最多支持 ${nextLimits.images} 张参考图，请先移除多余图片`);
+                return;
+            }
+            if (videoReferences.length >= nextLimits.videos) {
+                message.warning(`当前模型最多支持 ${nextLimits.videos} 条参考视频`);
+                return;
+            }
+            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }]);
         }
         setAssetPickerOpen(false);
     };

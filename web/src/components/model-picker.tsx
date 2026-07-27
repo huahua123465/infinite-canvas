@@ -91,8 +91,8 @@ function ModelLabel({ config, model, capability, price, unitPrice, priceTitle }:
             <ModelIcon model={model} />
             <span className="min-w-0 truncate">{modelOptionLabel(config, model)}</span>
             {showReferenceLimits ? (
-                <span title={`${videoReferenceLimitsTitle(model)}；顺序为 图片·视频·音频`} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 text-[11px] font-medium leading-5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200">
-                    {videoReferenceLimitsLabel(model)}
+                <span title={`${videoReferenceLimitsTitle(model, config)}；顺序为 图片·视频·音频`} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 text-[11px] font-medium leading-5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200">
+                    {videoReferenceLimitsLabel(model, config)}
                 </span>
             ) : null}
             {price ? (

@@ -1,6 +1,6 @@
 import { CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceCapability, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -46,12 +46,13 @@ export function assertVideoGenerationParameters(input: VideoPreflightInput) {
 
 export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const issues: VideoPreflightIssue[] = [];
-    const model = modelOptionName(input.config.model || input.config.videoModel).trim().toLowerCase();
+    const selectedModel = input.config.model || input.config.videoModel;
+    const model = modelOptionName(selectedModel).trim().toLowerCase();
     const prompt = input.prompt.trim();
     const duration = normalizedDuration(input.config.videoSeconds);
     const ratio = normalizedRatio(input.config.size);
     const resolution = normalizedResolution(input.config.vquality);
-    const requestConfig = resolveModelRequestConfig(input.config, input.config.model || input.config.videoModel);
+    const requestConfig = resolveModelRequestConfig(input.config, selectedModel);
     const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
     if (/@(?:image|图片)\d+/i.test(prompt) && !input.references.length) issues.push(blocked("prompt_image_reference_missing", "提示词引用了图片，但实际没有提交参考图", "请确认参考图从输入端连入视频节点后再生成。"));
@@ -81,12 +82,18 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         });
     } else if (model.startsWith("seedance-2.0")) {
         const fixedResolution = seedanceModelFixedResolution(model);
-        const limits = videoReferenceLimits(model)!;
+        const capability = videoReferenceCapability(selectedModel, { config: input.config, videoCount: input.videoReferences.length, audioCount: input.audioReferences.length })!;
+        const limits = capability.limits;
         const minReferenceVideoMs = fixedResolution ? 2_000 : 4_000;
         const maxDuration = isSeedanceMini8sModel(model) ? 8 : 15;
         if (duration < 4 || duration > maxDuration) issues.push(blocked("seedance_duration", `当前 Seedance 模型时长必须为 4–${maxDuration} 秒`, "请修改当前镜头时长。"));
         if (!seedanceRatios.has(ratio)) issues.push(blocked("seedance_ratio", `Seedance 不支持当前画幅 ${ratio}`, "请选择 16:9、9:16、1:1、21:9、3:4 或 4:3。"));
-        if (input.references.length > limits.images) issues.push(blocked("seedance_images", `当前 Seedance 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
+        if (input.references.length > limits.images) {
+            const routeMessage = capability.route && capability.routeImageLimit === limits.images
+                ? `当前线路最多支持 ${limits.images} 张参考图，请移除多余图片`
+                : `当前 Seedance 模型参考图不能超过 ${limits.images} 张`;
+            issues.push(blocked("seedance_images", routeMessage, "请移除多余参考图，系统不会静默丢弃或重排已连接素材。"));
+        }
         if (input.videoReferences.length > limits.videos) issues.push(blocked("seedance_videos", `当前 Seedance 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));
         if (input.audioReferences.length > limits.audios) issues.push(blocked("seedance_audios", `当前 Seedance 模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频。"));
         if ((input.videoReferences.length || input.audioReferences.length) && !input.references.length) issues.push(blocked("seedance_primary_image", "参考视频或音频必须同时提供主参考图", "请添加至少一张参考图。"));
