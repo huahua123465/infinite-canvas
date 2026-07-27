@@ -581,80 +581,78 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
             {!planningStale && productionScope === "series" && activeEpisode ? (
                 <ChapterNarrationPanel node={node} rows={rows} rowIndexes={narrationRowIndexes} chapterId={activeEpisode.id} locked={narrationLocked} issues={narrationIssues} onLockChange={onNarrationLockChange} />
             ) : null}
-            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
-                <table className="min-w-[1880px] border-collapse text-left text-[12px]">
-                    <thead className="sticky top-0 z-20 bg-[#1f1f1f] text-[#b5b5b5]">
-                        <tr>
-                            {COLUMNS.map((column, index) => (
-                                <th key={column} className={`${index === 0 ? "sticky left-0 z-30 bg-[#1f1f1f]" : ""} border-b border-r border-[#343434] px-3 py-3 font-medium`} style={{ width: COL_WIDTHS[index] }}>
-                                    {column}
-                                </th>
-                            ))}
-                            <th className="w-44 border-b border-[#343434] px-3 py-3 font-medium">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {displayRows.map(({ row, rowIndex }) => (
-                            <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
-                                {COLUMNS.map((_, colIndex) => {
-                                    const detail = promptDetails[String(rowIndex)];
-                                    return (
-                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} h-px border-b border-r border-[#303030] align-top`}>
-                                            {colIndex === 8 ? (
-                                                <button className="block h-full min-h-[78px] w-full overflow-y-auto px-3 py-3 text-left leading-5 text-[#bdbdbd] outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
-                                                    <span className="block text-[10px] font-semibold text-cyan-200">首帧提示词</span>
-                                                    <span className="line-clamp-2">{detail?.storyboardPrompt || row[colIndex] || "点击打开合成提示词"}</span>
-                                                    {detail?.videoMotionPrompt ? <><span className="mt-2 block text-[10px] font-semibold text-emerald-200">视频运动初稿</span><span className="line-clamp-2 text-emerald-100/80">{detail.videoMotionPrompt}</span></> : null}
-                                                </button>
-                                            ) : (
-                                                <textarea data-storyboard-cell={`${rowIndex}-${colIndex}`} readOnly={colIndex === 5 && narrationLocked} title={colIndex === 5 && narrationLocked ? "本章旁白已锁定，先在旁白主稿区解锁" : undefined} className={`block h-full min-h-[78px] w-full resize-none overflow-y-auto bg-transparent px-3 py-3 leading-5 outline-none ${colIndex < 2 ? "text-center font-semibold" : ""} ${colIndex === 5 && narrationLocked ? "cursor-not-allowed opacity-65" : ""}`} style={{ color: "#f1f1f1" }} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} onBlur={(event) => onValidateCell(rowIndex, colIndex, event.target.value)} />
-                                            )}
-                                        </td>
-                                    );
-                                })}
-                                <td className="border-b border-[#303030] px-3 py-3">
-                                    <div className="mb-2 text-center text-[11px]">
-                                        {plans[String(rowIndex)]?.qualityError ? (
-                                            <button type="button" disabled={Boolean(actionKey)} className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-200 transition hover:bg-amber-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 disabled:cursor-not-allowed disabled:opacity-60" title="点击让 AI 修正本镜并重新检查" onClick={() => onRepairShot(node, rowIndex)}>
-                                                {actionKey === `shot-fix:${rowIndex}` ? <LoaderCircle className="size-3 animate-spin" /> : null}
-                                                {actionKey === `shot-fix:${rowIndex}` ? "修正中" : "自动修正"}
-                                            </button>
-                                        ) : (
-                                            <span className={`inline-flex rounded px-2 py-0.5 font-semibold ${plans[String(rowIndex)]?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>
-                                                {plans[String(rowIndex)]?.renderMode === "video" ? "动态视频" : "静态分镜"}
-                                            </span>
-                                        )}
-                                        {plans[String(rowIndex)]?.qualityError ? <div className="mt-1 line-clamp-2 text-left text-[10px] text-amber-200/85" title={plans[String(rowIndex)]?.qualityError}>原因：{plans[String(rowIndex)]?.qualityError}</div> : null}
-                                        {plans[String(rowIndex)]?.chapterTitle ? <div className="mt-1 truncate text-[#858585]" title={plans[String(rowIndex)]?.chapterTitle}>{plans[String(rowIndex)]?.chapterTitle}</div> : null}
-                                        {plans[String(rowIndex)]?.dramaticFunction ? <div className="mt-1 truncate font-semibold text-amber-200/80" title={storyboardShotDramaturgyTitle(plans[String(rowIndex)])}>{dramaticFunctionLabel(plans[String(rowIndex)]?.dramaticFunction)}</div> : null}
-                                        {plans[String(rowIndex)]?.visualBeatIds?.length ? <div className="mt-1 truncate text-[10px] text-emerald-200/70" title={storyboardShotFactRoleTitle(plans[String(rowIndex)])}>1 个主要画面 · {plans[String(rowIndex)]?.voiceoverBeatIds?.length || 0} 个旁白事实</div> : null}
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto bg-[#0d0f0e] px-8 py-6">
+                <div className="mx-auto flex max-w-[1500px] flex-col gap-4">
+                    {displayRows.map(({ row, rowIndex }) => {
+                        const plan = plans[String(rowIndex)];
+                        const detail = promptDetails[String(rowIndex)];
+                        const qualityError = plan?.qualityError;
+                        return (
+                            <article key={rowIndex} className="overflow-hidden rounded-xl border border-white/10 bg-[#171a18] shadow-[0_14px_40px_rgba(0,0,0,.18)]">
+                                <div className="flex items-center gap-3 border-b border-white/8 px-5 py-3">
+                                    <span className="grid size-9 place-items-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-sm font-bold text-emerald-100">{row[0] || rowIndex + 1}</span>
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-white">第 {row[0] || rowIndex + 1} 镜</span>
+                                            <span className="text-xs text-[#9ca59f]">{row[1] || "15s"}</span>
+                                            <span className={`rounded px-2 py-0.5 text-[10px] font-semibold ${plan?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{plan?.renderMode === "video" ? "动态视频" : "静态分镜"}</span>
+                                            {plan?.dramaticFunction ? <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">{dramaticFunctionLabel(plan.dramaticFunction)}</span> : null}
+                                        </div>
+                                        <div className="mt-0.5 truncate text-[11px] text-[#768079]" title={storyboardShotFactRoleTitle(plan)}>{plan?.visualBeatIds?.length ? `主要画面 ${plan.visualBeatIds.join("、")} · 旁白事实 ${plan.voiceoverBeatIds?.length || 0} 个` : plan?.chapterTitle || activeEpisode?.title}</div>
                                     </div>
-                                    <div className="flex items-center justify-center gap-1.5">
+                                    <div className="ml-auto flex items-center gap-1.5">
+                                        <Button size="small" type="text" className="!text-[#d8d8d8]" icon={<Maximize2 className="size-3.5" />} onClick={() => onOpenShotPlan(rowIndex)}>场景卡</Button>
                                         <RowActionButton loading={actionKey === `prompt:${rowIndex}`} icon={<Sparkles className="size-3.5" />} title="打开合成提示词" onClick={() => onOpenPrompt(rowIndex)} />
-                                        <Button size="small" type="text" className="!px-1.5 !text-[#d8d8d8]" icon={<Maximize2 className="size-3.5" />} title="编辑编剧场景卡" onClick={() => onOpenShotPlan(rowIndex)}>场景卡</Button>
                                         <RowActionButton loading={actionKey === `image:${rowIndex}`} icon={<ImageIcon className="size-3.5" />} title="生成分镜图" onClick={() => onGenerateImage(node, rowIndex)} />
                                         <RowActionButton loading={actionKey === `video:${rowIndex}`} icon={<Video className="size-3.5" />} title="生成视频" onClick={() => onGenerateVideo(node, rowIndex)} />
-                                        <Dropdown
-                                            trigger={["click"]}
-                                            menu={{
-                                                items: [
-                                                    { key: "copy", label: "复制当前提示词", icon: <Copy className="size-3.5" /> },
-                                                    { key: "delete", label: "删除片段", danger: true },
-                                                ],
-                                                onClick: ({ key }) => {
-                                                    if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(promptDetails[String(rowIndex)], row[8] || ""));
-                                                    if (key === "delete") onDeleteRow(rowIndex);
-                                                },
-                                            }}
-                                        >
+                                        <Dropdown trigger={["click"]} menu={{ items: [{ key: "copy", label: "复制当前提示词", icon: <Copy className="size-3.5" /> }, { key: "delete", label: "删除片段", danger: true }], onClick: ({ key }) => { if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(detail, row[8] || "")); if (key === "delete") onDeleteRow(rowIndex); } }}>
                                             <Button size="small" type="text" className="!text-[#d8d8d8]" icon={<Ellipsis className="size-4" />} />
                                         </Dropdown>
                                     </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                                </div>
+                                <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(360px,.55fr)]">
+                                    <div className="border-r border-white/8 p-5">
+                                        <label className="mb-2 block text-[11px] font-semibold tracking-wide text-emerald-200">四段式画面时间轴</label>
+                                        <textarea data-storyboard-cell={`${rowIndex}-2`} className="thin-scrollbar block min-h-48 w-full resize-y rounded-lg border border-white/8 bg-black/20 px-4 py-3 text-[13px] leading-7 text-[#eef2ef] outline-none transition focus:border-emerald-300/40" value={row[2] || ""} onChange={(event) => onUpdateCell(rowIndex, 2, event.target.value)} onBlur={(event) => onValidateCell(rowIndex, 2, event.target.value)} />
+                                        <div className="mt-4 grid grid-cols-2 gap-3">
+                                            {COLUMNS.slice(3, 8).map((column, offset) => {
+                                                const colIndex = offset + 3;
+                                                return (
+                                                    <label key={column} className={colIndex === 5 ? "col-span-2" : ""}>
+                                                        <span className="mb-1.5 block text-[10px] font-semibold text-[#8e9992]">{column}</span>
+                                                        <textarea data-storyboard-cell={`${rowIndex}-${colIndex}`} readOnly={colIndex === 5 && narrationLocked} title={colIndex === 5 && narrationLocked ? "本章旁白已锁定，先在旁白主稿区解锁" : undefined} className={`block min-h-20 w-full resize-y rounded-md border border-white/8 bg-black/15 px-3 py-2 text-xs leading-5 text-[#dfe5e1] outline-none focus:border-white/20 ${colIndex === 5 && narrationLocked ? "cursor-not-allowed opacity-60" : ""}`} value={row[colIndex] || ""} onChange={(event) => onUpdateCell(rowIndex, colIndex, event.target.value)} onBlur={(event) => onValidateCell(rowIndex, colIndex, event.target.value)} />
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <aside className="flex min-w-0 flex-col gap-4 bg-white/[0.015] p-5">
+                                        <div>
+                                            <div className="text-[11px] font-semibold text-amber-200">本镜剧作任务</div>
+                                            <div className="mt-2 space-y-2 text-xs leading-5 text-[#bec7c1]">
+                                                <p><span className="text-[#7f8a83]">目标：</span>{plan?.goal || "等待场景卡"}</p>
+                                                <p><span className="text-[#7f8a83]">阻碍：</span>{plan?.obstacle || "等待场景卡"}</p>
+                                                <p><span className="text-[#7f8a83]">结果：</span>{plan?.result || plan?.endState || "等待场景卡"}</p>
+                                                {plan?.valueShift ? <p><span className="text-[#7f8a83]">变化：</span>{plan.valueShift}</p> : null}
+                                            </div>
+                                        </div>
+                                        {qualityError ? (
+                                            <div className="rounded-lg border border-amber-400/20 bg-amber-500/8 p-3 text-xs leading-5 text-amber-100">
+                                                <div className="font-semibold">生产契约未通过</div>
+                                                <div className="mt-1 text-amber-100/75">{qualityError}</div>
+                                                <Button size="small" className="!mt-3" disabled={Boolean(actionKey)} loading={actionKey === `shot-fix:${rowIndex}`} onClick={() => onRepairShot(node, rowIndex)}>自动修正本镜</Button>
+                                            </div>
+                                        ) : null}
+                                        <button className="mt-auto rounded-lg border border-cyan-300/15 bg-cyan-400/5 p-3 text-left transition hover:bg-cyan-400/10" onClick={() => onOpenPrompt(rowIndex)}>
+                                            <span className="block text-[10px] font-semibold text-cyan-200">首帧与视频提示词</span>
+                                            <span className="mt-1 line-clamp-4 text-xs leading-5 text-[#aeb9b2]">{detail?.videoMotionPrompt || detail?.storyboardPrompt || row[8] || "完成资产后，在第三步合成最终提示词"}</span>
+                                        </button>
+                                    </aside>
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
             </div>
             <div className="sticky bottom-0 z-30 flex h-16 shrink-0 items-center justify-between border-t border-[#303030] bg-[#121212] px-8 shadow-[0_-10px_28px_rgba(0,0,0,.35)]">
                 <div className="flex items-center gap-2">
@@ -694,82 +692,61 @@ function storyboardShotFactRoleTitle(plan?: StoryboardShotPlan) {
 function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, config, model, onModelChange, onOpenPrompt, onComposeFinalPrompt, onAddRow, onOpenImport, onGenerateImage, onGenerateVideo, dynamicPromptCount, dynamicShotCount, staticShotCount }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; promptDetails: Record<string, StoryboardPromptDetail>; config: AiConfig; model: string; onModelChange: (model: string) => void; onOpenPrompt: (rowIndex: number) => void; onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; dynamicPromptCount: number; dynamicShotCount: number; staticShotCount: number }) {
     return (
         <>
-            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
-                <table className="min-w-[1820px] border-collapse text-left text-[12px]">
-                    <thead className="sticky top-0 z-20 bg-[#1f1f1f] text-[#b5b5b5]">
-                        <tr>
-                            {COLUMNS.slice(0, 8).map((column, index) => (
-                                <th key={column} className={`${index === 0 ? "sticky left-0 z-30 bg-[#1f1f1f]" : ""} border-b border-r border-[#343434] px-3 py-3 font-medium`} style={{ width: COL_WIDTHS[index] }}>
-                                    {column}
-                                </th>
-                            ))}
-                            <th className="w-[310px] border-b border-r border-[#343434] px-3 py-3 font-medium">合成结果</th>
-                            <th className="w-24 border-b border-[#343434] px-3 py-3 text-center font-medium">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rowIndexes.map((rowIndex) => {
-                            const row = rows[rowIndex];
-                            const detail = promptDetails[String(rowIndex)];
-                            const promptError = node.metadata?.storyboardPromptErrors?.[String(rowIndex)];
-                            const isDynamic = node.metadata?.storyboardShotPlans?.[String(rowIndex)]?.renderMode !== "still";
-                            const hasPrompt = Boolean(detail?.storyboardPrompt?.trim());
-                            const boundCount = detail?.assetMentionLinks?.filter((link) => link.status === "bound").length || 0;
-                            const missingCount = detail?.assetMentionLinks?.filter((link) => link.status === "missing").length || 0;
-                            return (
-                                <tr key={rowIndex} className={rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}>
-                                    {COLUMNS.slice(0, 8).map((_, colIndex) => (
-                                        <td key={colIndex} className={`${colIndex === 0 ? `sticky left-0 z-10 ${rowIndex % 2 ? "bg-[#202020]" : "bg-[#151515]"}` : ""} border-b border-r border-[#303030] align-top`}>
-                                            <div className={`max-h-24 px-3 py-3 leading-5 ${colIndex < 2 ? "overflow-hidden text-center font-semibold" : "thin-scrollbar overflow-y-auto text-[#ececec]"}`}>{row[colIndex] || "-"}</div>
-                                        </td>
-                                    ))}
-                                    <td className={`border-b border-r border-[#303030] align-top ${promptError ? "bg-red-500/5" : ""}`}>
-                                        <button className="block min-h-24 w-full px-3 py-3 text-left leading-5 outline-none transition hover:bg-white/5" onClick={() => onOpenPrompt(rowIndex)}>
-                                            {promptError ? <span className="mb-2 line-clamp-3 rounded bg-red-500/15 px-2 py-1.5 text-[11px] font-semibold leading-4 text-red-200" title={promptError}>校验失败：{promptError}</span> : null}
-                                            {hasPrompt ? (
-                                                <>
-                                                    <span className="block text-[10px] font-semibold text-cyan-200">首帧提示词</span>
-                                                    <span className="line-clamp-2 text-[#e7e7e7]">{detail?.storyboardPrompt}</span>
-                                                    {detail?.videoMotionPrompt ? <><span className="mt-2 block text-[10px] font-semibold text-emerald-200">视频运动初稿（进入最终提交提示词确认）</span><span className="line-clamp-2 text-emerald-100/80">{detail.videoMotionPrompt}</span></> : null}
-                                                    <span className="mt-2 flex flex-wrap gap-1.5">
-                                                        {boundCount ? <span className="inline-flex rounded bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">已绑定 {boundCount} 个资产</span> : null}
-                                                        {missingCount ? <span className="inline-flex rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-100">未绑定 {missingCount} 个</span> : null}
-                                                    </span>
-                                                </>
-                                            ) : (
-                                                <span className={promptError ? "text-red-200/70" : isDynamic ? "text-[#858585]" : "text-cyan-100/70"}>{promptError ? "原提示词不可用，等待修正" : isDynamic ? "待生成片段提示词" : "静态片段，不参与本轮批量合成"}</span>
-                                            )}
-                                            <span className={`mt-2 inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${promptError ? "bg-red-500/15 text-red-200" : isDynamic ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{promptError ? "待修正" : isDynamic ? "动态视频" : "静态事实"}</span>
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto bg-[#0d0f0e] px-8 py-6">
+                <div className="mx-auto flex max-w-[1500px] flex-col gap-4">
+                    {rowIndexes.map((rowIndex) => {
+                        const row = rows[rowIndex];
+                        const detail = promptDetails[String(rowIndex)];
+                        const promptError = node.metadata?.storyboardPromptErrors?.[String(rowIndex)];
+                        const isDynamic = node.metadata?.storyboardShotPlans?.[String(rowIndex)]?.renderMode !== "still";
+                        const hasPrompt = Boolean(detail?.storyboardPrompt?.trim());
+                        const boundLinks = detail?.assetMentionLinks?.filter((link) => link.status === "bound") || [];
+                        const missingLinks = detail?.assetMentionLinks?.filter((link) => link.status === "missing") || [];
+                        return (
+                            <article key={rowIndex} className={`overflow-hidden rounded-xl border bg-[#171a18] ${promptError ? "border-red-400/25" : "border-white/10"}`}>
+                                <div className="flex items-center gap-3 border-b border-white/8 px-5 py-3">
+                                    <span className="grid size-9 place-items-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-sm font-bold text-emerald-100">{row?.[0] || rowIndex + 1}</span>
+                                    <div>
+                                        <div className="font-semibold text-white">第 {row?.[0] || rowIndex + 1} 镜 · {row?.[1] || "15s"}</div>
+                                        <div className="mt-0.5 text-[11px] text-[#879189]">{isDynamic ? "动态视频 · 四段连续动作" : "静态事实 · 不参与批量视频"}</div>
+                                    </div>
+                                    <div className="ml-auto flex items-center gap-2">
+                                        {boundLinks.length ? <span className="rounded bg-cyan-500/15 px-2 py-1 text-[11px] font-semibold text-cyan-100">已绑定 {boundLinks.length} 个资产</span> : null}
+                                        {missingLinks.length ? <span className="rounded bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-100">缺少 {missingLinks.length} 个资产</span> : null}
+                                        <Button size="small" icon={<Sparkles className="size-3.5" />} loading={actionKey === `prompt:${rowIndex}`} disabled={Boolean(actionKey) || !isDynamic} onClick={() => onComposeFinalPrompt(node, rowIndex, true)}>{hasPrompt ? "重新合成" : "合成本镜"}</Button>
+                                        <Button size="small" type="primary" onClick={() => onOpenPrompt(rowIndex)}>打开编辑</Button>
+                                    </div>
+                                </div>
+                                {promptError ? <div className="border-b border-red-400/15 bg-red-500/8 px-5 py-2 text-xs text-red-200">校验失败：{promptError}</div> : null}
+                                <div className="grid grid-cols-[minmax(0,.72fr)_minmax(0,1.28fr)]">
+                                    <div className="border-r border-white/8 p-5">
+                                        <div className="text-[11px] font-semibold text-cyan-200">首帧提示词</div>
+                                        <button className="mt-2 block w-full text-left" onClick={() => onOpenPrompt(rowIndex)}>
+                                            <span className="line-clamp-8 whitespace-pre-wrap text-xs leading-6 text-[#d9dfdb]">{detail?.storyboardPrompt || row?.[8] || (isDynamic ? "等待合成首帧提示词" : "静态事实镜头")}</span>
                                         </button>
-                                    </td>
-                                    <td className="border-b border-[#303030] px-3 py-3 text-center">
-                                        <Dropdown
-                                            trigger={["click"]}
-                                            menu={{
-                                                items: [
-                                                    { key: "open", label: "打开合成提示词", icon: <Sparkles className="size-3.5" /> },
-                                                    { key: "compose", label: promptError ? "再次合成此片段（会调用模型）" : hasPrompt ? "重新合成此片段（会调用模型）" : isDynamic ? "合成此视频片段" : "手动合成此静态片段", icon: <Sparkles className="size-3.5" /> },
-                                                    { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" />, disabled: !hasPrompt },
-                                                    { key: "image", label: "生成分镜图", icon: <ImageIcon className="size-3.5" />, disabled: !hasPrompt || detail?.promptSource === "fallback" },
-                                                    { key: "video", label: "生成视频", icon: <Video className="size-3.5" />, disabled: !hasVideoPrompt(detail) || Boolean(promptError) },
-                                                ],
-                                                onClick: ({ key }) => {
-                                                    if (key === "open") onOpenPrompt(rowIndex);
-                                                    if (key === "compose") onComposeFinalPrompt(node, rowIndex, true);
-                                                    if (key === "copy") void navigator.clipboard?.writeText(promptTextForCopy(detail, row[8] || ""));
-                                                    if (key === "image") onGenerateImage(node, rowIndex);
-                                                    if (key === "video") onGenerateVideo(node, rowIndex);
-                                                },
-                                            }}
-                                        >
-                                            <Button size="small" type="text" className="!text-[#d8d8d8]" disabled={actionKey === `prompt:${rowIndex}`} icon={actionKey === `prompt:${rowIndex}` ? <LoaderCircle className="size-4 animate-spin" /> : <Ellipsis className="size-4" />} />
-                                        </Dropdown>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                                    </div>
+                                    <div className="p-5">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[11px] font-semibold text-emerald-200">Seedance 视频运动提示词</span>
+                                            <span className="text-[10px] text-[#778079]">四段时间轴 · 单一主运镜 · 资产精确绑定</span>
+                                        </div>
+                                        <button className="mt-2 block w-full text-left" onClick={() => onOpenPrompt(rowIndex)}>
+                                            <span className={`line-clamp-10 whitespace-pre-wrap text-xs leading-6 ${detail?.videoMotionPrompt ? "text-emerald-50/85" : "text-[#747d77]"}`}>{detail?.videoMotionPrompt || (promptError ? "原提示词不可用，等待修正" : isDynamic ? "完成资产后合成本镜视频提示词" : "静态片段无需视频提示词")}</span>
+                                        </button>
+                                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                                            {(detail?.assetMentions || []).map((mention) => <span key={mention} className="rounded border border-cyan-300/15 bg-cyan-400/5 px-2 py-1 text-[10px] text-cyan-100">{mention}</span>)}
+                                            <span className="ml-auto flex gap-1.5">
+                                                <Button size="small" icon={<Copy className="size-3.5" />} disabled={!hasPrompt} onClick={() => void navigator.clipboard?.writeText(promptTextForCopy(detail, row?.[8] || ""))}>复制</Button>
+                                                <Button size="small" icon={<ImageIcon className="size-3.5" />} disabled={!hasPrompt || detail?.promptSource === "fallback"} onClick={() => onGenerateImage(node, rowIndex)}>分镜图</Button>
+                                                <Button size="small" icon={<Video className="size-3.5" />} disabled={!hasVideoPrompt(detail) || Boolean(promptError)} onClick={() => onGenerateVideo(node, rowIndex)}>待审核视频</Button>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
             </div>
             <div className="sticky bottom-0 z-30 flex h-16 shrink-0 items-center justify-between border-t border-[#303030] bg-[#121212] px-8 shadow-[0_-10px_28px_rgba(0,0,0,.35)]">
                 <div className="flex items-center gap-3">
@@ -1274,6 +1251,7 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
     const hasVoice = Boolean(asset.voiceAudioUrl || asset.voiceAudioStorageKey);
     const voiceCandidates = asset.voiceAudioCandidates || [];
     const characterState = characterAssetStateText(asset);
+    const finalImagePrompt = storyboardAssetImagePrompt(asset, { hasReferenceImage: hasImage });
     return (
         <div
             data-storyboard-asset-card
@@ -1382,6 +1360,13 @@ function AssetCard({ asset, actionKey, onSelect, onDelete, onGenerate, onGenerat
                 {characterState ? <span className="shrink-0 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">{characterState}</span> : null}
             </div>
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8f8f8f]">{asset.description || asset.prompt || "点击补充描述与提示词"}</div>
+            <div className="mt-2 rounded-md border border-emerald-300/10 bg-emerald-400/5 px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-emerald-200">实际生图提示词</span>
+                    <button type="button" className="text-[10px] text-emerald-100/65 hover:text-emerald-100" onClick={(event) => { event.stopPropagation(); void navigator.clipboard?.writeText(finalImagePrompt); }}>复制</button>
+                </div>
+                <div className="mt-1 line-clamp-3 text-[10px] leading-4 text-emerald-50/60">{finalImagePrompt || "补充资产信息后生成"}</div>
+            </div>
         </div>
     );
 }

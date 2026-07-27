@@ -1254,7 +1254,7 @@ function isPublicMediaUrl(value: string) {
 
 function resolveCangyuanHttpsReferenceUrl(value: string, label: string) {
     if (/^https:\/\//i.test(value || "")) return value;
-    throw new Error(`${label}必须使用公网 HTTPS URL`);
+    throw new Error(`${label}已本地上传，但当前沧元 Seedance 只能读取公网 HTTPS URL；需要图片与视频同时参考时请先上传视频到公网，只需单条本地视频重绘时可改用 omni-v2v`);
 }
 
 function delay(ms: number, signal?: AbortSignal) {

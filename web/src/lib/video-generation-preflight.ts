@@ -28,6 +28,7 @@ export type VideoPreflightResult = {
 
 const seedanceRatios = new Set(["16:9", "9:16", "1:1", "21:9", "3:4", "4:3"]);
 const grokDurations = new Set([4, 6, 8, 10, 12, 15]);
+const cangyuanLocalVideoSuggestion = "本地视频已保存，但当前沧元 Seedance 接口无法读取浏览器本地文件。需要同时使用图片/视频参考时，请先把视频上传为可公开访问的 HTTPS URL；只需要单条本地视频做视频重绘时，可改用 omni-v2v（本地视频不超过 5MB）。";
 
 export async function inspectVideoGenerationInput(input: VideoPreflightInput): Promise<VideoPreflightResult> {
     const issues = validateVideoGenerationParameters(input);
@@ -71,7 +72,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (input.references.length + input.videoReferences.length + input.audioReferences.length > CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT) issues.push(blocked("sd5_seedance_total_references", `SD5 Seedance 三类参考素材合计不能超过 ${CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT} 个`, "请移除多余参考素材"));
         let totalVideoDuration = 0;
         input.videoReferences.forEach((item, index) => {
-            if (!isHttpsReferenceUrl(item.url)) issues.push(blocked(`sd5_seedance_video_url_${index}`, `参考视频 ${index + 1} 必须使用公网 HTTPS URL`, "请先上传到可公开访问的 HTTPS 地址"));
+            if (!isHttpsReferenceUrl(item.url)) issues.push(blocked(`sd5_seedance_video_url_${index}`, `参考视频 ${index + 1} 已本地上传，但当前沧元 Seedance 不支持直接提交本地视频`, cangyuanLocalVideoSuggestion));
             if (item.durationMs && (item.durationMs < 1_000 || item.durationMs > 15_000)) issues.push(blocked(`sd5_seedance_video_${index}`, `参考视频 ${index + 1} 单条时长必须为 1-15 秒`, "请裁剪或更换参考视频"));
             totalVideoDuration += item.durationMs || 0;
         });
@@ -94,7 +95,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         const totalVideoDuration = input.videoReferences.reduce((total, item) => total + (item.durationMs || 0), 0);
         if (totalVideoDuration > 15_000) issues.push(blocked("seedance_video_duration", "Seedance 参考视频总时长不能超过 15 秒", "请裁短或移除参考视频。"));
         input.videoReferences.forEach((item, index) => {
-            if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_video_url_${index}`, `参考视频 ${index + 1} 必须使用公网 HTTPS URL`, "沧元该模型不支持直接上传本地参考视频，请先换成可公开访问的 HTTPS 地址。"));
+            if (isCangyuan && !isHttpsReferenceUrl(item.url)) issues.push(blocked(`seedance_video_url_${index}`, `参考视频 ${index + 1} 已本地上传，但当前沧元 Seedance 不支持直接提交本地视频`, cangyuanLocalVideoSuggestion));
             if (item.durationMs && (item.durationMs < minReferenceVideoMs || item.durationMs > 15_000)) issues.push(blocked(`seedance_video_${index}`, `参考视频 ${index + 1} 必须为 ${minReferenceVideoMs / 1000}–15 秒`, "请更换或裁剪参考视频。"));
             const minSize = fixedResolution ? 300 : 720;
             const maxSize = fixedResolution ? 6000 : 2160;

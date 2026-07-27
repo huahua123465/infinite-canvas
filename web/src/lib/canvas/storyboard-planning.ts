@@ -267,8 +267,8 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
         const beat = beatById.get(firstShot.plan.visualBeatIds?.[0] || firstShot.plan.sourceBeatIds[0]);
         const boundary = storyboardNaturalChapterBoundary(firstShot, beat);
         const currentVideoCount = currentChapter?.shotIndexes.filter((index) => shots[index].plan.renderMode === "video").length || 0;
-        const canStartChapter = currentVideoCount >= 4 && remainingVideoCounts[segmentIndex] >= 4 && chapters.length < 10 && (chapters.length < 9 || remainingVideoCounts[segmentIndex] <= 7);
-        const shouldStartChapter = !currentChapter || (scope === "series" && canStartChapter && (storyboardStartsNaturalChapter(previousBoundary, boundary) || currentVideoCount + segmentVideoCounts[segmentIndex] > 7));
+        const canStartChapter = currentVideoCount >= 8 && remainingVideoCounts[segmentIndex] >= 8 && chapters.length < 10 && (chapters.length < 9 || remainingVideoCounts[segmentIndex] <= 12);
+        const shouldStartChapter = !currentChapter || (scope === "series" && canStartChapter && (storyboardStartsNaturalChapter(previousBoundary, boundary) || currentVideoCount + segmentVideoCounts[segmentIndex] > 12));
         if (shouldStartChapter) {
             const episodeNumber = chapters.length + 1;
             const phase = boundary.lifeStage || (beat?.phase || "故事推进").trim();
@@ -302,11 +302,11 @@ export function storyboardSingleEpisodeBeatTarget() {
 }
 
 export function storyboardPlanningConfigKey(scope: StoryboardProductionScope) {
-    return `scene-contract-v5/${scope}/global-budget/natural-chapters/15s`;
+    return `scene-contract-v6/${scope}/episode-budget-8-12/natural-chapters/15s`;
 }
 
 export function storyboardTotalClipTarget(factCount: number) {
-    return Math.max(2, Math.min(300, Math.ceil(Math.max(1, factCount) / 5)));
+    return Math.max(2, Math.min(300, Math.ceil(Math.max(1, factCount) / 3)));
 }
 
 export function storyboardBatchClipTargets(batches: StoryboardSourceBeat[][], totalTarget: number) {
@@ -326,7 +326,7 @@ export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, 
     const clipRule = "每个动态片段固定15秒，只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜，0-3秒建立场景与站位并执行第一拍，3-9秒承接首拍结果推进第二拍，9-12秒形成反作用、动作转折和可见结果，12-15秒只保持稳定落点。第一步画面描述的前三段必须写清执行者、身体部位或道具、动作对象与物理结果，禁止短动作标签。旁白目标36-45个汉字，硬上限48个汉字。相邻背景事实只有在同地点、同人物时期且不要求第二段可见剧情时才能由旁白承载。";
     const budgetRule = totalTarget ? `完整生产的动态视频总预算严格为${totalTarget}个，必须通过把同地点、同人物时期的非主要事实放入voiceoverBeatIds覆盖，不能增加镜头突破预算。` : "";
     if (scope === "single") return `这是整篇故事的单集浓缩生产。${budgetRule}${clipRule}无法放入的次要细节继续浓缩，不得把多个地点、人物时期或主要事件硬塞进同一视频。`;
-    return `这是完整故事生产。${budgetRule}${clipRule}章节只按童年、青年、成家、中年、晚年、身后等宽泛人生阶段，以及迁徙、婚姻、重大损失、身体状态不可逆变化和高潮/结局等强转折划分；不得因任意phase、timeStage文案或地点小变化切章，也不得按一事实一片段无限拆分。`;
+    return `这是完整故事生产。${budgetRule}${clipRule}每集优先安排8-12个动态片段，并在固定预算内形成建置、推进、转折与稳定结尾；章节只按童年、青年、成家、中年、晚年、身后等宽泛人生阶段，以及迁徙、婚姻、重大损失、身体状态不可逆变化和高潮/结局等强转折划分；不得因任意phase、timeStage文案或地点小变化切章，也不得按一事实一片段无限拆分。`;
 }
 
 type StoryboardNaturalChapterBoundary = { lifeStage: string; majorTransition: string; dramaticFunction: StoryboardShotPlan["dramaticFunction"]; transition: StoryboardShotTransition };
