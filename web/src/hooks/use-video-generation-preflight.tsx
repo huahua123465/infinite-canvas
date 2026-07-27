@@ -3,7 +3,7 @@ import { App } from "antd";
 
 import { inspectVideoGenerationInput, type VideoPreflightInput, type VideoPreflightIssue } from "@/lib/video-generation-preflight";
 import { isCangyuanSd5SeedanceModel } from "@/lib/seedance-video";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
+import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 export function useVideoGenerationPreflight() {
@@ -75,11 +75,8 @@ function actualReferenceFields(config: AiConfig, model: string, input: VideoPref
     if (isSoraVideoModel(model) || isVeoVideoModel(model)) return input.references.length ? ["images"] : [];
     if (normalized.startsWith("grok-video")) return [input.references.length ? "image_urls" : "", input.videoReferences.length ? "video_url" : ""].filter(Boolean);
     if (isCangyuan) {
-        const hasFirstFrame = input.references.some((image) => image.videoReferenceRole === "firstFrame");
-        const requiresPrimaryImage = hasFirstFrame || Boolean(input.videoReferences.length || input.audioReferences.length);
-        const useMultipartImage = hasFirstFrame && input.references.length === 1 && !input.videoReferences.length && !input.audioReferences.length && !/^https?:\/\//i.test(input.references[0].url || input.references[0].dataUrl);
-        const referenceImageCount = requiresPrimaryImage ? Math.max(0, input.references.length - 1) : input.references.length;
-        return [useMultipartImage ? "image（multipart）" : requiresPrimaryImage && input.references.length ? "image_url" : "", referenceImageCount ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
+        const framePair = isCangyuanSeedanceFramePair(input.references, input.videoReferences.length, input.audioReferences.length);
+        return [framePair ? "first_image_url" : "", framePair ? "last_image_url" : "", !framePair && input.references.length ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
     }
     if (requestConfig.apiFormat === "ark") return ["content（文本 + 多模态素材）"];
     return input.references.length ? ["input_reference[]"] : [];

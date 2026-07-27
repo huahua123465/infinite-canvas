@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -332,8 +332,8 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     }
     assertSeedanceVideoReferences(videoReferences, fixedResolution ? 2_000 : 4_000, fixedResolution ? { minSize: 300, maxSize: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 } : undefined);
     assertSeedanceAudioReferences(audioReferences);
-    const firstFrameIndex = references.findIndex((image) => image.videoReferenceRole === "firstFrame");
-    const requestReferences = firstFrameIndex > 0 ? [references[firstFrameIndex], ...references.filter((_, index) => index !== firstFrameIndex)] : references;
+    const requestReferences = references;
+    const framePair = isCangyuanSeedanceFramePair(requestReferences, videoReferences.length, audioReferences.length);
     const requestPrompt = buildCangyuanSeedanceMiniPrompt(prompt, requestReferences, videoReferences, audioReferences);
     if (requestPrompt.length > 5000) throw new Error(`${modelName} 最终视频提示词不能超过 5000 个字符，请精简提示词或参考素材名称`);
     const selectedVideos = videoReferences;
@@ -350,46 +350,26 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         await deleteTemporaryReferenceMedia(imageUrls.filter(isTemporaryReferenceMediaUrl));
         throw error;
     }
-    const hasFirstFrame = firstFrameIndex >= 0;
-    const primaryImageUrl = hasFirstFrame ? imageUrls[0] || "" : "";
-    const referenceImageUrls = hasFirstFrame ? imageUrls.slice(1) : imageUrls;
+    const firstFrameIndex = framePair ? requestReferences.findIndex((image) => image.videoReferenceRole === "firstFrame") : -1;
+    const lastFrameIndex = framePair ? requestReferences.findIndex((image) => image.videoReferenceRole === "lastFrame") : -1;
+    const firstImageUrl = firstFrameIndex >= 0 ? imageUrls[firstFrameIndex] || "" : "";
+    const lastImageUrl = lastFrameIndex >= 0 ? imageUrls[lastFrameIndex] || "" : "";
+    const referenceImageUrls = framePair ? [] : imageUrls;
     try {
         const requestUrl = aiApiUrl(config, "/videos");
-        let created: VideoResponse;
-        let requestFields: string[];
-        const useMultipartImage = hasFirstFrame && imageUrls.length === 1 && imageUrls[0].startsWith("data:") && !referenceVideos.length && !referenceAudios.length;
-        if (useMultipartImage) {
-            const body = new FormData();
-            body.set("model", modelName);
-            body.set("prompt", requestPrompt);
-            body.set("aspect_ratio", normalizeCangyuanVideoRatio(config.size));
-            body.set("duration", String(normalizeCangyuanVideoDuration(config.videoSeconds)));
-            if (!fixedResolution) {
-                body.set("resolution", normalizeCangyuanSeedanceResolution(config.vquality));
-                body.set("audio", String(boolConfig(config.videoGenerateAudio, true)));
-            }
-            body.append("image", dataUrlToFile({ ...requestReferences[0], dataUrl: imageUrls[0] }), requestReferences[0].name || "reference.png");
-            referenceVideos.forEach((url) => body.append("reference_videos", url));
-            referenceAudios.forEach((url) => body.append("reference_audios", url));
-            created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
-            requestFields = ["model", "prompt", "aspect_ratio", "duration", ...(!fixedResolution ? ["resolution", "audio"] : []), "image"];
-        } else {
-            const payload = {
-                model: modelName,
-                prompt: requestPrompt,
-                aspect_ratio: normalizeCangyuanVideoRatio(config.size),
-                duration: normalizeCangyuanVideoDuration(config.videoSeconds),
-                ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
-                ...(fixedResolution && primaryImageUrl ? { image_url: primaryImageUrl } : {}),
-                ...(fixedResolution && referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
-                ...(!fixedResolution && primaryImageUrl ? { image_url: primaryImageUrl } : {}),
-                ...(!fixedResolution && referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
-                ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
-                ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
-            };
-            created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
-            requestFields = Object.keys(payload);
-        }
+        const payload = {
+            model: modelName,
+            prompt: requestPrompt,
+            aspect_ratio: normalizeCangyuanVideoRatio(config.size),
+            duration: normalizeCangyuanVideoDuration(config.videoSeconds),
+            ...(!fixedResolution ? { resolution: normalizeCangyuanSeedanceResolution(config.vquality), audio: boolConfig(config.videoGenerateAudio, true) } : {}),
+            ...(framePair ? { first_image_url: firstImageUrl, last_image_url: lastImageUrl } : {}),
+            ...(!framePair && referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
+            ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
+            ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
+        };
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const requestFields = Object.keys(payload);
         const taskId = cangyuanVideoTaskId(created);
         if (!taskId) throw new Error("视频接口没有返回任务 ID");
         const requestSummary = await buildVideoRequestSummary(
@@ -399,7 +379,7 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
                 aspectRatio: normalizeCangyuanVideoRatio(config.size),
                 duration: normalizeCangyuanVideoDuration(config.videoSeconds),
                 ...(fixedResolution ? { fixedResolution } : { resolution: normalizeCangyuanSeedanceResolution(config.vquality), generateAudio: boolConfig(config.videoGenerateAudio, true) }),
-                transport: useMultipartImage ? "multipart" : "json",
+                transport: "json",
             },
             requestReferences,
             videoReferences,

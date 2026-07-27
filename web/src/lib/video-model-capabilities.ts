@@ -1,5 +1,6 @@
 import { CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import type { ReferenceImage } from "@/types/image";
 
 export type VideoReferenceLimits = Readonly<{
     images: number;
@@ -105,4 +106,16 @@ export function cangyuanSeedanceFixedResolution(config: AiConfig, selectedModel 
     if (!fixedResolution) return "";
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     return requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn") ? fixedResolution : "";
+}
+
+export function isCangyuanSeedanceFramePair(
+    references: ReferenceImage[],
+    videoReferenceCount: number,
+    audioReferenceCount: number,
+) {
+    return references.length === 2
+        && !videoReferenceCount
+        && !audioReferenceCount
+        && references.some((item) => item.videoReferenceRole === "firstFrame")
+        && references.some((item) => item.videoReferenceRole === "lastFrame");
 }
