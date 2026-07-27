@@ -3599,6 +3599,7 @@ function InfiniteCanvasPage() {
                     const contextKey = await storyboardPromptComposeContextKey(`${generationConfig.model}\n${promptInstruction.content}\n${source}`);
                     const savedDraft = scriptNode.metadata?.storyboardPromptRawResponses?.[String(index)];
                     const savedAnswer = !replaceExisting && scriptNode.metadata?.storyboardPromptErrors?.[String(index)] && savedDraft?.contextKey === contextKey ? savedDraft.response.trim() : "";
+                    const hasSavedAnswer = Boolean(savedAnswer);
                     if (savedAnswer) {
                         try {
                             setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "重新校正已付费模型结果（不请求模型）", status: "running" });
@@ -3607,7 +3608,7 @@ function InfiniteCanvasPage() {
                             lastError = error instanceof Error ? error.message : "已保存模型结果仍未通过本地校正";
                         }
                     }
-                    if (!detail) {
+                    if (!detail && !hasSavedAnswer) {
                         try {
                             setStoryboardPromptProgress({ current: currentIndex, total: indexes.length, phase: "请求文本模型（本镜仅一次）", attempt: 1, status: "running" });
                             const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: `${promptInstruction.content}\n\n${source}` }], () => {}, { signal: controller.signal });
@@ -3628,7 +3629,7 @@ function InfiniteCanvasPage() {
                         updateStoryboardPromptError(scriptNode.id, index, lastError);
                     }
                 }
-                if (failed) message.warning(`本轮完成 ${completed} 个模型提示词，${failed} 个模型结果校正后仍未通过，未使用本地替代提示词；原始响应已保存，再次执行会先免费重校正，仍失败才请求模型`);
+                if (failed) message.warning(`本轮完成 ${completed} 个模型提示词，${failed} 个模型结果校正后仍未通过，未使用本地替代提示词；原始响应已保存，同一上下文再次执行只做免费校正，需主动重新合成或上下文变化才请求模型`);
                 else message.success(rowIndex === undefined ? `${replaceExisting ? "已重新合成" : "已合成"}当前集 ${completed} 个视频片段提示词` : "合成提示词已生成");
                 setStoryboardPromptProgress({ current: indexes.length, total: indexes.length, phase: failed ? `完成，失败 ${failed} 个` : "全部完成", status: failed ? "error" : "completed" });
             } catch (error) {
