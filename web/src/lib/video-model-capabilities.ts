@@ -22,11 +22,6 @@ const OMNI_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 0, videos: 1
 const SORA_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0, audios: 0 };
 const VEO_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 2, videos: 0, audios: 0 };
 const VEO_REFERENCE_VIDEO_LIMITS: VideoReferenceLimits = { images: 3, videos: 0, audios: 0 };
-const CANGYUAN_VIDEO_ROUTE_IMAGE_LIMITS: Record<string, number> = {
-    "seedance-2.0-720p": 4,
-    "seedance-2.0-mini-720p": 4,
-};
-
 // Mirrors the public-model referenceLimits exposed by Cangyuan's VIDEO pricing metadata.
 const CANGYUAN_PUBLIC_VIDEO_REFERENCE_LIMITS: Record<string, VideoReferenceLimits> = {
     "seedance-2.0": SEEDANCE_STANDARD_REFERENCE_LIMITS,
@@ -66,13 +61,6 @@ export function videoReferenceCapability(model: string): VideoReferenceCapabilit
 
 export function videoReferenceLimits(model: string) {
     return videoReferenceCapability(model)?.limits || null;
-}
-
-export function cangyuanEffectiveVideoReferenceLimits(model: string, videoReferenceCount: number) {
-    const documented = videoReferenceLimits(model);
-    if (!documented || !videoReferenceCount) return documented;
-    const routeImageLimit = CANGYUAN_VIDEO_ROUTE_IMAGE_LIMITS[modelOptionName(model).toLowerCase()];
-    return routeImageLimit ? { ...documented, images: Math.min(documented.images, routeImageLimit) } : documented;
 }
 
 export function isOmniImageVideoModel(model: string) {

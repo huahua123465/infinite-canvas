@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
-import { cangyuanEffectiveVideoReferenceLimits, isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -321,10 +321,10 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
     if (isOmniVideoToVideoModel(model)) return createCangyuanOmniVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isVeoVideoModel(model)) return createCangyuanVeoVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
     if (isCangyuanSd5SeedanceModel(model)) return createCangyuanSd5SeedanceVideoTask(config, model, prompt, references, videoReferences, audioReferences, options);
-    const limits = cangyuanEffectiveVideoReferenceLimits(model, videoReferences.length) || SEEDANCE_REFERENCE_LIMITS;
+    const limits = videoReferenceLimits(model) || SEEDANCE_REFERENCE_LIMITS;
     const modelName = cangyuanSeedanceMiniModelName(model);
     const fixedResolution = seedanceModelFixedResolution(modelName);
-    if (references.length > limits.images) throw new Error(videoReferences.length && limits.images < (videoReferenceLimits(model)?.images || limits.images) ? `当前沧元 VIDEO 混合参考线路最多支持 ${limits.images} 张参考图，请移除多余图片后重试` : `${modelName} 参考图不能超过 ${limits.images} 张`);
+    if (references.length > limits.images) throw new Error(`${modelName} 参考图不能超过 ${limits.images} 张`);
     if (videoReferences.length > limits.videos) throw new Error(`${modelName} 参考视频不能超过 ${limits.videos} 条`);
     if (audioReferences.length > limits.audios) throw new Error(`${modelName} 参考音频不能超过 ${limits.audios} 条`);
     if ((videoReferences.length || audioReferences.length) && !references.length) {
