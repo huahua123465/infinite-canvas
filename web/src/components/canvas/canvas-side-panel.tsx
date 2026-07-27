@@ -508,7 +508,8 @@ function PromptSourceGroup({
     onView: (prompt: Prompt) => void;
 }) {
     // 展开过一次即缓存,避免收起后重复请求;搜索命中时也需要拿到数据来计数。
-    const query = useQuery({ queryKey: ["side-panel-prompts", sourceId], queryFn: () => fetchSourcePrompts(sourceId), enabled: open, staleTime: 1000 * 60 * 60 });
+    const showResults = open || !!keyword.trim();
+    const query = useQuery({ queryKey: ["side-panel-prompts", sourceId], queryFn: () => fetchSourcePrompts(sourceId), enabled: showResults, staleTime: 1000 * 60 * 60 });
 
     const filtered = useMemo(() => {
         const items = query.data || [];
@@ -522,12 +523,12 @@ function PromptSourceGroup({
     return (
         <div>
             <button type="button" onClick={onToggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs font-semibold opacity-75 transition hover:opacity-100">
-                <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+                <ChevronRight className={cn("size-3.5 transition-transform", showResults && "rotate-90")} />
                 <BookOpen className="size-3.5" />
                 <span className="min-w-0 flex-1 truncate">{sourceName}</span>
-                {open && query.isSuccess ? <span className="opacity-50">{filtered.length}</span> : null}
+                {showResults && query.isSuccess ? <span className="opacity-50">{filtered.length}</span> : null}
             </button>
-            {open ? (
+            {showResults ? (
                 <div className="px-1 pb-2 pt-1">
                     {query.isLoading ? (
                         <div className="flex justify-center py-6">

@@ -70,10 +70,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt(hasTextContent ? "" : node.metadata?.prompt || "");
         setPromptExpanded(false);
         setPromptComposerOpen(false);
-    }, [hasTextContent, node.id]);
+    }, [node.id]);
 
     useEffect(() => {
-        const nextPrompt = hasTextContent ? "" : node.metadata?.prompt || "";
+        if (hasTextContent) return;
+        const nextPrompt = node.metadata?.prompt || "";
         setPrompt((current) => (current === nextPrompt ? current : nextPrompt));
     }, [hasTextContent, node.metadata?.prompt]);
 
@@ -98,7 +99,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             return;
         }
         onGenerate(node.id, mode, text);
-        setPrompt("");
     };
 
     const collapsePromptEditorIfFocusLeft = () => {
