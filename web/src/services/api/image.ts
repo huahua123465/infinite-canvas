@@ -672,7 +672,7 @@ function cangyuanPromptAspectRatio(prompt?: string) {
 
 function cangyuanEditPrompt(prompt: string, referenceCount: number) {
     const referenceRule = referenceCount === 1 ? "必须以已上传的唯一参考图片作为原始画面" : "必须按 @图片N 与 multipart image 文件的上传顺序使用全部参考图片";
-    return `图像编辑硬约束：${referenceRule}；保留用户未明确要求修改的主体身份、人物数量、姿态、服装、场景、构图和画风，只修改用户明确提出的内容，禁止忽略参考图重新创作无关画面。\n\n${prompt}`;
+    return `图像编辑硬约束：${referenceRule}；保留用户未明确要求修改的主体身份、人物数量、姿态、服装、场景、构图和画风，只修改用户明确提出的内容；当目标宽高比与原图不同时，必须扩展画布并补全新增区域，不得为了保留原图构图而忽略目标宽高比；禁止忽略参考图重新创作无关画面。\n\n${prompt}`;
 }
 
 function cangyuanAspectRatio(size: string) {
@@ -750,11 +750,43 @@ async function requestCangyuanImageEdit(config: AiConfig, prompt: string, refere
     formData.set("model", config.model);
     formData.set("prompt", withSystemPrompt(config, cangyuanEditPrompt(prompt, references.length)));
     Object.entries(cangyuanImageOptions(config, quality, prompt)).forEach(([key, value]) => formData.set(key, value));
-    const files = await Promise.all(references.map(cangyuanImageFile));
+    const editReferences = references.length === 1 && !mask ? [await fitCangyuanEditCanvas(references[0], config, quality, prompt)] : references;
+    const files = await Promise.all(editReferences.map(cangyuanImageFile));
     files.forEach((file) => formData.append("image", file));
     if (mask) formData.set("mask", await cangyuanImageFile(mask));
     const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config), signal: options?.signal });
     return parseCangyuanImageResult(config, response.data, "edits", options);
+}
+
+async function fitCangyuanEditCanvas(reference: ReferenceImage, config: AiConfig, quality: string | undefined, prompt: string): Promise<ReferenceImage> {
+    const ratio = cangyuanPromptAspectRatio(prompt) || cangyuanAspectRatio(config.size);
+    if (!ratio) return reference;
+    const dataUrl = await imageToDataUrl(reference);
+    const image = await loadImage(dataUrl);
+    const targetRatio = parseImageRatio(ratio);
+    if (Math.abs(image.naturalWidth / image.naturalHeight - targetRatio.width / targetRatio.height) < 0.01) return reference;
+    const dimensions = parseImageDimensions(resolveSize(quality === "low" ? "low" : "medium", ratio));
+    if (!dimensions) return reference;
+    const canvas = document.createElement("canvas");
+    canvas.width = dimensions.width;
+    canvas.height = dimensions.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法创建目标比例图片画布");
+    const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+    const width = Math.round(image.naturalWidth * scale);
+    const height = Math.round(image.naturalHeight * scale);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, Math.round((canvas.width - width) / 2), Math.round((canvas.height - height) / 2), width, height);
+    return { ...reference, name: `${reference.name.replace(/\.[^.]+$/, "") || "reference"}-${ratio.replace(":", "x")}.png`, type: "image/png", dataUrl: canvas.toDataURL("image/png"), storageKey: undefined };
+}
+
+function loadImage(source: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("无法读取参考图片尺寸"));
+        image.src = source;
+    });
 }
 
 async function parseCangyuanImageResult(config: AiConfig, payload: ImageApiResponse, taskPath: "generations" | "edits", options?: RequestOptions) {
