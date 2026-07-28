@@ -997,6 +997,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         const answer = (await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
             input: toResponseInput(withSystemMessage(requestConfig, messages)),
+            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
         }, onDelta, options)).content || "没有返回内容";
         if (answer === "没有返回内容") onDelta(answer);
         return answer;
@@ -1014,6 +1015,7 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
         return await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
             input: toResponseInput(withSystemMessage(requestConfig, messages)),
+            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
             tools: tools.map(toResponseTool),
             tool_choice: toolChoice,
             parallel_tool_calls: false,

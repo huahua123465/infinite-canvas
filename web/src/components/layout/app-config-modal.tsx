@@ -423,6 +423,19 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 <Form.Item label="系统提示词" className="mb-0">
                                     <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
                                 </Form.Item>
+                                <Form.Item label="文本推理强度" extra="自动表示不主动传递推理强度，由模型或自定义调用脚本决定。" className="mt-4 mb-0">
+                                    <Select
+                                        value={config.reasoningEffort}
+                                        options={[
+                                            { value: "auto", label: "自动" },
+                                            { value: "low", label: "低" },
+                                            { value: "medium", label: "中" },
+                                            { value: "high", label: "高" },
+                                            { value: "xhigh", label: "极高" },
+                                        ]}
+                                        onChange={(value) => updateConfig("reasoningEffort", value)}
+                                    />
+                                </Form.Item>
                             </Form>
                         ),
                     },
