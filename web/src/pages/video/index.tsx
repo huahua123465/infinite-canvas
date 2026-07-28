@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
@@ -75,6 +75,7 @@ export default function VideoPage() {
     const { message } = App.useApp();
     const confirmVideoGeneration = useVideoGenerationPreflight();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -98,6 +99,7 @@ export default function VideoPage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [referenceDragTarget, setReferenceDragTarget] = useState<"image" | "video" | "audio" | null>(null);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
     const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
@@ -165,6 +167,25 @@ export default function VideoPage() {
         setReferences((value) => [...value, ...nextReferences]);
         setVideoReferences((value) => [...value, ...nextVideoReferences]);
         setAudioReferences((value) => [...value, ...nextAudioReferences]);
+    };
+
+    const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "image" | "video" | "audio") => {
+        event.preventDefault();
+        dragDepthRef.current += 1;
+        if (event.dataTransfer.types.includes("Files")) setReferenceDragTarget(target);
+    };
+
+    const handleReferenceDragLeave = (event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (!dragDepthRef.current) setReferenceDragTarget(null);
+    };
+
+    const handleReferenceDrop = (event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        dragDepthRef.current = 0;
+        setReferenceDragTarget(null);
+        void addReferences(event.dataTransfer.files);
     };
 
     const addReferencesFromClipboard = async () => {
@@ -494,7 +515,16 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div
+                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                    onDragEnter={(event) => handleReferenceDragEnter(event, "image")}
+                                    onDragOver={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = "copy";
+                                    }}
+                                    onDragLeave={handleReferenceDragLeave}
+                                    onDrop={handleReferenceDrop}
+                                >
                                     {references.map((item, index) => (
                                         <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
                                             <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
@@ -517,7 +547,16 @@ export default function VideoPage() {
                                         上传
                                     </Button>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div
+                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "video" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                    onDragEnter={(event) => handleReferenceDragEnter(event, "video")}
+                                    onDragOver={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = "copy";
+                                    }}
+                                    onDragLeave={handleReferenceDragLeave}
+                                    onDrop={handleReferenceDrop}
+                                >
                                     {videoReferences.map((item, index) => (
                                         <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
                                             <video src={item.url} className="size-full object-cover" muted preload="metadata" />
@@ -539,7 +578,16 @@ export default function VideoPage() {
                                         上传
                                     </Button>
                                 </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                <div
+                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "audio" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                    onDragEnter={(event) => handleReferenceDragEnter(event, "audio")}
+                                    onDragOver={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = "copy";
+                                    }}
+                                    onDragLeave={handleReferenceDragLeave}
+                                    onDrop={handleReferenceDrop}
+                                >
                                     {audioReferences.map((item, index) => (
                                         <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
                                             <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
