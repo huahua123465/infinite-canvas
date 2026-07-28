@@ -490,7 +490,7 @@ function buildCangyuanSeedancePrompt(prompt: string, images: ReferenceImage[], v
     const missing = labels.filter((label) => !new RegExp(`${label}(?!\\d)`, "i").test(text));
     const bindings = [
         ...images.map((item, index) => `@image${index + 1}=${referenceDisplayName(item.name, index)}（${referenceImageBindingDescription(item)}）`),
-        ...videos.map((item, index) => `@video${index + 1}=${referenceDisplayName(item.name, index)}（仅参考动作与运镜）`),
+        ...videos.map((item, index) => `@video${index + 1}=${referenceDisplayName(item.name, index)}（仅参考运镜、动作节奏、音乐与音效，不继承视频中的人物身份和外观）`),
         ...audios.map((item, index) => `@audio${index + 1}=${referenceDisplayName(item.name, index)}（仅参考声音与节奏）`),
     ];
     return bindings.length ? `参考素材绑定（顺序与实际上传数组一致）：${bindings.join("；")}。${missing.length ? `已绑定但正文未点名：${missing.join("、")}。` : ""}\n\n${text}` : text;
@@ -502,8 +502,8 @@ function referenceImageBindingDescription(image: ReferenceImage) {
     if (role === "lastFrame") return "尾帧参考，锁定结束构图、人物站位与画面状态";
     if (role === "scene") return "场景空间参考，锁定地点结构、陈设、材质与光线，不控制人物身份";
     if (role === "prop") return "关键道具参考，锁定道具外观、材质、尺寸与使用连续性，不控制人物身份";
-    if (role === "character") return "人物参考，锁定对应人物的身份、脸部、发型、服装、年龄状态与画风";
-    return "素材参考，仅锁定该素材对应主体的外观、材质与画风，不控制人物身份";
+    if (role === "character") return "独立人物参考，只锁定该图对应人物的身份、脸部、发型、服装、年龄状态与画风；不得与其他人物参考融合、互换或复制脸部";
+    return "独立主体参考；若画面含人物，只锁定该图对应人物的身份、脸部、发型、服装、年龄状态与画风，不得与其他参考融合、互换或复制脸部";
 }
 
 function referenceImageSemanticRole(image: ReferenceImage): VideoRequestReferenceSummary["role"] {
