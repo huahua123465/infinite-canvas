@@ -82,7 +82,7 @@ export function AppTopNav() {
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
                             <Tooltip title={agentPanelOpen ? "收起 Agent" : "打开 Agent"}><Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={toggleAgentPanel} aria-label="打开 Agent" /></Tooltip>
-                            <UserStatusActions />
+                            <UserStatusActions showConfig={false} />
                         </div>
                     </div>
                 </header>
