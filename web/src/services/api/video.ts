@@ -508,12 +508,24 @@ function apimartVideoRecord(payload: unknown): Record<string, unknown> {
 }
 
 function apimartVideoUrl(record: Record<string, unknown>) {
-    const directResult = typeof record.result === "string" ? record.result : "";
     const result = record.result && typeof record.result === "object" ? record.result as Record<string, unknown> : {};
-    const video = result.video && typeof result.video === "object" ? result.video as Record<string, unknown> : {};
-    const videos = Array.isArray(result.videos) ? result.videos : [];
-    const firstVideo = videos[0] && typeof videos[0] === "object" ? videos[0] as Record<string, unknown> : {};
-    return [directResult, record.video_url, record.result_url, result.video_url, result.url, video.url, firstVideo.url].find((value): value is string => typeof value === "string" && Boolean(value));
+    return [
+        record.result,
+        result.videos,
+        result.video,
+        record.video_url,
+        record.result_url,
+        result.video_url,
+        result.url,
+    ].map(apimartMediaUrl).find(Boolean) || "";
+}
+
+function apimartMediaUrl(value: unknown): string {
+    if (typeof value === "string") return /^https?:\/\//i.test(value) ? value : "";
+    if (Array.isArray(value)) return value.map(apimartMediaUrl).find(Boolean) || "";
+    if (!value || typeof value !== "object") return "";
+    const record = value as Record<string, unknown>;
+    return [record.url, record.video_url, record.result_url, record.videos, record.video].map(apimartMediaUrl).find(Boolean) || "";
 }
 
 function buildCangyuanSeedanceMiniPrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
