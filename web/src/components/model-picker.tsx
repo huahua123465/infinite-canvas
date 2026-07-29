@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { videoReferenceLimitsLabel, videoReferenceLimitsTitle } from "@/lib/video-model-capabilities";
 import { cangyuanPricingKey, fetchCangyuanModelPricing, findModelPricing, formatModelPricing, type ModelPricingIndex } from "@/services/api/model-pricing";
 import { modelOptionLabel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { apimartModelInfo, apimartSeedancePricing } from "@/lib/apimart-model-catalog";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -16,10 +17,11 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     estimateSeconds?: string | number;
+    estimateReferenceVideoSeconds?: number;
     onMissingConfig?: () => void;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", estimateSeconds, onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", estimateSeconds, estimateReferenceVideoSeconds = 0, onMissingConfig }: ModelPickerProps) {
     const [pricingByBaseUrl, setPricingByBaseUrl] = useState<Record<string, ModelPricingIndex>>({});
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
     const pricingKeys = useMemo(
@@ -39,10 +41,12 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         () =>
             options.map((model) => {
                 const channel = resolveModelChannel(config, model);
+                const apimart = channel.apiFormat === "apimart" ? apimartModelInfo(modelOptionName(model)) : null;
+                const apimartPricing = channel.apiFormat === "apimart" ? apimartSeedancePricing(modelOptionName(model), config.vquality, estimateSeconds, estimateReferenceVideoSeconds) : null;
                 const pricing = channel.apiFormat === "cangyuan" ? formatModelPricing(findModelPricing(pricingByBaseUrl[cangyuanPricingKey(channel.baseUrl)], modelOptionName(model)), estimateSeconds) : null;
-                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={pricing?.label} unitPrice={pricing?.unitLabel} priceTitle={pricing?.title} /> };
+                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={apimartPricing?.price || apimart?.price || pricing?.label} unitPrice={apimartPricing?.uploadedVideoPrice || pricing?.unitLabel} priceTitle={apimartPricing?.title || apimart?.priceTitle || pricing?.title} referenceLabel={apimart ? (apimart.references ? `${apimart.references.images}·${apimart.references.videos}·${apimart.references.audios}` : "待核对") : undefined} /> };
             }),
-        [capability, config, estimateSeconds, options, pricingByBaseUrl],
+        [capability, config, estimateReferenceVideoSeconds, estimateSeconds, options, pricingByBaseUrl],
     );
     const pricingOptionsKey = options.join("\n");
     const current = value || "";
@@ -84,15 +88,15 @@ function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
     return config.models.length ? `暂无匹配的${label}模型` : "请先到配置里添加渠道和模型";
 }
 
-function ModelLabel({ config, model, capability, price, unitPrice, priceTitle }: { config: AiConfig; model: string; capability?: ModelCapability; price?: string; unitPrice?: string; priceTitle?: string }) {
-    const showReferenceLimits = capability === "video";
+function ModelLabel({ config, model, capability, price, unitPrice, priceTitle, referenceLabel }: { config: AiConfig; model: string; capability?: ModelCapability; price?: string; unitPrice?: string; priceTitle?: string; referenceLabel?: string }) {
+    const showReferenceLimits = capability === "video" || Boolean(referenceLabel);
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={model} />
             <span className="min-w-0 truncate">{modelOptionLabel(config, model)}</span>
             {showReferenceLimits ? (
-                <span title={`${videoReferenceLimitsTitle(model)}；顺序为 图片·视频·音频`} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 text-[11px] font-medium leading-5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200">
-                    {videoReferenceLimitsLabel(model)}
+                <span title={`${referenceLabel ? `参考素材上限：${referenceLabel}` : videoReferenceLimitsTitle(model)}；顺序为 图片·视频·音频`} className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 text-[11px] font-medium leading-5 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-200">
+                    {referenceLabel || videoReferenceLimitsLabel(model)}
                 </span>
             ) : null}
             {price ? (

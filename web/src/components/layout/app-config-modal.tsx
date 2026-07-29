@@ -45,6 +45,8 @@ const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "Gemini", value: "gemini" },
     { label: "方舟 Ark", value: "ark" },
     { label: "沧元算力", value: "cangyuan" },
+    { label: "Top Image", value: "top-image" },
+    { label: "APIMart", value: "apimart" },
 ];
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
@@ -325,7 +327,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 <Form.Item label="API Key" extra={/openspeech\.bytedance\.com/i.test(channel.baseUrl) ? "火山 OpenSpeech 新版控制台填 API Key；旧版控制台填 APP ID|Access Token，不需要 Secret Key。" : undefined} className="mb-0">
                                                     <Input.Password value={channel.apiKey} onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })} />
                                                 </Form.Item>
-                                                <Form.Item label="模型列表" extra={channel.apiFormat === "ark" ? "方舟 Seedance 可填写模型 ID，或直接填写 Endpoint ID（ep-xxxx）" : undefined} className="mb-0 md:col-span-2">
+                                                <Form.Item label="模型列表" extra={channel.apiFormat === "ark" ? "方舟 Seedance 可填写模型 ID，或直接填写 Endpoint ID（ep-xxxx）" : channel.apiFormat === "apimart" ? "拉取时只保留项目已核对的图片和视频模型，避免文本、音乐和未适配模型混入选择器。" : undefined} className="mb-0 md:col-span-2">
                                                     <Select mode="tags" showSearch allowClear maxTagCount="responsive" placeholder={channel.apiFormat === "ark" ? "输入模型 ID 或 Endpoint ID（ep-xxxx），或点击拉取模型" : "输入模型名，或点击拉取模型"} value={channel.models} onChange={(models) => updateChannel(channel.id, { models })} />
                                                 </Form.Item>
                                             </div>
@@ -622,6 +624,8 @@ function apiFormatLabel(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return "Gemini";
     if (apiFormat === "ark") return "方舟 Ark";
     if (apiFormat === "cangyuan") return "沧元算力";
+    if (apiFormat === "top-image") return "Top Image";
+    if (apiFormat === "apimart") return "APIMart";
     return "OpenAI";
 }
 

@@ -2,8 +2,9 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
+import { apimartModelInfo } from "@/lib/apimart-model-catalog";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark" | "cangyuan";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "cangyuan" | "top-image" | "apimart";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ModelChannel = {
@@ -64,6 +65,8 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const CANGYUAN_BASE_URL = "https://ai.cangyuansuanli.cn";
+const TOP_IMAGE_BASE_URL = "https://sucai.luxvault.top";
+const APIMART_BASE_URL = "https://api.apimart.ai";
 const VOICEBOX_CHANNEL_ID = "local-voicebox";
 const VOICEBOX_MODEL_OPTION = `${VOICEBOX_CHANNEL_ID}${CHANNEL_MODEL_SEPARATOR}Voicebox`;
 
@@ -176,6 +179,11 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
 
 function channelModelMatchesCapability(channel: Pick<ModelChannel, "apiFormat">, model: string, capability?: ModelCapability) {
     if (capability === "video" && channel.apiFormat === "ark" && isArkEndpointModelName(model)) return true;
+    if (channel.apiFormat === "top-image") {
+        if (capability === "image") return modelOptionName(model) === "gpt-image-2";
+        if (capability === "video") return ["sd2-fast", "sd2.0满血版", "grok-single", "grok-multi"].includes(modelOptionName(model));
+    }
+    if (channel.apiFormat === "apimart") return !capability || apimartModelInfo(modelOptionName(model))?.capability === capability;
     return modelMatchesCapability(model, capability);
 }
 
@@ -391,6 +399,8 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "ark") return ARK_BASE_URL;
     if (apiFormat === "cangyuan") return CANGYUAN_BASE_URL;
+    if (apiFormat === "top-image") return TOP_IMAGE_BASE_URL;
+    if (apiFormat === "apimart") return APIMART_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
@@ -398,6 +408,8 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
     if (apiFormat === "gemini") return "gemini";
     if (apiFormat === "ark") return "ark";
     if (apiFormat === "cangyuan") return "cangyuan";
+    if (apiFormat === "top-image") return "top-image";
+    if (apiFormat === "apimart") return "apimart";
     return "openai";
 }
 
@@ -413,7 +425,13 @@ export function buildApiUrl(baseUrl: string, path: string) {
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
     normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
-    const apiBaseUrl = lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
+    const apiBaseUrl = lowerBaseUrl.endsWith("/openapi/v1")
+        ? normalizedBaseUrl
+        : lowerBaseUrl.includes("sucai.luxvault.top")
+          ? `${normalizedBaseUrl}/openapi/v1`
+          : lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3")
+            ? normalizedBaseUrl
+            : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
 }
 

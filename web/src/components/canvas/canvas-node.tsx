@@ -1307,7 +1307,7 @@ function buildVideoRequestAudit(metadata?: CanvasNodeMetadata) {
     const method = metadata.videoTaskRequestMethod || "POST";
     const url = metadata.videoTaskRequestUrl || fallbackVideoTaskRequestUrl(metadata);
     const model = metadata.videoTaskRequestModel || modelOptionName(metadata.videoTaskModel || metadata.model || "") || "未记录";
-    const route = metadata.videoTaskProvider === "cangyuan" ? "沧元视频" : metadata.videoTaskProvider === "seedance" ? "方舟 Seedance" : "OpenAI 兼容视频";
+    const route = metadata.videoTaskProvider === "cangyuan" ? "沧元视频" : metadata.videoTaskProvider === "seedance" ? "方舟 Seedance" : metadata.videoTaskProvider === "top-image" ? "Top Image 视频" : metadata.videoTaskProvider === "apimart" ? "APIMart 视频" : "OpenAI 兼容视频";
     const submittedAt = formatVideoTaskSubmittedAt(metadata.videoTaskSubmittedAt);
     const fields = metadata.videoTaskRequestFields?.join(", ") || "未记录（旧任务）";
     return {
@@ -1323,6 +1323,8 @@ function buildVideoRequestAudit(metadata?: CanvasNodeMetadata) {
 
 function fallbackVideoTaskRequestUrl(metadata: CanvasNodeMetadata) {
     if (metadata.videoTaskProvider === "seedance") return "/api/v3/contents/generations/tasks";
+    if (metadata.videoTaskProvider === "top-image") return "/openapi/v1/videos";
+    if (metadata.videoTaskProvider === "apimart") return "/v1/videos/generations";
     return metadata.videoTaskEndpoint === "video-generations" ? "/v1/video/generations" : "/v1/videos";
 }
 

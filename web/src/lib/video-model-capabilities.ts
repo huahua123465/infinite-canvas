@@ -1,6 +1,7 @@
 import { CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import { apimartModelInfo } from "@/lib/apimart-model-catalog";
 
 export type VideoReferenceLimits = Readonly<{
     images: number;
@@ -20,6 +21,9 @@ const GROK_VIDEO_15_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos
 const OMNI_IMAGE_REFERENCE_LIMITS: VideoReferenceLimits = { images: 5, videos: 0, audios: 0 };
 const OMNI_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 0, videos: 1, audios: 0 };
 const SORA_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0, audios: 0 };
+const TOP_IMAGE_FULL_REFERENCE_LIMITS: VideoReferenceLimits = { images: 4, videos: 3, audios: 1 };
+const TOP_IMAGE_SINGLE_REFERENCE_LIMITS: VideoReferenceLimits = { images: 1, videos: 0, audios: 0 };
+const TOP_IMAGE_MULTI_REFERENCE_LIMITS: VideoReferenceLimits = { images: 7, videos: 0, audios: 0 };
 const VEO_VIDEO_REFERENCE_LIMITS: VideoReferenceLimits = { images: 2, videos: 0, audios: 0 };
 const VEO_REFERENCE_VIDEO_LIMITS: VideoReferenceLimits = { images: 3, videos: 0, audios: 0 };
 // Mirrors the public-model referenceLimits exposed by Cangyuan's VIDEO pricing metadata.
@@ -44,11 +48,14 @@ const CANGYUAN_PUBLIC_VIDEO_REFERENCE_LIMITS: Record<string, VideoReferenceLimit
     "omni-v2v-no-water": OMNI_VIDEO_REFERENCE_LIMITS,
     "sora-2": SORA_VIDEO_REFERENCE_LIMITS,
     "sora-2-pro": SORA_VIDEO_REFERENCE_LIMITS,
+    "sd2.0满血版": TOP_IMAGE_FULL_REFERENCE_LIMITS,
+    "grok-single": TOP_IMAGE_SINGLE_REFERENCE_LIMITS,
+    "grok-multi": TOP_IMAGE_MULTI_REFERENCE_LIMITS,
 };
 
 export function videoReferenceCapability(model: string): VideoReferenceCapability | null {
     const name = modelOptionName(model).toLowerCase();
-    let documentedLimits = CANGYUAN_PUBLIC_VIDEO_REFERENCE_LIMITS[name] || null;
+    let documentedLimits = apimartModelInfo(name)?.references || CANGYUAN_PUBLIC_VIDEO_REFERENCE_LIMITS[name] || null;
     if (!documentedLimits && isCangyuanSd5SeedanceModel(name)) documentedLimits = CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS;
     else if (!documentedLimits && name.startsWith("seedance-2.0")) documentedLimits = seedanceModelFixedResolution(name) ? SEEDANCE_FIXED_REFERENCE_LIMITS : SEEDANCE_STANDARD_REFERENCE_LIMITS;
     else if (!documentedLimits && name.startsWith("grok-video-1.5")) documentedLimits = GROK_VIDEO_15_REFERENCE_LIMITS;

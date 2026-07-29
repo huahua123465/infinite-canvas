@@ -38,7 +38,7 @@ type VideoResponse = {
     status?: string;
     state?: string;
     progress?: number | string;
-    error?: { code?: string; message?: string };
+    error?: { code?: string; message?: string } | string | null;
     error_code?: string;
     message?: string;
     fail_reason?: string;
@@ -75,7 +75,7 @@ type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: strin
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = {
     id: string;
-    provider: "openai" | "seedance" | "cangyuan" | "script";
+    provider: "openai" | "seedance" | "cangyuan" | "top-image" | "apimart" | "script";
     model: string;
     cangyuanEndpoint?: "videos" | "video-generations";
     requestMethod?: "POST";
@@ -133,7 +133,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
     options?.onProgress?.({ percent: 16, text: `视频任务已创建：${modelOptionName(task.model)} · ${task.id}`, stage: "submitted" });
-    const delayMs = task.provider === "seedance" ? 30000 : task.provider === "cangyuan" ? 5000 : 2500;
+    const delayMs = task.provider === "seedance" || task.provider === "top-image" ? 30000 : task.provider === "cangyuan" || task.provider === "apimart" ? 5000 : 2500;
     const startedAt = Date.now();
     let pollRetryCount = 0;
     for (let attempt = 0; Date.now() - startedAt < VIDEO_MAX_WAIT_MS; attempt += 1) {
@@ -195,6 +195,12 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (requestConfig.apiFormat === "cangyuan" || isCangyuanSeedanceVideoRequest(requestConfig, selectedModel)) {
         return createCangyuanVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
+    if (requestConfig.apiFormat === "top-image") {
+        return createTopImageVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
+    if (requestConfig.apiFormat === "apimart") {
+        return createApimartVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
@@ -214,18 +220,13 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "cangyuan") return pollCangyuanVideoTask(requestConfig, task, options);
+    if (task.provider === "apimart") return pollApimartVideoTask(requestConfig, task, options);
     return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
 }
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) {
-        try {
-            return await uploadMediaFile(result.url, "video");
-        } catch {
-            return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
-        }
-    }
+    if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
     throw new Error("视频接口没有返回可播放的视频");
 }
 
@@ -303,7 +304,10 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data }, providerStatus: video.status };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: video.error?.message || "视频生成失败", providerStatus: video.status };
+        if (video.status === "failed" || video.status === "error" || video.status === "cancelled") {
+            const upstreamError = extractErrorMessage(video.error) || extractErrorMessage(video) || "上游没有返回具体失败原因";
+            return { status: "failed", error: `Top Image 视频生成失败（任务 ID：${task.id}）：${upstreamError}`, providerStatus: video.status };
+        }
         return { status: "pending", providerStatus: video.status };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
@@ -391,6 +395,125 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         await deleteTemporaryReferenceMedia([...imageUrls, ...referenceVideos].filter(isTemporaryReferenceMediaUrl));
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
+}
+
+async function createTopImageVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const requestModel = modelOptionName(model);
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
+    if (localVideoCount) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${localVideoCount} 条参考视频，生成结束后自动删除`, stage: "uploading-references" });
+    const publishedVideos = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
+    const body = new FormData();
+    body.set("model", requestModel);
+    body.set("prompt", prompt);
+    body.set("duration", String(normalizeCangyuanVideoDuration(config.videoSeconds)));
+    body.set("ratio", normalizeSeedanceRatio(config.size));
+    body.set("resolution", "720p");
+    files.forEach((file) => body.append("referenceImages", file));
+    publishedVideos.forEach((url) => body.append("referenceVideos", url));
+    audioReferences.forEach((audio) => {
+        if (!isPublicMediaUrl(audio.url)) throw new Error("Top Image 参考音频必须使用公网 HTTP(S) URL");
+        body.append("referenceAudios", audio.url);
+    });
+    try {
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
+        if (!created.id) throw new Error("Top Image 视频接口没有返回任务 ID");
+        return { id: created.id, provider: "top-image", model, requestMethod: "POST", requestUrl, requestModel, requestFields: ["model", "prompt", "duration", "ratio", "resolution", ...(files.length ? ["referenceImages"] : []), ...(videoReferences.length ? ["referenceVideos"] : []), ...(audioReferences.length ? ["referenceAudios"] : [])], temporaryReferenceUrls: publishedVideos.filter(isTemporaryReferenceMediaUrl) };
+    } catch (error) {
+        await deleteTemporaryReferenceMedia(publishedVideos.filter(isTemporaryReferenceMediaUrl));
+        throw new Error(readAxiosError(error, "Top Image 视频任务创建失败"));
+    }
+}
+
+async function createApimartVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const modelName = modelOptionName(model);
+    const localImageCount = references.filter((image) => !isPublicMediaUrl(image.url || image.dataUrl)).length;
+    const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
+    if (localImageCount || localVideoCount) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${localImageCount} 张参考图和 ${localVideoCount} 条参考视频，生成结束后自动删除`, stage: "uploading-references" });
+    const imageUrls = await resolveCangyuanReferenceImages(config, references, true, options?.signal);
+    let videoUrls: string[] = [];
+    try {
+        videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
+        const audioUrls = audioReferences.map((audio, index) => {
+            if (!isPublicMediaUrl(audio.url)) throw new Error(`APIMart 参考音频 ${index + 1} 必须使用公网 HTTP(S) URL`);
+            return audio.url;
+        });
+        const motionControl = modelName.includes("motion-control");
+        const payload = motionControl
+            ? {
+                model: modelName,
+                prompt,
+                image_url: imageUrls[0],
+                video_url: videoUrls[0],
+                keep_original_sound: "yes",
+                character_orientation: "image",
+                mode: "std",
+                watermark_info: { enabled: false },
+            }
+            : buildApimartVideoPayload(config, modelName, prompt, imageUrls, videoUrls, audioUrls);
+        if (motionControl && (imageUrls.length !== 1 || videoUrls.length !== 1 || audioUrls.length)) throw new Error(`${modelName} 必须且只能提供 1 张图片和 1 条参考视频，不支持参考音频`);
+        const requestUrl = aiApiUrl(config, "/videos/generations");
+        const response = (await axios.post<unknown>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data;
+        const taskId = apimartVideoTaskId(response);
+        if (!taskId) throw new Error(extractErrorMessage(response) || "APIMart 视频接口没有返回任务 ID");
+        return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl) };
+    } catch (error) {
+        await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl));
+        throw new Error(readAxiosError(error, "APIMart 视频任务创建失败"));
+    }
+}
+
+function buildApimartVideoPayload(config: AiConfig, model: string, prompt: string, imageUrls: string[], videoUrls: string[], audioUrls: string[]) {
+    const name = model.toLowerCase();
+    const duration = normalizeCangyuanVideoDuration(config.videoSeconds);
+    const ratio = normalizeSeedanceRatio(config.size);
+    const resolution = normalizeCangyuanSeedanceResolution(config.vquality);
+    const shared = { model, prompt, duration };
+    if (name.startsWith("doubao-seedance")) return { ...shared, size: ratio, resolution, generate_audio: boolConfig(config.videoGenerateAudio, true), ...(imageUrls.length ? { image_urls: imageUrls } : {}), ...(videoUrls.length ? { video_urls: videoUrls } : {}), ...(audioUrls.length ? { audio_urls: audioUrls } : {}) };
+    if (name.startsWith("grok-imagine")) return { ...shared, size: ratio, quality: resolution, ...(imageUrls.length ? { image_urls: imageUrls } : {}) };
+    if (name.startsWith("kling-video-o1") || name.startsWith("kling-v3-omni")) return { ...shared, aspect_ratio: ratio, mode: resolution === "1080p" ? "pro" : "std", ...(imageUrls.length ? { image_urls: imageUrls } : {}) };
+    if (name.startsWith("kling-")) return { ...shared, aspect_ratio: ratio, mode: resolution === "1080p" ? "pro" : "std", ...(imageUrls[0] ? { first_frame_image: imageUrls[0] } : {}), ...(imageUrls[1] ? { last_frame_image: imageUrls[1] } : {}) };
+    if (name.includes("hailuo")) return { ...shared, resolution, ...(imageUrls[0] ? { first_frame_image: imageUrls[0] } : {}) };
+    if (name.startsWith("veo")) return { ...shared, aspect_ratio: ratio, resolution, generate_audio: boolConfig(config.videoGenerateAudio, true), ...(imageUrls.length ? { image_urls: imageUrls } : {}) };
+    if (name.startsWith("sora")) return { ...shared, aspect_ratio: ratio, ...(imageUrls[0] ? { image_url: imageUrls[0] } : {}) };
+    return { ...shared, size: ratio, resolution, ...(imageUrls.length ? { image_urls: imageUrls } : {}), ...(videoUrls[0] ? { video_url: videoUrls[0] } : {}), ...(audioUrls[0] ? { audio_url: audioUrls[0] } : {}) };
+}
+
+async function pollApimartVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const payload = (await axios.get<unknown>(aiApiUrl(config, `/tasks/${encodeURIComponent(task.id)}`), { headers: aiHeaders(config), signal: options?.signal })).data;
+        const record = apimartVideoRecord(payload);
+        const status = String(record.status || "").toLowerCase();
+        const url = apimartVideoUrl(record);
+        if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: status, progress: normalizeProgress(record.progress) };
+        if (["failed", "error", "cancelled", "canceled"].includes(status)) return { status: "failed", error: `APIMart 视频生成失败（任务 ID：${task.id}）：${extractErrorMessage(record) || "上游没有返回具体原因"}`, providerStatus: status, progress: normalizeProgress(record.progress) };
+        return { status: "pending", providerStatus: status || "processing", progress: normalizeProgress(record.progress) };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "APIMart 视频任务查询失败"));
+    }
+}
+
+function apimartVideoTaskId(payload: unknown) {
+    const record = apimartVideoRecord(payload);
+    const value = record.task_id || record.id;
+    return typeof value === "string" ? value : "";
+}
+
+function apimartVideoRecord(payload: unknown): Record<string, unknown> {
+    const root = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const data = root.data;
+    if (Array.isArray(data)) return data[0] && typeof data[0] === "object" ? data[0] as Record<string, unknown> : root;
+    return data && typeof data === "object" ? data as Record<string, unknown> : root;
+}
+
+function apimartVideoUrl(record: Record<string, unknown>) {
+    const directResult = typeof record.result === "string" ? record.result : "";
+    const result = record.result && typeof record.result === "object" ? record.result as Record<string, unknown> : {};
+    const video = result.video && typeof result.video === "object" ? result.video as Record<string, unknown> : {};
+    const videos = Array.isArray(result.videos) ? result.videos : [];
+    const firstVideo = videos[0] && typeof videos[0] === "object" ? videos[0] as Record<string, unknown> : {};
+    return [directResult, record.video_url, record.result_url, result.video_url, result.url, video.url, firstVideo.url].find((value): value is string => typeof value === "string" && Boolean(value));
 }
 
 function buildCangyuanSeedanceMiniPrompt(prompt: string, images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
@@ -897,7 +1020,7 @@ async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
 async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
     let downloadError: unknown;
     try {
-        const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal });
+        const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal, timeout: 15_000 });
         await assertVideoBlob(response.data);
         return { blob: response.data };
     } catch (error) {

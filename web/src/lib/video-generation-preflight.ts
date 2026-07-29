@@ -54,6 +54,8 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const resolution = normalizedResolution(input.config.vquality);
     const requestConfig = resolveModelRequestConfig(input.config, selectedModel);
     const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
+    const isTopImage = requestConfig.apiFormat === "top-image";
+    const isApimart = requestConfig.apiFormat === "apimart";
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
     if (/@(?:image|图片)\d+/i.test(prompt) && !input.references.length) issues.push(blocked("prompt_image_reference_missing", "提示词引用了图片，但实际没有提交参考图", "请确认参考图从输入端连入视频节点后再生成。"));
     if (/@(?:video|视频)\d+/i.test(prompt) && !input.videoReferences.length) issues.push(blocked("prompt_video_reference_missing", "提示词引用了视频，但实际没有提交参考视频", "请确认参考视频从输入端连入视频节点后再生成。"));
@@ -137,6 +139,28 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         if (!["720p", "1080p"].includes(resolution)) issues.push(blocked("veo_resolution", "Veo 3.1 只支持 720p 或 1080p", "请修改视频分辨率。"));
         if (input.references.length > limits.images) issues.push(blocked("veo_images", `当前 Veo 模型最多支持 ${limits.images} 张参考图`, "请移除多余参考图。"));
         if (input.videoReferences.length || input.audioReferences.length) issues.push(blocked("veo_media", "Veo 3.1 不支持参考视频或参考音频", "请只保留提示词和参考图。"));
+    }
+
+    if (isTopImage) {
+        const limits = videoReferenceLimits(selectedModel);
+        if (limits) {
+            if (input.references.length > limits.images) issues.push(blocked("top_image_images", `当前 Top Image 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
+            if (input.videoReferences.length > limits.videos) issues.push(blocked("top_image_videos", `当前 Top Image 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));
+            if (input.audioReferences.length > limits.audios) issues.push(blocked("top_image_audios", `当前 Top Image 模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频。"));
+        }
+        if (duration < 4 || duration > (model === "grok-multi" ? 10 : 15)) issues.push(blocked("top_image_duration", `当前 Top Image 模型时长必须为 4-${model === "grok-multi" ? 10 : 15} 秒`, "请修改视频时长。"));
+        if (model === "grok-single" && input.references.length !== 1) issues.push(blocked("top_image_grok_single", "grok-single 必须且只能提供 1 张参考图", "请保留一张参考图。"));
+        if (model === "grok-multi" && (input.references.length < 2 || input.references.length > 7)) issues.push(blocked("top_image_grok_multi", "grok-multi 必须提供 2-7 张参考图", "请调整参考图数量。"));
+        if ((model === "grok-single" || model === "grok-multi") && (input.videoReferences.length || input.audioReferences.length)) issues.push(blocked("top_image_grok_media", "Top Image Grok 模型不支持参考视频或参考音频", "请移除视频和音频素材。"));
+    }
+    if (isApimart) {
+        const limits = videoReferenceLimits(selectedModel);
+        if (limits) {
+            if (input.references.length > limits.images) issues.push(blocked("apimart_images", `当前 APIMart 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
+            if (input.videoReferences.length > limits.videos) issues.push(blocked("apimart_videos", `当前 APIMart 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));
+            if (input.audioReferences.length > limits.audios) issues.push(blocked("apimart_audios", `当前 APIMart 模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频。"));
+        }
+        if (model.includes("motion-control") && (input.references.length !== 1 || input.videoReferences.length !== 1 || input.audioReferences.length)) issues.push(blocked("apimart_motion_control", "APIMart Motion Control 必须且只能提供 1 张人物图和 1 条动作视频", "请保留一张图片和一条视频，并移除参考音频。"));
     }
 
     if (model.startsWith("grok-video")) {

@@ -8,6 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import { APIMART_MODELS, apimartModelInfo } from "@/lib/apimart-model-catalog";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -758,6 +759,103 @@ async function requestCangyuanImageEdit(config: AiConfig, prompt: string, refere
     return parseCangyuanImageResult(config, response.data, "edits", options);
 }
 
+async function requestTopImageImages(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, count: number, options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const size = resolveRequestSize(quality, config.size);
+    if (!references.length && !mask) {
+        const response = await axios.post<ImageApiResponse>(
+            aiApiUrl(config, "/images/generations"),
+            { model: config.model, prompt: withSystemPrompt(config, prompt), n: Math.min(count, 4), ...(size ? { size } : {}), ...(quality ? { quality } : {}), output_format: IMAGE_OUTPUT_FORMAT },
+            { headers: aiHeaders(config, "application/json"), signal: options?.signal },
+        );
+        return parseTopImageResult(config, response.data, options);
+    }
+    if (!references.length) throw new Error("Top Image 图片编辑至少需要 1 张原图");
+    if (references.length > 10) throw new Error("Top Image 图片编辑最多支持 10 张原图");
+    const body = new FormData();
+    body.set("model", config.model);
+    body.set("prompt", withSystemPrompt(config, prompt));
+    body.set("n", String(Math.min(count, 4)));
+    if (size) body.set("size", size);
+    if (quality) body.set("quality", quality);
+    body.set("output_format", IMAGE_OUTPUT_FORMAT);
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    files.forEach((file) => body.append("image", file));
+    if (mask) body.set("mask", dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask) }));
+    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), body, { headers: aiHeaders(config), signal: options?.signal });
+    return parseTopImageResult(config, response.data, options);
+}
+
+async function requestApimartImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const limits = apimartModelInfo(config.model)?.references;
+    if (limits && references.length > limits.images) throw new Error(`${config.model} 参考图不能超过 ${limits.images} 张`);
+    const imageUrls = await Promise.all(references.map(imageToDataUrl));
+    const quality = normalizeQuality(config.quality);
+    const payload = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        n: count,
+        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+        ...(config.size ? { size: config.size } : {}),
+        ...(quality ? { resolution: quality === "low" ? "1k" : quality === "medium" ? "2k" : "4k" } : {}),
+    };
+    const response = await axios.post<unknown>(aiApiUrl(config, "/images/generations"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
+    const taskId = apimartTaskId(response.data);
+    if (!taskId) throw new Error(apimartError(response.data) || "APIMart 图片接口没有返回任务 ID");
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+        await delay(3_000, options?.signal);
+        const task = (await axios.get<unknown>(aiApiUrl(config, `/tasks/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal })).data;
+        const status = apimartTaskStatus(task);
+        if (["failed", "error", "cancelled", "canceled"].includes(status)) throw new Error(`APIMart 图片生成失败（任务 ID：${taskId}）：${apimartError(task) || "上游没有返回具体原因"}`);
+        const urls = apimartImageUrls(task);
+        if (urls.length) return urls.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
+    throw new Error(`APIMart 图片仍在生成中，任务 ID：${taskId}`);
+}
+
+function apimartTaskId(payload: unknown) {
+    const value = payload as { task_id?: unknown; id?: unknown; data?: unknown };
+    const nested = Array.isArray(value?.data) ? value.data[0] : value?.data;
+    const record = nested && typeof nested === "object" ? nested as { task_id?: unknown; id?: unknown } : {};
+    return [value?.task_id, value?.id, record.task_id, record.id].find((item): item is string => typeof item === "string" && Boolean(item.trim())) || "";
+}
+
+function apimartTaskStatus(payload: unknown) {
+    const value = payload as { status?: unknown; data?: unknown };
+    const nested = value?.data && !Array.isArray(value.data) && typeof value.data === "object" ? value.data as { status?: unknown } : {};
+    return String(nested.status || value?.status || "").toLowerCase();
+}
+
+function apimartError(payload: unknown) {
+    const value = payload as { error?: unknown; message?: unknown; msg?: unknown; data?: unknown };
+    const nested = value?.data && !Array.isArray(value.data) && typeof value.data === "object" ? value.data as { error?: unknown; message?: unknown } : {};
+    const candidate = nested.error || nested.message || value?.error || value?.message || value?.msg;
+    return typeof candidate === "string" ? candidate : candidate && typeof candidate === "object" && "message" in candidate ? String((candidate as { message?: unknown }).message || "") : "";
+}
+
+function apimartImageUrls(payload: unknown) {
+    const value = payload as { data?: { result?: { images?: Array<{ url?: string | string[] }> } }; result?: { images?: Array<{ url?: string | string[] }> } };
+    const images = value?.data?.result?.images || value?.result?.images || [];
+    return images.flatMap((item) => Array.isArray(item.url) ? item.url : item.url ? [item.url] : []);
+}
+
+async function parseTopImageResult(config: AiConfig, payload: ImageApiResponse, options?: RequestOptions) {
+    try {
+        return parseImagePayload(payload);
+    } catch (error) {
+        const taskId = readCangyuanTaskId(payload);
+        if (!taskId) throw error;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+            await delay(30_000, options?.signal);
+            const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/generations/${encodeURIComponent(taskId)}?_t=${Date.now()}`), { headers: aiHeaders(config), signal: options?.signal });
+            const status = readCangyuanStatus(response.data);
+            if (isCangyuanImageFailed(status)) throw new Error(response.data.error?.message || response.data.msg || "Top Image 图片生成失败");
+            if (isCangyuanImageCompleted(status)) return parseImagePayload(response.data);
+        }
+        throw new Error(`Top Image 图片仍在生成中，任务 ID：${taskId}`);
+    }
+}
+
 async function fitCangyuanEditCanvas(reference: ReferenceImage, config: AiConfig, quality: string | undefined, prompt: string): Promise<ReferenceImage> {
     const ratio = cangyuanPromptAspectRatio(prompt) || cangyuanAspectRatio(config.size);
     if (!ratio) return reference;
@@ -881,6 +979,20 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (requestConfig.apiFormat === "top-image") {
+        try {
+            return await requestTopImageImages(requestConfig, prompt, [], undefined, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "Top Image 图片请求失败"));
+        }
+    }
+    if (requestConfig.apiFormat === "apimart") {
+        try {
+            return await requestApimartImages(requestConfig, prompt, [], n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "APIMart 图片请求失败"));
+        }
+    }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
     const background = normalizeBackground(config.background);
@@ -941,6 +1053,21 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             return await requestCangyuanImages(requestConfig, requestPrompt, references, mask, n, options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (requestConfig.apiFormat === "top-image") {
+        try {
+            return await requestTopImageImages(requestConfig, requestPrompt, references, mask, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "Top Image 图片编辑失败"));
+        }
+    }
+    if (requestConfig.apiFormat === "apimart") {
+        if (mask) throw new Error("APIMart 当前已核对模型暂不支持画布蒙版编辑");
+        try {
+            return await requestApimartImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "APIMart 图片编辑失败"));
         }
     }
     const quality = normalizeQuality(config.quality);
@@ -1050,6 +1177,12 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 }
 
 export async function fetchChannelModels(channel: ModelChannel) {
+    if (channel.apiFormat === "apimart") {
+        const available = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat }).catch(() => []);
+        const availableNames = new Set(available.map((model) => model.toLowerCase()));
+        const filtered = APIMART_MODELS.filter((model) => !availableNames.size || availableNames.has(model.toLowerCase()));
+        return filtered.length ? filtered : APIMART_MODELS;
+    }
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }
 

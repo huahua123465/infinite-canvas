@@ -6497,6 +6497,8 @@ function videoTaskProviderFromConfig(config: AiConfig | undefined, model: string
     const requestConfig = resolveModelRequestConfig(config, model);
     if (requestConfig.apiFormat === "cangyuan") return "cangyuan";
     if (requestConfig.apiFormat === "ark") return "seedance";
+    if (requestConfig.apiFormat === "top-image") return "top-image";
+    if (requestConfig.apiFormat === "apimart") return "apimart";
     return "openai";
 }
 
