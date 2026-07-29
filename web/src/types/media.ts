@@ -19,6 +19,8 @@ export type ReferenceAudio = {
     durationMs?: number;
 };
 
+export type ApimartAvatarMode = "identity-lock" | "ordinary";
+
 export type VideoRequestReferenceSummary = {
     order: number;
     mediaType: "image" | "video" | "audio";

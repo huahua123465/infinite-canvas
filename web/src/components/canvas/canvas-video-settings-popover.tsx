@@ -7,6 +7,7 @@ import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeL
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelRequestConfig } from "@/stores/use-config-store";
 
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
@@ -25,6 +26,8 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChan
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const isKlingMotionControl = modelOptionName(config.model || config.videoModel).toLowerCase() === "kling-v3-motion-control"
+        && resolveModelRequestConfig(config, config.model || config.videoModel).apiFormat === "apimart";
 
     useEffect(() => {
         if (!open) return;
@@ -54,7 +57,9 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChan
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="truncate">
-                        {videoResolutionLabel(config.vquality, config.model || config.videoModel, config)} · {videoSizeLabel(config.size)} · {config.videoSeconds === "-1" && smartDurationLabel ? smartDurationLabel : videoSecondsLabel(config.videoSeconds, config.model || config.videoModel)}
+                        {isKlingMotionControl
+                            ? `${videoResolutionLabel(config.vquality, config.model || config.videoModel, config)} · 跟随参考视频`
+                            : `${videoResolutionLabel(config.vquality, config.model || config.videoModel, config)} · ${videoSizeLabel(config.size)} · ${config.videoSeconds === "-1" && smartDurationLabel ? smartDurationLabel : videoSecondsLabel(config.videoSeconds, config.model || config.videoModel)}`}
                     </span>
                 </Button>
             </span>

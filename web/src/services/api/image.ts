@@ -1178,10 +1178,7 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 
 export async function fetchChannelModels(channel: ModelChannel) {
     if (channel.apiFormat === "apimart") {
-        const available = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat }).catch(() => []);
-        const availableNames = new Set(available.map((model) => model.toLowerCase()));
-        const filtered = APIMART_MODELS.filter((model) => !availableNames.size || availableNames.has(model.toLowerCase()));
-        return filtered.length ? filtered : APIMART_MODELS;
+        return APIMART_MODELS;
     }
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }

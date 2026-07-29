@@ -50,6 +50,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     );
     const pricingOptionsKey = options.join("\n");
     const current = value || "";
+    const showApimartVideoGuide = capability === "video" && options.some((model) => resolveModelChannel(config, model).apiFormat === "apimart");
 
     useEffect(() => {
         if (!pricingKeys.length) return;
@@ -73,6 +74,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             value={current || undefined}
             placeholder={placeholder}
             options={selectOptions.length ? selectOptions : [{ value: "__empty__", label: emptyModelLabel(config, capability), disabled: true }]}
+            popupRender={(menu) => showApimartVideoGuide ? <><ApimartVideoModelGuide generationSeconds={estimateSeconds} referenceVideoSeconds={estimateReferenceVideoSeconds} />{menu}</> : menu}
             onOpenChange={(open) => {
                 if (open && !options.length && config.channelMode === "local") onMissingConfig?.();
             }}
@@ -80,6 +82,42 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             onChange={onChange}
         />
     );
+}
+
+function ApimartVideoModelGuide({ generationSeconds, referenceVideoSeconds }: { generationSeconds?: string | number; referenceVideoSeconds: number }) {
+    const seconds = Math.max(0, Number(generationSeconds) || 0);
+    const referenceSeconds = Math.max(0, referenceVideoSeconds);
+    return (
+        <div className="m-1 mb-2 rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-xs leading-5 text-slate-700 dark:border-sky-900/70 dark:bg-sky-950/70 dark:text-sky-100" onMouseDown={(event) => event.stopPropagation()}>
+            <details>
+                <summary className="cursor-pointer select-none font-semibold">APIMart 视频模型怎么选？参考时长与计费说明</summary>
+                <div className="mt-2 max-w-[620px] space-y-2">
+                    <div>
+                        <div className="font-semibold">没有参考视频</div>
+                        <div>Mini 成本最低；Fast 兼顾速度与效果；标准版支持更高分辨率。费用＝生成秒数 × 普通单价。</div>
+                    </div>
+                    <div>
+                        <div className="font-semibold">Seedance 连接参考视频</div>
+                        <div>最多 3 条，总时长需大于 1.8 秒且小于 15.2 秒，参考视频不可出现真人。费用＝（参考视频总时长＋生成时长）× 含视频单价。</div>
+                        <div>720P 单价：标准版普通 1.42 / 含视频 0.8584；Fast 普通 1.1416 / 含视频 0.684；Mini 普通 0.5712 / 含视频 0.3456 Credits/秒。</div>
+                    </div>
+                    <div>
+                        <div className="font-semibold">Kling v3 Motion Control</div>
+                        <div>用于 1 张人物图模仿 1 条动作视频，不能纯文生视频。当前以人物图片朝向为主，参考视频必须 3–10 秒；输出时长跟随参考视频。</div>
+                        <div>std：1.0288 Credits/秒，速度与质量均衡；pro：质量更高、通常更慢，公开文档未给独立单价，按实时结算显示。</div>
+                    </div>
+                    <div className="rounded-md bg-black/[0.04] px-2 py-1 dark:bg-white/[0.06]">
+                        当前估算输入：生成 {seconds || "未读取"} 秒{referenceSeconds ? `，参考视频 ${formatGuideNumber(referenceSeconds)} 秒` : "，未读取到参考视频时长"}。
+                    </div>
+                    <div className="opacity-70">选择建议：无参考视频选 Seedance；非真人多素材优先 Fast；真人动作迁移选 Kling v3。</div>
+                </div>
+            </details>
+        </div>
+    );
+}
+
+function formatGuideNumber(value: number) {
+    return Number(value.toFixed(2)).toString();
 }
 
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {

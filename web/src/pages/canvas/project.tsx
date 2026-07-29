@@ -4893,9 +4893,10 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
                 return;
             }
+            let videoConfirmation: Awaited<ReturnType<typeof confirmVideoGeneration>> = false;
             if (mode === "video") {
-                const confirmed = await confirmVideoGeneration({ config: generationConfig, prompt: effectivePrompt, references: generationContext.referenceImages, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios });
-                if (!confirmed || runController.signal.aborted) {
+                videoConfirmation = await confirmVideoGeneration({ config: generationConfig, prompt: effectivePrompt, references: generationContext.referenceImages, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios });
+                if (!videoConfirmation || runController.signal.aborted) {
                     finishGenerationRequest(nodeId, runController);
                     setRunningNodeId(null);
                     return;
@@ -5208,6 +5209,7 @@ function InfiniteCanvasPage() {
                         const video = await storeGeneratedVideo(
                             await requestVideoGeneration(generationConfig, effectivePrompt, videoReferenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
                                 signal: controller.signal,
+                                apimartAvatarMode: videoConfirmation?.apimartAvatarMode,
                                 onTaskCreated: (task) => setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, ...videoTaskMetadata(task) } } : node))),
                                 onProgress: (progress) => setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoGenerationProgress: progress } } : node))),
                             }),
@@ -5403,8 +5405,10 @@ function InfiniteCanvasPage() {
                     }
                 }
             }
+            let videoConfirmation: Awaited<ReturnType<typeof confirmVideoGeneration>> = false;
             if (node.type === CanvasNodeType.Video && !existingVideoTask) {
-                if (!(await confirmVideoGeneration({ config: generationConfig, prompt: videoPrompt, references: retryImages, videoReferences: context?.referenceVideos || [], audioReferences: retryAudios }))) return;
+                videoConfirmation = await confirmVideoGeneration({ config: generationConfig, prompt: videoPrompt, references: retryImages, videoReferences: context?.referenceVideos || [], audioReferences: retryAudios });
+                if (!videoConfirmation) return;
                 const nextNodes = nodesRef.current.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, clearVideoTaskMetadataPatch()) : item));
                 nodesRef.current = nextNodes;
                 setNodes(nextNodes);
@@ -5454,6 +5458,7 @@ function InfiniteCanvasPage() {
                               })
                             : requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], retryAudios, {
                                   signal: controller.signal,
+                                  apimartAvatarMode: videoConfirmation?.apimartAvatarMode,
                                   onTaskCreated: (task) => setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, ...videoTaskMetadata(task) } } : item))),
                                   onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))),
                               })),

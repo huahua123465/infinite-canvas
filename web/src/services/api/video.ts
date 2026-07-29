@@ -1,6 +1,7 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
 
+import { apimartAvatarCacheKey, getApimartAvatarAsset, setApimartAvatarAsset } from "@/services/apimart-avatar-storage";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
@@ -9,11 +10,11 @@ import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishRef
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isCangyuanSd5SeedanceModel, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { useAgentStore } from "@/stores/use-agent-store";
-import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, decodeChannelModel, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { runModelScript } from "@/services/api/model-script-runtime";
 import { resolveModelScript } from "@/stores/use-model-script-store";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
+import type { ApimartAvatarMode, ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
 
 type VideoResponseData = {
     id?: string;
@@ -84,11 +85,12 @@ export type VideoGenerationTask = {
     requestFields?: string[];
     requestSummary?: VideoRequestSummary;
     temporaryReferenceUrls?: string[];
+    apimartAvatarMode?: ApimartAvatarMode;
 };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "uploading-references" | "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
 export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
-type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void };
+type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void; apimartAvatarMode?: ApimartAvatarMode };
 export type VideoGenerationTaskState =
     | { status: "pending"; providerStatus?: string; progress?: number }
     | { status: "completed"; result: VideoGenerationResult; providerStatus?: string; progress?: number }
@@ -428,6 +430,7 @@ async function createTopImageVideoTask(config: AiConfig, model: string, prompt: 
 
 async function createApimartVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     const modelName = modelOptionName(model);
+    const channelId = `${decodeChannelModel(model)?.channelId || config.baseUrl}:${apimartCredentialFingerprint(config.apiKey)}`;
     const localImageCount = references.filter((image) => !isPublicMediaUrl(image.url || image.dataUrl)).length;
     const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
     if (localImageCount || localVideoCount) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${localImageCount} 张参考图和 ${localVideoCount} 条参考视频，生成结束后自动删除`, stage: "uploading-references" });
@@ -435,6 +438,10 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
     let videoUrls: string[] = [];
     try {
         videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
+        const requestPrompt = normalizeApimartPromptReferences(prompt);
+        const avatarImageUrls = options?.apimartAvatarMode !== "ordinary" && isApimartAvatarModel(modelName) && imageUrls.length && videoUrls.length
+            ? await resolveApimartAvatarImageUrls(config, channelId, references, imageUrls, options)
+            : imageUrls;
         const audioUrls = audioReferences.map((audio, index) => {
             if (!isPublicMediaUrl(audio.url)) throw new Error(`APIMart 参考音频 ${index + 1} 必须使用公网 HTTP(S) URL`);
             return audio.url;
@@ -443,25 +450,114 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
         const payload = motionControl
             ? {
                 model: modelName,
-                prompt,
-                image_url: imageUrls[0],
+                prompt: requestPrompt,
+                image_url: avatarImageUrls[0],
                 video_url: videoUrls[0],
                 keep_original_sound: "yes",
                 character_orientation: "image",
-                mode: "std",
+                mode: config.vquality.toLowerCase() === "pro" ? "pro" : "std",
                 watermark_info: { enabled: false },
             }
-            : buildApimartVideoPayload(config, modelName, prompt, imageUrls, videoUrls, audioUrls);
+            : buildApimartVideoPayload(config, modelName, requestPrompt, avatarImageUrls, videoUrls, audioUrls);
         if (motionControl && (imageUrls.length !== 1 || videoUrls.length !== 1 || audioUrls.length)) throw new Error(`${modelName} 必须且只能提供 1 张图片和 1 条参考视频，不支持参考音频`);
         const requestUrl = aiApiUrl(config, "/videos/generations");
         const response = (await axios.post<unknown>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data;
         const taskId = apimartVideoTaskId(response);
         if (!taskId) throw new Error(extractErrorMessage(response) || "APIMart 视频接口没有返回任务 ID");
-        return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl) };
+        return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl), apimartAvatarMode: options?.apimartAvatarMode };
     } catch (error) {
         await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl));
         throw new Error(readAxiosError(error, "APIMart 视频任务创建失败"));
     }
+}
+
+function normalizeApimartPromptReferences(prompt: string) {
+    return prompt.replace(/@image(\d+)/gi, "图片$1").replace(/@video(\d+)/gi, "视频$1").replace(/@audio(\d+)/gi, "音频$1");
+}
+
+function apimartCredentialFingerprint(value: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+    return (hash >>> 0).toString(36);
+}
+
+function isApimartAvatarModel(model: string) {
+    return /^doubao-seedance-2\.0(?:-fast)?$/i.test(model);
+}
+
+async function resolveApimartAvatarImageUrls(config: AiConfig, channelId: string, references: ReferenceImage[], imageUrls: string[], options?: RequestOptions) {
+    const indexes = references.flatMap((image, index) => image.referenceKind === "character" ? [index] : []);
+    if (!indexes.length && references.length === 1) indexes.push(0);
+    if (!indexes.length) return imageUrls;
+    const resolved = [...imageUrls];
+    for (const index of indexes) {
+        const reference = references[index];
+        const sourceKey = reference.storageKey || reference.url || reference.id;
+        const cacheKey = apimartAvatarCacheKey(channelId, sourceKey);
+        const cached = await getApimartAvatarAsset(cacheKey);
+        if (cached?.assetUrl.startsWith("asset://")) {
+            resolved[index] = cached.assetUrl;
+            continue;
+        }
+        options?.onProgress?.({ percent: 6, text: `正在提交人物参考图 ${index + 1} 的 APIMart 虚拟人像审核`, stage: "uploading-references", providerStatus: "avatar_submitting" });
+        const taskId = await createApimartAvatarTask(config, reference, imageUrls[index], options?.signal);
+        const assetUrl = await pollApimartAvatarTask(config, taskId, options);
+        await setApimartAvatarAsset(cacheKey, { taskId, assetUrl, updatedAt: Date.now() });
+        resolved[index] = assetUrl;
+    }
+    return resolved;
+}
+
+async function createApimartAvatarTask(config: AiConfig, reference: ReferenceImage, imageUrl: string, signal?: AbortSignal) {
+    try {
+        const payload = {
+            group: { name: "Infinite Canvas 人物素材", description: "画布人物身份参考" },
+            project_name: "infinite-canvas",
+            asset_type: "Image",
+            assets: [{ url: imageUrl, name: reference.name || "人物参考图" }],
+        };
+        const response = (await axios.post<unknown>(aiApiUrl(config, "/seedance2/private-avatar"), payload, { headers: aiHeaders(config, "application/json"), signal })).data;
+        const taskId = apimartVideoTaskId(response);
+        if (!taskId) throw new Error(extractErrorMessage(response) || "接口没有返回审核任务 ID");
+        return taskId;
+    } catch (error) {
+        throw new Error(readAxiosError(error, "APIMart 虚拟人像审核提交失败"));
+    }
+}
+
+async function pollApimartAvatarTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        let payload: unknown;
+        try {
+            payload = (await axios.get<unknown>(aiApiUrl(config, `/tasks/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config), signal: options?.signal })).data;
+        } catch (error) {
+            throw new Error(`APIMart 虚拟人像审核查询失败（任务 ID：${taskId}）：${readAxiosError(error, "查询失败")}`);
+        }
+        const record = apimartVideoRecord(payload);
+        const assetUrl = apimartAvatarAssetUrl(record);
+        if (assetUrl) return assetUrl;
+        const status = String(record.status || "").toLowerCase();
+        if (["failed", "error", "cancelled", "canceled"].includes(status)) throw new Error(`APIMart 虚拟人像审核失败（任务 ID：${taskId}）：${extractErrorMessage(record) || "上游没有返回具体原因"}`);
+        options?.onProgress?.({ percent: Math.min(14, 7 + Math.floor(attempt / 10)), text: `APIMart 虚拟人像审核中：${taskId}`, stage: "uploading-references", providerStatus: status || "avatar_processing" });
+        await delay(3000, options?.signal);
+    }
+    throw new Error(`APIMart 虚拟人像审核超时（任务 ID：${taskId}），请稍后重试`);
+}
+
+function apimartAvatarAssetUrl(record: Record<string, unknown>) {
+    const result = record.result && typeof record.result === "object" ? record.result as Record<string, unknown> : {};
+    const usableAssets = Array.isArray(result.usable_assets) ? result.usable_assets : [];
+    const assets = Array.isArray(result.assets) ? result.assets : [];
+    for (const candidate of [result.asset_url, ...usableAssets, ...assets]) {
+        if (typeof candidate === "string" && candidate.startsWith("asset://")) return candidate;
+        if (candidate && typeof candidate === "object") {
+            const item = candidate as Record<string, unknown>;
+            const status = String(item.status || "").toLowerCase();
+            if (typeof item.asset_url === "string" && item.asset_url.startsWith("asset://") && (!status || status === "active")) return item.asset_url;
+        }
+    }
+    return "";
 }
 
 function buildApimartVideoPayload(config: AiConfig, model: string, prompt: string, imageUrls: string[], videoUrls: string[], audioUrls: string[]) {

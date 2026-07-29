@@ -161,6 +161,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
             if (input.audioReferences.length > limits.audios) issues.push(blocked("apimart_audios", `当前 APIMart 模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频。"));
         }
         if (model.includes("motion-control") && (input.references.length !== 1 || input.videoReferences.length !== 1 || input.audioReferences.length)) issues.push(blocked("apimart_motion_control", "APIMart Motion Control 必须且只能提供 1 张人物图和 1 条动作视频", "请保留一张图片和一条视频，并移除参考音频。"));
+        if (model.includes("motion-control") && input.videoReferences[0]?.durationMs && (input.videoReferences[0].durationMs < 3000 || input.videoReferences[0].durationMs > 10000)) issues.push(blocked("apimart_motion_duration", "当前 Motion Control 以人物图片朝向为准，参考视频必须为 3-10 秒", "请裁剪动作视频到 3-10 秒。"));
     }
 
     if (model.startsWith("grok-video")) {

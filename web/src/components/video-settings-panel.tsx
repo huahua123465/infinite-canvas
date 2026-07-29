@@ -44,6 +44,9 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, onModelChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", smartDurationLabel = "智能", smartDurationHint = "由模型智能决定视频时长" }: VideoSettingsPanelProps) {
+    if (isApimartKlingV3MotionControl(config)) {
+        return <KlingMotionControlSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     if (isOmniImageVideoModel(config.model || config.videoModel) || isOmniVideoToVideoModel(config.model || config.videoModel)) {
         return <OmniVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
@@ -311,6 +314,29 @@ function isCangyuanSeedanceStandardModel(config: AiConfig, model: string) {
     return isCangyuanVideoChannel(config, model) && name.startsWith("seedance-2.0") && !seedanceModelFixedResolution(name);
 }
 
+function KlingMotionControlSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const mode = config.vquality.toLowerCase() === "pro" ? "pro" : "std";
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="生成模式" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        <OptionPill selected={mode === "std"} theme={theme} onClick={() => onConfigChange("vquality", "std")}>std 标准</OptionPill>
+                        <OptionPill selected={mode === "pro"} theme={theme} onClick={() => onConfigChange("vquality", "pro")}>pro 高质量</OptionPill>
+                    </div>
+                    <div className="text-xs leading-5 opacity-65">std 速度与质量均衡；pro 质量更高但通常更慢。输出时长跟随参考视频，不读取下方固定秒数。</div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function isApimartKlingV3MotionControl(config: AiConfig) {
+    const model = modelOptionName(config.model || config.videoModel).toLowerCase();
+    return model === "kling-v3-motion-control" && resolveModelRequestConfig(config, config.model || config.videoModel).apiFormat === "apimart";
+}
+
 function isCangyuanVideoChannel(config: AiConfig, model: string) {
     const requestConfig = resolveModelRequestConfig(config, model);
     return requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
@@ -318,6 +344,7 @@ function isCangyuanVideoChannel(config: AiConfig, model: string) {
 
 export function videoResolutionLabel(value: string, model = "", config?: AiConfig) {
     const modelName = modelOptionName(model);
+    if (config && isApimartKlingV3MotionControl(config)) return value.toLowerCase() === "pro" ? "pro 高质量" : "std 标准";
     if (isOmniImageVideoModel(modelName) || isOmniVideoToVideoModel(modelName)) return "720p";
     if (isSoraVideoModel(modelName)) return "模型自适应";
     if (isVeoVideoModel(modelName)) return ["720", "1080"].includes(normalizeVideoResolutionValue(value)) ? `${normalizeVideoResolutionValue(value)}p` : "1080p";
@@ -338,6 +365,7 @@ export function videoSizeLabel(value: string) {
 }
 
 export function videoSecondsLabel(value: string, model = "") {
+    if (modelOptionName(model).toLowerCase() === "kling-v3-motion-control") return "跟随参考视频";
     if (isOmniImageVideoModel(model) || isOmniVideoToVideoModel(model)) return "约10s";
     if (String(value).trim() === "-1") return "智能";
     return `${value || "6"}s`;

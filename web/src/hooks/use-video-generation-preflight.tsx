@@ -1,10 +1,13 @@
 import { useCallback } from "react";
-import { App } from "antd";
+import { App, Radio } from "antd";
 
 import { inspectVideoGenerationInput, type VideoPreflightInput, type VideoPreflightIssue } from "@/lib/video-generation-preflight";
 import { isCangyuanSd5SeedanceModel } from "@/lib/seedance-video";
 import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import type { ApimartAvatarMode } from "@/types/media";
+
+export type VideoGenerationConfirmation = { apimartAvatarMode?: ApimartAvatarMode };
 
 export function useVideoGenerationPreflight() {
     const { modal } = App.useApp();
@@ -16,31 +19,62 @@ export function useVideoGenerationPreflight() {
                 return false;
             }
             if (result.status === "passed") {
-                return new Promise<boolean>((resolve) => {
+                let apimartAvatarMode: ApimartAvatarMode = "identity-lock";
+                return new Promise<false | VideoGenerationConfirmation>((resolve) => {
                     modal.confirm({
                         title: "确认视频参考素材",
-                        content: <ReferenceSummary input={input} />,
+                        content: <><ReferenceSummary input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /></>,
                         okText: "确认生成",
                         cancelText: "返回调整",
                         width: 560,
-                        onOk: () => resolve(true),
+                        onOk: () => resolve({ apimartAvatarMode: showsApimartAvatarModeChoice(input) ? apimartAvatarMode : undefined }),
                         onCancel: () => resolve(false),
                     });
                 });
             }
-            return new Promise<boolean>((resolve) => {
+            let apimartAvatarMode: ApimartAvatarMode = "identity-lock";
+            return new Promise<false | VideoGenerationConfirmation>((resolve) => {
                 modal.confirm({
                     title: "生成前发现风险",
-                    content: <><ReferenceSummary input={input} /><IssueList issues={result.issues} /></>,
+                    content: <><ReferenceSummary input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /><IssueList issues={result.issues} /></>,
                     okText: "仍然生成",
                     cancelText: "返回调整",
                     width: 520,
-                    onOk: () => resolve(true),
+                    onOk: () => resolve({ apimartAvatarMode: showsApimartAvatarModeChoice(input) ? apimartAvatarMode : undefined }),
                     onCancel: () => resolve(false),
                 });
             });
         },
         [modal],
+    );
+}
+
+function showsApimartAvatarModeChoice(input: VideoPreflightInput) {
+    const model = modelOptionName(input.config.model || input.config.videoModel).toLowerCase();
+    const requestConfig = resolveModelRequestConfig(input.config, input.config.model || input.config.videoModel);
+    return requestConfig.apiFormat === "apimart"
+        && (model === "doubao-seedance-2.0" || model === "doubao-seedance-2.0-fast")
+        && input.references.length > 0
+        && input.videoReferences.length > 0;
+}
+
+function ApimartAvatarModeChoice({ input, onChange }: { input: VideoPreflightInput; onChange: (value: ApimartAvatarMode) => void }) {
+    if (!showsApimartAvatarModeChoice(input)) return null;
+    return (
+        <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5 text-sm">
+            <div className="font-medium">人物图片处理方式</div>
+            <Radio.Group className="mt-2 flex flex-col gap-2" defaultValue="identity-lock" onChange={(event) => onChange(event.target.value)}>
+                <Radio value="identity-lock">
+                    <span className="font-medium">身份锁定（推荐）</span>
+                    <span className="ml-2 text-xs opacity-65">先提交 APIMart 人像审核，通过后用身份资产生成</span>
+                </Radio>
+                <Radio value="ordinary">
+                    <span className="font-medium">普通参考</span>
+                    <span className="ml-2 text-xs opacity-65">跳过人像审核，直接提交图片；人物可能仍跟随参考视频首帧</span>
+                </Radio>
+            </Radio.Group>
+            <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">身份锁定会把人物图片上传至 APIMart 审核；审核未通过时不会创建正式视频任务。</div>
+        </div>
     );
 }
 
@@ -69,6 +103,7 @@ function actualReferenceFields(config: AiConfig, model: string, input: VideoPref
     const normalized = model.toLowerCase();
     const requestConfig = resolveModelRequestConfig(config, config.model || config.videoModel);
     const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
+    if (requestConfig.apiFormat === "apimart") return [input.references.length ? "image_urls" : "", input.videoReferences.length ? "video_urls" : "", input.audioReferences.length ? "audio_urls" : ""].filter(Boolean);
     if (isCangyuanSd5SeedanceModel(model)) {
         const framePair = isCangyuanSeedanceFramePair(input.references, input.videoReferences.length, input.audioReferences.length);
         return [framePair ? "reference_mode=frame" : input.references.length || input.videoReferences.length || input.audioReferences.length ? "reference_mode=media" : "", framePair ? "first_image_url" : "", framePair ? "last_image_url" : "", !framePair && input.references.length ? "reference_image_urls" : "", input.videoReferences.length ? "reference_videos" : "", input.audioReferences.length ? "reference_audios" : ""].filter(Boolean);
