@@ -24,7 +24,7 @@ import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType }
 import { buildMangaCharacterPromptNodes } from "@/lib/canvas/manga-character-card-import";
 import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
-import { buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
+import { buildCinemaDnaPromptInstruction, buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { auditStoryboardProductionContract, type StoryboardProductionContractStage } from "@/lib/canvas/storyboard-production-contract";
@@ -476,6 +476,21 @@ async function loadSeedance20SkillContext(): Promise<Seedance20SkillContext | nu
         const token = (localStorage.getItem("canvas-agent-token") || "").trim();
         if (!endpoint || !token) return null;
         const response = await fetch(`${endpoint}/api/skills/seedance-20/context?token=${encodeURIComponent(token)}`);
+        if (!response.ok) return null;
+        const data = (await response.json()) as { ok?: boolean } & Seedance20SkillContext;
+        return data.ok && data.files?.length ? data : null;
+    } catch {
+        return null;
+    }
+}
+
+async function loadCinemaDnaSkillContext(): Promise<Seedance20SkillContext | null> {
+    if (typeof window === "undefined") return null;
+    try {
+        const endpoint = (localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371").trim().replace(/\/+$/, "");
+        const token = (localStorage.getItem("canvas-agent-token") || "").trim();
+        if (!endpoint || !token) return null;
+        const response = await fetch(`${endpoint}/api/skills/cinema-dna/context?token=${encodeURIComponent(token)}`);
         if (!response.ok) return null;
         const data = (await response.json()) as { ok?: boolean } & Seedance20SkillContext;
         return data.ok && data.files?.length ? data : null;
@@ -4126,7 +4141,7 @@ function InfiniteCanvasPage() {
     );
 
     const rewritePromptWithAi = useCallback(
-        async (node: CanvasNodeData, prompt: string, requirement: string, selectedModel?: string) => {
+        async (node: CanvasNodeData, prompt: string, requirement: string, selectedModel?: string, skill?: "cinema-dna") => {
             const model = selectedModel || promptAssistantModel || effectiveConfig.textModel || effectiveConfig.model;
             const requestConfig = { ...effectiveConfig, model };
             if (!isAiConfigReady(requestConfig, model)) {
@@ -4141,7 +4156,11 @@ function InfiniteCanvasPage() {
                       .join("\n\n")
                 : "";
             if (node.type === CanvasNodeType.Script && !storySource) throw new Error("没有读取到连接剧本，请先把文本节点连接到 Script 节点");
-            const instruction = node.type === CanvasNodeType.Script
+            const cinemaDnaContext = skill === "cinema-dna" ? await loadCinemaDnaSkillContext() : null;
+            if (skill === "cinema-dna" && !cinemaDnaContext?.files?.length) throw new Error("未读取到 Cinema DNA 技能，请确认本地 Canvas Agent 已重启");
+            const instruction = skill === "cinema-dna"
+                ? buildCinemaDnaPromptInstruction(prompt || readNodePrompt(node), cinemaDnaContext!.files!.map((file) => file.content).join("\n\n"))
+                : node.type === CanvasNodeType.Script
                 ? buildStoryboardProjectSettingsInstruction(storyboardDirectorInstructionForNode(node), requirement, storySource)
                 : buildPromptAssistantInstruction(prompt || readNodePrompt(node), requirement);
             setNodes((prev) =>
@@ -4215,6 +4234,17 @@ function InfiniteCanvasPage() {
             }
         },
         [effectiveConfig, isAiConfigReady, openConfigDialog, promptAssistantModel],
+    );
+
+    const rewritePromptWithCinemaDna = useCallback(
+        (node: CanvasNodeData) => {
+            const prompt = readNodePrompt(node).trim();
+            if (!prompt) return message.warning("请先输入要生成的图片内容");
+            void rewritePromptWithAi(node, prompt, "", undefined, "cinema-dna")
+                .then(() => message.success("Cinema DNA 已生成电影化提示词，请选择替换或追加"))
+                .catch((error) => message.error(error instanceof Error ? error.message : "Cinema DNA 优化失败"));
+        },
+        [message, rewritePromptWithAi],
     );
 
     const downloadNodeImage = useCallback(
@@ -5871,6 +5901,7 @@ function InfiniteCanvasPage() {
                                         }}
                                         onStop={confirmStopGeneration}
                                         onPromptAssistant={openPromptAssistant}
+                                        onCinemaDna={rewritePromptWithCinemaDna}
                                         onApplyPromptAssistantPending={applyPendingPromptAssistantResult}
                                         onDiscardPromptAssistantPending={discardPromptAssistantPending}
                                         onImageSettingsOpenChange={(open) => {

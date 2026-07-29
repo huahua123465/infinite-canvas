@@ -64,6 +64,7 @@ export function startHttpServer() {
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
     app.get("/api/skills/screenwriting/context", route(async (_req, res) => res.json({ ok: true, ...(await loadScreenwritingContext()) })));
+    app.get("/api/skills/cinema-dna/context", route(async (_req, res) => res.json({ ok: true, ...(await loadCinemaDnaContext()) })));
     app.post("/api/apps/toonflow/open", route(async (_req, res) => {
         await openToonflow();
         res.status(202).json({ ok: true, message: "正在打开 ToonFlow" });
@@ -378,6 +379,31 @@ async function findScreenwritingRoot() {
         try {
             await fs.access(path.join(root, "SKILL.md"));
             await fs.access(path.join(root, "references", "automatic-story-planning.md"));
+            return root;
+        } catch {
+            // try next candidate
+        }
+    }
+    return "";
+}
+
+async function loadCinemaDnaContext() {
+    const root = await findCinemaDnaRoot();
+    if (!root) throw new Error("cinema-dna-21x9x3 skill not found; set CINEMA_DNA_SKILL_ROOT to the skill directory");
+    return { root, files: [{ path: "SKILL.md", content: await fs.readFile(path.join(root, "SKILL.md"), "utf8") }] };
+}
+
+async function findCinemaDnaRoot() {
+    const candidates = [
+        process.env.CINEMA_DNA_SKILL_ROOT || "",
+        path.resolve(process.cwd(), "cinema-dna-21x9x3"),
+        path.resolve(process.cwd(), "..", "cinema-dna-21x9x3"),
+        path.resolve(process.cwd(), "..", "..", "cinema-dna-21x9x3"),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+        const root = path.resolve(candidate);
+        try {
+            await fs.access(path.join(root, "SKILL.md"));
             return root;
         } catch {
             // try next candidate

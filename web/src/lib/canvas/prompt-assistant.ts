@@ -73,6 +73,21 @@ export function buildPromptAssistantInstruction(prompt: string, requirement: str
     ].join("\n");
 }
 
+export function buildCinemaDnaPromptInstruction(prompt: string, skillContent: string) {
+    return [
+        "你是 Cinema DNA 图片导演。严格按照下方技能规则，把用户当前提示词改写成一段可直接提交给图片模型的最终提示词。",
+        "只输出最终提示词正文，不要解释、分析、标题、Markdown 或评分。",
+        "保持用户明确指定的主体、人物身份、参考图绑定、@图片/@image 引用、画幅和修改目标；技能只增强电影判断、构图、视线流量、真实摄影、综合色和反 CG 约束。",
+        "用户要求单张图片时只输出单张提示词，不要擅自改成三联画；用户明确要求三联画时才规划三张独立镜头。",
+        "",
+        "【Cinema DNA 技能规则】",
+        skillContent.trim(),
+        "",
+        "【用户当前提示词】",
+        prompt.trim(),
+    ].join("\n");
+}
+
 export function buildStoryboardProjectSettingsInstruction(prompt: string, requirement: string, storySource: string) {
     return [
         "你是影视项目导演设定助手。请根据连接剧本的真实内容和用户追加要求，生成一份跨全片统一、可直接粘贴到 Script 节点的项目设定。",

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Clapperboard, Clipboard, ImagePlus, LoaderCircle, Maximize2, Minimize2, Plus, Replace, Sparkles, Square, X } from "lucide-react";
 import { App, Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -31,12 +31,13 @@ type CanvasNodePromptPanelProps = {
     mentionReferences?: CanvasResourceReference[];
     onImageSettingsOpenChange?: (open: boolean) => void;
     onPromptAssistant?: (node: CanvasNodeData) => void;
+    onCinemaDna?: (node: CanvasNodeData) => void;
     onApplyPromptAssistantPending?: (node: CanvasNodeData, mode: "append" | "replace") => void;
     onDiscardPromptAssistantPending?: (nodeId: string) => void;
     modeOverride?: CanvasNodeGenerationMode;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant, onApplyPromptAssistantPending, onDiscardPromptAssistantPending, modeOverride }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], onImageSettingsOpenChange, onPromptAssistant, onCinemaDna, onApplyPromptAssistantPending, onDiscardPromptAssistantPending, modeOverride }: CanvasNodePromptPanelProps) {
     const { message } = App.useApp();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -210,6 +211,17 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 {onPromptAssistant ? (
                     <Button className="!h-10 shrink-0 !rounded-full !px-3" icon={<Sparkles className="size-4" />} onClick={() => onPromptAssistant(node)}>
                         {isScriptNode ? "AI生成项目设定" : "AI改提示词"}
+                    </Button>
+                ) : null}
+                {mode === "image" && onCinemaDna ? (
+                    <Button
+                        className="!h-10 shrink-0 !rounded-full !px-3"
+                        icon={promptAssistantStatus === "loading" ? <LoaderCircle className="size-4 animate-spin" /> : <Clapperboard className="size-4" />}
+                        disabled={!prompt.trim() || promptAssistantStatus === "loading"}
+                        title="读取 Cinema DNA 技能并生成电影化提示词"
+                        onClick={() => onCinemaDna(node)}
+                    >
+                        Cinema DNA
                     </Button>
                 ) : null}
                 {mode === "image" ? (
