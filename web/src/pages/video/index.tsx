@@ -234,13 +234,13 @@ export default function VideoPage() {
         try {
             let task: VideoGenerationTask;
             try {
-                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences, { apimartAvatarMode: confirmation.apimartAvatarMode });
+                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences, { apimartAvatarMode: confirmation.apimartAvatarMode, apimartOmniElements: confirmation.apimartOmniElements });
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : "生成失败";
                 if (classifyVideoFailure(errorMessage).kind !== "service_busy") throw error;
                 message.info("生成服务繁忙，30 秒后自动重试一次");
                 await wait(30_000);
-                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences, { apimartAvatarMode: confirmation.apimartAvatarMode });
+                task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences, { apimartAvatarMode: confirmation.apimartAvatarMode, apimartOmniElements: confirmation.apimartOmniElements });
             }
             const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
             await saveLog(log, false);
@@ -406,7 +406,7 @@ export default function VideoPage() {
                     if (classifyVideoFailure(errorMessage).kind !== "service_busy" || currentLog.busyRetryCount) throw error;
                     message.info("生成服务繁忙，30 秒后自动重试一次");
                     await wait(30_000);
-                    const task = await createVideoGenerationTask(configOverride || taskConfig, currentLog.prompt, currentLog.references, currentLog.videoReferences, currentLog.audioReferences, { apimartAvatarMode: currentLog.task?.apimartAvatarMode });
+                    const task = await createVideoGenerationTask(configOverride || taskConfig, currentLog.prompt, currentLog.references, currentLog.videoReferences, currentLog.audioReferences, { apimartAvatarMode: currentLog.task?.apimartAvatarMode, apimartOmniElements: currentLog.task?.apimartOmniElements });
                     currentLog = { ...currentLog, task, busyRetryCount: 1, status: "生成中", error: undefined };
                     await saveLog(currentLog);
                 }

@@ -106,6 +106,11 @@ function ApimartVideoModelGuide({ generationSeconds, referenceVideoSeconds }: { 
                         <div>用于 1 张人物图模仿 1 条动作视频，不能纯文生视频。当前以人物图片朝向为主，参考视频必须 3–10 秒；输出时长跟随参考视频。</div>
                         <div>std：1.0288 Credits/秒，速度与质量均衡；pro：质量更高、通常更慢，公开文档未给独立单价，按实时结算显示。</div>
                     </div>
+                    <div>
+                        <div className="font-semibold">Kling V3 Omni 多角色替换</div>
+                        <div>用于把待编辑视频中的 1–3 个原角色分别替换为新人物，同时保留动作、站位、互动和运镜。12·1·0 表示最多 3 个主体 × 每主体 4 张图、1 条待编辑视频、0 条音频。</div>
+                        <div>每主体必须 2–4 张图，视频必须 3–10 秒；std=720P、pro=1080P、4k=4K。std 公开单价 0.672 Credits/秒，预计积分＝0.672 × 参考视频实际秒数；pro 与 4K 未公布独立单价，显示实时结算。</div>
+                    </div>
                     <div className="rounded-md bg-black/[0.04] px-2 py-1 dark:bg-white/[0.06]">
                         当前估算输入：生成 {seconds || "未读取"} 秒{referenceSeconds ? `，参考视频 ${formatGuideNumber(referenceSeconds)} 秒` : "，未读取到参考视频时长"}。
                     </div>

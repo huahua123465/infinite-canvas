@@ -4,7 +4,7 @@ import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeo
 import { imageToDataUrl } from "@/services/image-storage";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { ApimartOmniElement, ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 export type VideoPreflightIssue = {
     code: string;
@@ -19,6 +19,7 @@ export type VideoPreflightInput = {
     references: ReferenceImage[];
     videoReferences: ReferenceVideo[];
     audioReferences: ReferenceAudio[];
+    apimartOmniElements?: ApimartOmniElement[];
 };
 
 export type VideoPreflightResult = {
@@ -162,6 +163,8 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
         }
         if (model.includes("motion-control") && (input.references.length !== 1 || input.videoReferences.length !== 1 || input.audioReferences.length)) issues.push(blocked("apimart_motion_control", "APIMart Motion Control 必须且只能提供 1 张人物图和 1 条动作视频", "请保留一张图片和一条视频，并移除参考音频。"));
         if (model.includes("motion-control") && input.videoReferences[0]?.durationMs && (input.videoReferences[0].durationMs < 3000 || input.videoReferences[0].durationMs > 10000)) issues.push(blocked("apimart_motion_duration", "当前 Motion Control 以人物图片朝向为准，参考视频必须为 3-10 秒", "请裁剪动作视频到 3-10 秒。"));
+        if (model === "kling-v3-omni" && (input.references.length < 2 || input.references.length > 12 || input.videoReferences.length !== 1 || input.audioReferences.length)) issues.push(blocked("apimart_kling_omni_references", "Kling V3 Omni 人物替换需要 2–12 张人物图和且仅 1 条待编辑视频，不支持参考音频", "请连接每个人物 2–4 张图片（最多 3 人）和一条视频。"));
+        if (model === "kling-v3-omni" && input.videoReferences[0]?.durationMs && (input.videoReferences[0].durationMs < 3000 || input.videoReferences[0].durationMs > 10000)) issues.push(blocked("apimart_kling_omni_duration", "Kling V3 Omni 待编辑视频必须为 3–10 秒", "请裁剪待编辑视频到 3–10 秒。"));
     }
 
     if (model.startsWith("grok-video")) {

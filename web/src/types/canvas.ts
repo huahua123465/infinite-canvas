@@ -1,4 +1,4 @@
-import type { VideoRequestSummary } from "@/types/media";
+import type { ApimartOmniElement, VideoRequestSummary } from "@/types/media";
 
 export type Position = {
     x: number;
@@ -326,6 +326,7 @@ export type CanvasNodeMetadata = {
     videoTaskRequestModel?: string;
     videoTaskRequestFields?: string[];
     videoTaskRequestSummary?: VideoRequestSummary;
+    videoTaskApimartOmniElements?: ApimartOmniElement[];
     workspaceKind?: "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceStoryboardChapterId?: string;

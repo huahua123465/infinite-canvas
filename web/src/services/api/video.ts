@@ -14,7 +14,7 @@ import { buildApiUrl, decodeChannelModel, modelOptionName, resolveModelRequestCo
 import { runModelScript } from "@/services/api/model-script-runtime";
 import { resolveModelScript } from "@/stores/use-model-script-store";
 import type { ReferenceImage } from "@/types/image";
-import type { ApimartAvatarMode, ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
+import type { ApimartAvatarMode, ApimartOmniElement, ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
 
 type VideoResponseData = {
     id?: string;
@@ -86,11 +86,12 @@ export type VideoGenerationTask = {
     requestSummary?: VideoRequestSummary;
     temporaryReferenceUrls?: string[];
     apimartAvatarMode?: ApimartAvatarMode;
+    apimartOmniElements?: ApimartOmniElement[];
 };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "uploading-references" | "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
 export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
 export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
-type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void; apimartAvatarMode?: ApimartAvatarMode };
+type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void; apimartAvatarMode?: ApimartAvatarMode; apimartOmniElements?: ApimartOmniElement[] };
 export type VideoGenerationTaskState =
     | { status: "pending"; providerStatus?: string; progress?: number }
     | { status: "completed"; result: VideoGenerationResult; providerStatus?: string; progress?: number }
@@ -430,6 +431,7 @@ async function createTopImageVideoTask(config: AiConfig, model: string, prompt: 
 
 async function createApimartVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     const modelName = modelOptionName(model);
+    const omniReplacement = modelName.toLowerCase() === "kling-v3-omni";
     const channelId = `${decodeChannelModel(model)?.channelId || config.baseUrl}:${apimartCredentialFingerprint(config.apiKey)}`;
     const localImageCount = references.filter((image) => !isPublicMediaUrl(image.url || image.dataUrl)).length;
     const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
@@ -458,17 +460,55 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
                 mode: config.vquality.toLowerCase() === "pro" ? "pro" : "std",
                 watermark_info: { enabled: false },
             }
+            : omniReplacement
+                ? buildApimartKlingOmniPayload(config, modelName, prompt, references, imageUrls, videoUrls, audioUrls, options?.apimartOmniElements)
             : buildApimartVideoPayload(config, modelName, requestPrompt, avatarImageUrls, videoUrls, audioUrls);
         if (motionControl && (imageUrls.length !== 1 || videoUrls.length !== 1 || audioUrls.length)) throw new Error(`${modelName} 必须且只能提供 1 张图片和 1 条参考视频，不支持参考音频`);
         const requestUrl = aiApiUrl(config, "/videos/generations");
         const response = (await axios.post<unknown>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data;
         const taskId = apimartVideoTaskId(response);
         if (!taskId) throw new Error(extractErrorMessage(response) || "APIMart 视频接口没有返回任务 ID");
-        return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl), apimartAvatarMode: options?.apimartAvatarMode };
+        return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl), apimartAvatarMode: options?.apimartAvatarMode, apimartOmniElements: options?.apimartOmniElements };
     } catch (error) {
         await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl));
         throw new Error(readAxiosError(error, "APIMart 视频任务创建失败"));
     }
+}
+
+function buildApimartKlingOmniPayload(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], imageUrls: string[], videoUrls: string[], audioUrls: string[], elements?: ApimartOmniElement[]) {
+    if (videoUrls.length !== 1 || audioUrls.length) throw new Error("kling-v3-omni 人物替换必须且只能提供 1 条待编辑视频，不支持参考音频");
+    if (!elements?.length || elements.length > 3) throw new Error("kling-v3-omni 必须配置 1-3 个替换主体");
+    const referenceIndex = new Map(references.map((reference, index) => [reference.id, index]));
+    const used = new Set<string>();
+    const elementList = elements.map((element, index) => {
+        const name = element.name.trim();
+        const description = element.description.trim();
+        const urls = element.referenceIds.map((id) => {
+            if (used.has(id)) throw new Error(`主体图片不能重复分配：${id}`);
+            used.add(id);
+            const imageIndex = referenceIndex.get(id);
+            if (imageIndex === undefined) throw new Error(`主体 ${index + 1} 包含已失效的参考图`);
+            return imageUrls[imageIndex];
+        });
+        if (!name) throw new Error(`主体 ${index + 1} 名称不能为空`);
+        if (!description) throw new Error(`主体 ${name} 必须说明替换原视频中的谁`);
+        if (urls.length < 2 || urls.length > 4) throw new Error(`主体 ${name} 必须分配 2-4 张人物图片`);
+        return { name, description, element_input_urls: urls };
+    });
+    if (used.size !== references.length) throw new Error("所有沿入线人物图片都必须明确分配到一个主体");
+    const quality = config.vquality.toLowerCase();
+    const mode = quality === "4k" || quality === "2160p" ? "4k" : quality === "pro" || quality === "1080p" ? "pro" : "std";
+    const missingBindings = elementList.filter((element) => !prompt.includes(`@${element.name}`));
+    const boundPrompt = missingBindings.length
+        ? `${prompt.trim()}\n\n【角色一对一替换】${missingBindings.map((element) => `使用 @${element.name}（${element.description}）替换提示词所指的原视频角色`).join("；")}。保持原视频动作、站位、互动、遮挡顺序和运镜。`
+        : prompt;
+    return {
+        model,
+        prompt: boundPrompt,
+        mode,
+        element_list: elementList,
+        video_list: [{ video_url: videoUrls[0], refer_type: "base", keep_original_sound: boolConfig(config.videoGenerateAudio, true) ? "yes" : "no" }],
+    };
 }
 
 function normalizeApimartPromptReferences(prompt: string) {

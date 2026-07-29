@@ -5240,6 +5240,7 @@ function InfiniteCanvasPage() {
                             await requestVideoGeneration(generationConfig, effectivePrompt, videoReferenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
                                 signal: controller.signal,
                                 apimartAvatarMode: videoConfirmation?.apimartAvatarMode,
+                                apimartOmniElements: videoConfirmation?.apimartOmniElements,
                                 onTaskCreated: (task) => setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, ...videoTaskMetadata(task) } } : node))),
                                 onProgress: (progress) => setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoGenerationProgress: progress } } : node))),
                             }),
@@ -5437,7 +5438,7 @@ function InfiniteCanvasPage() {
             }
             let videoConfirmation: Awaited<ReturnType<typeof confirmVideoGeneration>> = false;
             if (node.type === CanvasNodeType.Video && !existingVideoTask) {
-                videoConfirmation = await confirmVideoGeneration({ config: generationConfig, prompt: videoPrompt, references: retryImages, videoReferences: context?.referenceVideos || [], audioReferences: retryAudios });
+                videoConfirmation = await confirmVideoGeneration({ config: generationConfig, prompt: videoPrompt, references: retryImages, videoReferences: context?.referenceVideos || [], audioReferences: retryAudios, apimartOmniElements: node.metadata?.videoTaskApimartOmniElements });
                 if (!videoConfirmation) return;
                 const nextNodes = nodesRef.current.map((item) => (item.id === node.id ? applyNodeConfigPatch(item, clearVideoTaskMetadataPatch()) : item));
                 nodesRef.current = nextNodes;
@@ -5489,6 +5490,7 @@ function InfiniteCanvasPage() {
                             : requestVideoGeneration(generationConfig, videoPrompt, retryImages, context?.referenceVideos || [], retryAudios, {
                                   signal: controller.signal,
                                   apimartAvatarMode: videoConfirmation?.apimartAvatarMode,
+                                  apimartOmniElements: videoConfirmation?.apimartOmniElements,
                                   onTaskCreated: (task) => setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, ...videoTaskMetadata(task) } } : item))),
                                   onProgress: (progress) => setNodes((prev) => prev.map((item) => (item.id === generationTargetId ? { ...item, metadata: { ...item.metadata, videoGenerationProgress: progress } } : item))),
                               })),
@@ -6490,6 +6492,7 @@ function clearVideoTaskMetadataPatch(): Partial<CanvasNodeMetadata> {
         videoTaskRequestModel: undefined,
         videoTaskRequestFields: undefined,
         videoTaskRequestSummary: undefined,
+        videoTaskApimartOmniElements: undefined,
         videoGenerationProgress: undefined,
     };
 }
@@ -6506,6 +6509,7 @@ function videoTaskMetadata(task: VideoGenerationTask): Partial<CanvasNodeMetadat
         videoTaskRequestModel: task.requestModel,
         videoTaskRequestFields: task.requestFields,
         videoTaskRequestSummary: task.requestSummary,
+        videoTaskApimartOmniElements: task.apimartOmniElements,
     };
 }
 
@@ -6525,6 +6529,7 @@ function videoTaskFromMetadata(metadata?: CanvasNodeMetadata, config?: AiConfig)
         requestModel: metadata.videoTaskRequestModel,
         requestFields: metadata.videoTaskRequestFields,
         requestSummary: metadata.videoTaskRequestSummary,
+        apimartOmniElements: metadata.videoTaskApimartOmniElements,
     };
 }
 

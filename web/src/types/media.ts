@@ -21,6 +21,12 @@ export type ReferenceAudio = {
 
 export type ApimartAvatarMode = "identity-lock" | "ordinary";
 
+export type ApimartOmniElement = {
+    name: string;
+    description: string;
+    referenceIds: string[];
+};
+
 export type VideoRequestReferenceSummary = {
     order: number;
     mediaType: "image" | "video" | "audio";

@@ -8,6 +8,7 @@ export type ApimartModelInfo = {
 type ApimartSeedancePrice = { regular: number; uploadedVideo: number };
 const APIMART_VIDEO_CREDITS_PER_SECOND: Record<string, number> = {
     "kling-v3-motion-control": 1.0288,
+    "kling-v3-omni": 0.672,
 };
 
 const APIMART_SEEDANCE_PRICES: Record<string, Partial<Record<"480p" | "720p" | "1080p" | "4k", ApimartSeedancePrice>>> = {
@@ -57,7 +58,7 @@ export const APIMART_MODEL_CATALOG: Record<string, ApimartModelInfo> = {
     "wan2.7": { capability: "video", price: "$0.0664/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准", references: { images: 1, videos: 1, audios: 1 } },
     "viduq3": { capability: "video", price: "$0.08/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准" },
     "wan2.5-preview": { capability: "video", price: "$0.0336/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准", references: { images: 1, videos: 0, audios: 0 } },
-    "kling-v3-omni": { capability: "video", price: "$0.0672/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准" },
+    "kling-v3-omni": { capability: "video", price: "0.672 Credits/秒", priceTitle: "多主体视频人物替换；1-3 个主体，每主体 2-4 张图，按待编辑视频实际时长计费", references: { images: 12, videos: 1, audios: 0 } },
     "grok-imagine-1.5-video-ext": { capability: "video", price: "$0.0068/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准", references: { images: 1, videos: 0, audios: 0 } },
     "kling-video-o1": { capability: "video", price: "$0.0672/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准" },
     "MiniMax-Hailuo-2.3": { capability: "video", price: "$0.0488/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准", references: { images: 1, videos: 0, audios: 0 } },
@@ -71,7 +72,7 @@ export const APIMART_MODEL_CATALOG: Record<string, ApimartModelInfo> = {
     "sora-2": { capability: "video", price: "$0.08/秒", priceTitle: "APIMart 模型广场公示价格；实际费用以账户结算为准", references: { images: 1, videos: 0, audios: 0 } },
 };
 
-export const APIMART_MODELS = ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "kling-v3-motion-control"];
+export const APIMART_MODELS = ["doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "kling-v3-motion-control", "kling-v3-omni"];
 
 export function apimartModelInfo(model: string) {
     const name = model.toLowerCase();
@@ -83,20 +84,22 @@ export function apimartSeedancePricing(model: string, resolution: string, genera
     if (!prices) {
         const unitPrice = APIMART_VIDEO_CREDITS_PER_SECOND[model.toLowerCase()];
         if (!unitPrice) return null;
-        if (model.toLowerCase().includes("motion-control") && resolution.toLowerCase() === "pro") {
+        const quality = resolution.toLowerCase();
+        if ((model.toLowerCase().includes("motion-control") && quality === "pro") || (model.toLowerCase() === "kling-v3-omni" && quality !== "std" && quality !== "720" && quality !== "720p")) {
             return {
-                price: "Pro 实时结算",
-                title: "Pro 为高质量模式，APIMart 当前公开单模型文档未给出独立 Credits 单价，请以任务实际结算为准。",
+                price: `${quality === "4k" ? "4K" : "Pro"} 实时结算`,
+                title: `${quality === "4k" ? "4K" : "Pro"} 为高质量模式，APIMart 当前公开单模型文档未给出独立 Credits 单价，请以任务实际结算为准。`,
             };
         }
-        const selectedSeconds = model.toLowerCase().includes("motion-control")
+        const followsReferenceVideo = model.toLowerCase().includes("motion-control") || model.toLowerCase() === "kling-v3-omni";
+        const selectedSeconds = followsReferenceVideo
             ? referenceVideoSeconds || Math.max(0, Number(generationSeconds) || 0)
             : referenceVideoSeconds ? Math.min(referenceVideoSeconds, 15) : Math.max(0, Number(generationSeconds) || 0);
         const total = selectedSeconds ? `${formatCredits(unitPrice * selectedSeconds)} Credits` : `${unitPrice} Credits/秒`;
         return {
             price: `≈${total}`,
             uploadedVideoPrice: `${unitPrice} Credits/秒`,
-            title: `${unitPrice} Credits/秒。${model.toLowerCase().includes("motion-control") ? "按参考视频实际时长计费" : referenceVideoSeconds ? "视频编辑按源视频时长计费，超过 15 秒按前 15 秒计算" : "按生成时长计费"}${selectedSeconds ? `：${unitPrice} × ${selectedSeconds}秒 = ${total}` : "；读取到素材时长后显示预计总积分"}。`,
+            title: `${unitPrice} Credits/秒。${followsReferenceVideo ? "按参考视频实际时长计费" : referenceVideoSeconds ? "视频编辑按源视频时长计费，超过 15 秒按前 15 秒计算" : "按生成时长计费"}${selectedSeconds ? `：${unitPrice} × ${selectedSeconds}秒 = ${total}` : "；读取到素材时长后显示预计总积分"}。`,
         };
     }
     const normalized = normalizeResolution(resolution);

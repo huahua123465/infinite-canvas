@@ -26,7 +26,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, onModelChan
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const isKlingMotionControl = modelOptionName(config.model || config.videoModel).toLowerCase() === "kling-v3-motion-control"
+    const isKlingMotionControl = ["kling-v3-motion-control", "kling-v3-omni"].includes(modelOptionName(config.model || config.videoModel).toLowerCase())
         && resolveModelRequestConfig(config, config.model || config.videoModel).apiFormat === "apimart";
 
     useEffect(() => {
