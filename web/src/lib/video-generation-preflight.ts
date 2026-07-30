@@ -144,6 +144,14 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
 
     if (isTopImage) {
         const limits = videoReferenceLimits(selectedModel);
+        const hasReferences = Boolean(input.references.length || input.videoReferences.length || input.audioReferences.length);
+        if (!limits && hasReferences) {
+            issues.push(blocked(
+                "top_image_undocumented_references",
+                `${modelOptionName(selectedModel)} 的参考素材能力未在 Top Image 接入文档中确认`,
+                "请移除参考素材做纯文本生成，或切换到文档明确支持图片、视频和音频参考的 sd2.0满血版。",
+            ));
+        }
         if (limits) {
             if (input.references.length > limits.images) issues.push(blocked("top_image_images", `当前 Top Image 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
             if (input.videoReferences.length > limits.videos) issues.push(blocked("top_image_videos", `当前 Top Image 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));

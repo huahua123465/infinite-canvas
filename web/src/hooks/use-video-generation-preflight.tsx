@@ -19,12 +19,12 @@ export function useVideoGenerationPreflight() {
                 return false;
             }
             if (result.status === "passed") {
-                let apimartAvatarMode: ApimartAvatarMode = "identity-lock";
+                let apimartAvatarMode: ApimartAvatarMode = "ordinary";
                 let apimartOmniElements: ApimartOmniElement[] = input.apimartOmniElements || [];
                 return new Promise<false | VideoGenerationConfirmation>((resolve) => {
                     modal.confirm({
                         title: "确认视频参考素材",
-                        content: <><ReferenceSummary input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /><ApimartOmniElementEditor input={input} onChange={(value) => { apimartOmniElements = value; }} /></>,
+                        content: <><ReferenceSummary input={input} /><ApimartSeedanceReferenceNotice input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /><ApimartOmniElementEditor input={input} onChange={(value) => { apimartOmniElements = value; }} /></>,
                         okText: "确认生成",
                         cancelText: "返回调整",
                         width: 680,
@@ -40,12 +40,12 @@ export function useVideoGenerationPreflight() {
                     });
                 });
             }
-            let apimartAvatarMode: ApimartAvatarMode = "identity-lock";
+            let apimartAvatarMode: ApimartAvatarMode = "ordinary";
             let apimartOmniElements: ApimartOmniElement[] = input.apimartOmniElements || [];
             return new Promise<false | VideoGenerationConfirmation>((resolve) => {
                 modal.confirm({
                     title: "生成前发现风险",
-                    content: <><ReferenceSummary input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /><ApimartOmniElementEditor input={input} onChange={(value) => { apimartOmniElements = value; }} /><IssueList issues={result.issues} /></>,
+                    content: <><ReferenceSummary input={input} /><ApimartSeedanceReferenceNotice input={input} /><ApimartAvatarModeChoice input={input} onChange={(value) => { apimartAvatarMode = value; }} /><ApimartOmniElementEditor input={input} onChange={(value) => { apimartOmniElements = value; }} /><IssueList issues={result.issues} /></>,
                     okText: "仍然生成",
                     cancelText: "返回调整",
                     width: 680,
@@ -160,19 +160,36 @@ function showsApimartAvatarModeChoice(input: VideoPreflightInput) {
         && input.videoReferences.length > 0;
 }
 
+function isApimartSeedanceModel(input: VideoPreflightInput) {
+    const model = modelOptionName(input.config.model || input.config.videoModel).toLowerCase();
+    const requestConfig = resolveModelRequestConfig(input.config, input.config.model || input.config.videoModel);
+    return requestConfig.apiFormat === "apimart"
+        && (model === "doubao-seedance-2.0" || model === "doubao-seedance-2.0-fast" || model === "doubao-seedance-2.0-mini");
+}
+
+function ApimartSeedanceReferenceNotice({ input }: { input: VideoPreflightInput }) {
+    if (!isApimartSeedanceModel(input) || (!input.references.length && !input.videoReferences.length)) return null;
+    return (
+        <div className="mb-3 rounded-lg border border-blue-500/25 bg-blue-500/[0.06] px-3 py-2.5 text-sm">
+            {input.references.length ? <div>真人参考图片可作为普通参考直接提交，不需要先做人像审核；多张图片会按当前顺序完整写入 <code>image_urls</code>。</div> : null}
+            {input.videoReferences.length ? <div className={input.references.length ? "mt-1 text-amber-700 dark:text-amber-300" : "text-amber-700 dark:text-amber-300"}>当前接入文档仍注明“参考视频不可出现真人”。系统不会做人脸检测或硬阻断，请确认参考视频符合渠道规则后再生成；参考视频会完整写入 <code>video_urls</code>。</div> : null}
+        </div>
+    );
+}
+
 function ApimartAvatarModeChoice({ input, onChange }: { input: VideoPreflightInput; onChange: (value: ApimartAvatarMode) => void }) {
     if (!showsApimartAvatarModeChoice(input)) return null;
     return (
         <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2.5 text-sm">
             <div className="font-medium">人物图片处理方式</div>
-            <Radio.Group className="mt-2 flex flex-col gap-2" defaultValue="identity-lock" onChange={(event) => onChange(event.target.value)}>
-                <Radio value="identity-lock">
-                    <span className="font-medium">身份锁定（推荐）</span>
-                    <span className="ml-2 text-xs opacity-65">先提交 APIMart 人像审核，通过后用身份资产生成</span>
-                </Radio>
+            <Radio.Group className="mt-2 flex flex-col gap-2" defaultValue="ordinary" onChange={(event) => onChange(event.target.value)}>
                 <Radio value="ordinary">
-                    <span className="font-medium">普通参考</span>
-                    <span className="ml-2 text-xs opacity-65">跳过人像审核，直接提交图片；人物可能仍跟随参考视频首帧</span>
+                    <span className="font-medium">普通参考（默认）</span>
+                    <span className="ml-2 text-xs opacity-65">真人图片可直接提交，不经过人像审核</span>
+                </Radio>
+                <Radio value="identity-lock">
+                    <span className="font-medium">身份锁定（可选）</span>
+                    <span className="ml-2 text-xs opacity-65">仅在需要身份资产时主动选择，并先提交 APIMart 人像审核</span>
                 </Radio>
             </Radio.Group>
             <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">身份锁定会把人物图片上传至 APIMart 审核；审核未通过时不会创建正式视频任务。</div>

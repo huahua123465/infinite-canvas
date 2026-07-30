@@ -298,7 +298,8 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
 
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const taskPath = task.provider === "top-image" ? `/videos/${task.id}?_t=${Date.now()}` : `/videos/${task.id}`;
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, taskPath), { headers: aiHeaders(config), signal: options?.signal })).data);
         const url = videoResultUrl(video);
         if (url) return { status: "completed", result: await videoResultFromUrl(url, options), providerStatus: video.status };
         if (video.status === "completed") {
@@ -402,29 +403,38 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
 
 async function createTopImageVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     const requestModel = modelOptionName(model);
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const localImageCount = references.filter((image) => !isPublicMediaUrl(image.url || image.dataUrl)).length;
     const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
-    if (localVideoCount) options?.onProgress?.({ percent: 4, text: `正在临时发布 ${localVideoCount} 条参考视频，生成结束后自动删除`, stage: "uploading-references" });
-    const publishedVideos = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
-    const body = new FormData();
-    body.set("model", requestModel);
-    body.set("prompt", prompt);
-    body.set("duration", String(normalizeCangyuanVideoDuration(config.videoSeconds)));
-    body.set("ratio", normalizeSeedanceRatio(config.size));
-    body.set("resolution", "720p");
-    files.forEach((file) => body.append("referenceImages", file));
-    publishedVideos.forEach((url) => body.append("referenceVideos", url));
-    audioReferences.forEach((audio) => {
-        if (!isPublicMediaUrl(audio.url)) throw new Error("Top Image 参考音频必须使用公网 HTTP(S) URL");
-        body.append("referenceAudios", audio.url);
-    });
+    if (localImageCount || localVideoCount) options?.onProgress?.({ percent: 4, text: `正在临时发布${localImageCount ? ` ${localImageCount} 张参考图` : ""}${localImageCount && localVideoCount ? "和" : ""}${localVideoCount ? ` ${localVideoCount} 条参考视频` : ""}，生成结束后自动删除`, stage: "uploading-references" });
+    let publishedImages: string[] = [];
+    let publishedVideos: string[] = [];
     try {
+        for (const image of references) publishedImages.push(await publishReferenceImage(image, options?.signal));
+        publishedVideos = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
+        const publishedAudios = audioReferences.map((audio) => {
+            if (!/^https:\/\//i.test(audio.url || "")) throw new Error("Top Image 参考音频必须使用公网 HTTPS URL");
+            return audio.url;
+        });
+        const framePair = isCangyuanSeedanceFramePair(references, videoReferences.length, audioReferences.length);
+        const firstFrameIndex = framePair ? references.findIndex((image) => image.videoReferenceRole === "firstFrame") : -1;
+        const lastFrameIndex = framePair ? references.findIndex((image) => image.videoReferenceRole === "lastFrame") : -1;
+        const payload = {
+            model: requestModel,
+            prompt,
+            duration: normalizeCangyuanVideoDuration(config.videoSeconds),
+            ratio: normalizeSeedanceRatio(config.size),
+            resolution: "720p",
+            ...(framePair ? { first_image: publishedImages[firstFrameIndex], last_image: publishedImages[lastFrameIndex] } : {}),
+            ...(!framePair && publishedImages.length ? { referenceImages: publishedImages } : {}),
+            ...(publishedVideos.length ? { referenceVideos: publishedVideos } : {}),
+            ...(publishedAudios.length ? { referenceAudios: publishedAudios } : {}),
+        };
         const requestUrl = aiApiUrl(config, "/videos");
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, body, { headers: aiHeaders(config), signal: options?.signal })).data);
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error("Top Image 视频接口没有返回任务 ID");
-        return { id: created.id, provider: "top-image", model, requestMethod: "POST", requestUrl, requestModel, requestFields: ["model", "prompt", "duration", "ratio", "resolution", ...(files.length ? ["referenceImages"] : []), ...(videoReferences.length ? ["referenceVideos"] : []), ...(audioReferences.length ? ["referenceAudios"] : [])], temporaryReferenceUrls: publishedVideos.filter(isTemporaryReferenceMediaUrl) };
+        return { id: created.id, provider: "top-image", model, requestMethod: "POST", requestUrl, requestModel, requestFields: Object.keys(payload), temporaryReferenceUrls: [...publishedImages, ...publishedVideos].filter(isTemporaryReferenceMediaUrl) };
     } catch (error) {
-        await deleteTemporaryReferenceMedia(publishedVideos.filter(isTemporaryReferenceMediaUrl));
+        await deleteTemporaryReferenceMedia([...publishedImages, ...publishedVideos].filter(isTemporaryReferenceMediaUrl));
         throw new Error(readAxiosError(error, "Top Image 视频任务创建失败"));
     }
 }
