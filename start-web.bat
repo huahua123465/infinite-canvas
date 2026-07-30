@@ -40,18 +40,16 @@ echo Checking Canvas Agent...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'http://127.0.0.1:17371/health' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
 if errorlevel 1 (
   if exist "%AGENT_DIR%\package.json" (
-    if not exist "%AGENT_DIR%\node_modules" (
-      echo Installing Canvas Agent dependencies...
-      pushd "%AGENT_DIR%"
-      call npm install
-      if errorlevel 1 (
-        popd
-        echo Canvas Agent npm install failed.
-        pause
-        exit /b 1
-      )
+    echo Installing or updating Canvas Agent dependencies...
+    pushd "%AGENT_DIR%"
+    call npm install
+    if errorlevel 1 (
       popd
+      echo Canvas Agent npm install failed.
+      pause
+      exit /b 1
     )
+    popd
     echo Starting local Canvas Agent from source...
     start "Infinite Canvas Agent" /D "%AGENT_DIR%" cmd /k "set CANVAS_URL=%CANVAS_URL%&& npm run dev"
   ) else (
