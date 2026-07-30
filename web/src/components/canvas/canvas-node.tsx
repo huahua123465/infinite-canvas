@@ -1172,7 +1172,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                 <div className="flex h-full w-full flex-col justify-center gap-3 p-5" style={{ background: theme.node.fill, color: theme.node.text }}>
                     <div className="flex items-center gap-2 text-red-300">
                         <AlertTriangle className="size-4" />
-                        <span className="text-sm font-semibold">{failureInfo.kind === "network" ? "生成未接回" : "生成失败"}</span>
+                        <span className="text-sm font-semibold">{failureInfo.kind === "submission_failed" ? "任务未确认提交" : failureInfo.kind === "network" ? "生成未接回" : "生成失败"}</span>
                     </div>
                     <div className="line-clamp-4 text-xs leading-5 opacity-75">{node.metadata?.errorDetails || "视频生成中断，可用任务 ID 查询平台结果。"}</div>
                     <div className="text-[11px] opacity-55">{failureInfo.label}：{failureInfo.advice}</div>
@@ -1202,7 +1202,7 @@ function VideoNodeContent({ node, theme, storyboardReferenceAssets, storyboardVi
                             }}
                             onMouseDown={(event) => event.stopPropagation()}
                         >
-                            填写任务ID
+                            {failureInfo.kind === "submission_failed" ? "平台已有任务时填写ID" : "填写任务ID"}
                         </button>
                     ) : null}
                     {taskRecoveryModal}

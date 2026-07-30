@@ -23,7 +23,7 @@ export async function publishReferenceVideo(video: ReferenceVideo, signal?: Abor
     if (cached?.url && cached.expiresAt > Date.now() + 10 * 60 * 1000) return cached.url;
     const stored = video.storageKey ? await getMediaBlob(video.storageKey) : null;
     const blob = stored || (video.url?.startsWith("blob:") || video.url?.startsWith("data:") ? await (await fetch(video.url, { signal })).blob() : null);
-    if (!blob) throw new Error(`参考视频“${video.name}”本地文件无法读取，请重新上传`);
+    if (!blob) throw new Error(`参考视频“${video.name}”本地文件无法读取，请重新上传；尚未创建付费视频任务`);
     const publishedBlob = normalize ? await normalizeReferenceVideo(blob, signal) : blob;
     return publishTemporaryMedia(publishedBlob, publishName, video.storageKey, "video/", signal);
 }
@@ -32,32 +32,45 @@ export async function publishReferenceImage(image: ReferenceImage, signal?: Abor
     const directUrl = image.url || image.dataUrl;
     if (/^https:\/\//i.test(directUrl || "")) return directUrl;
     const dataUrl = await imageToDataUrl(image);
-    if (!dataUrl) throw new Error(`参考图片“${image.name}”本地文件无法读取，请重新上传`);
-    const blob = await (await fetch(dataUrl, { signal })).blob();
+    if (!dataUrl) throw new Error(`参考图片“${image.name}”本地文件无法读取，请重新上传；尚未创建付费视频任务`);
+    let blob: Blob;
+    try {
+        blob = await (await fetch(dataUrl, { signal })).blob();
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(`参考图片“${image.name}”本地文件读取失败，尚未创建付费视频任务`);
+    }
     return publishTemporaryMedia(blob, image.name || "reference.png", image.storageKey, "image/", signal);
 }
 
 async function publishTemporaryMedia(blob: Blob, name: string, storageKey: string | undefined, expectedType: "video/" | "image/", signal?: AbortSignal) {
+    const mediaLabel = expectedType === "video/" ? "参考视频" : "参考图片";
     const uploadName = normalizedUploadName(name, blob.type, expectedType);
     const cacheKey = storageKey ? publishedMediaCacheKey(storageKey, uploadName) : "";
     const cached = cacheKey ? await cache.getItem<PublishedMedia>(cacheKey) : null;
     if (cached?.url && cached.expiresAt > Date.now() + 10 * 60 * 1000) return cached.url;
 
-    if (blob.size > 100 * 1024 * 1024) throw new Error(`参考素材“${name}”超过临时中转的 100MB 上限，请压缩后重试`);
+    if (blob.size > 100 * 1024 * 1024) throw new Error(`${mediaLabel}“${name}”超过临时中转的 100MB 上限，请压缩后重试；尚未创建付费视频任务`);
 
     const body = new FormData();
     body.append("files", blob, uploadName);
     body.append("expiryHours", "1");
-    const response = await fetch(TEMP_UPLOAD_URL, {
-        method: "POST",
-        body,
-        signal,
-    });
+    let response: Response;
+    try {
+        response = await fetch(TEMP_UPLOAD_URL, {
+            method: "POST",
+            body,
+            signal,
+        });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(`${mediaLabel}临时发布请求失败，尚未创建付费视频任务：${error instanceof Error ? error.message : "网络请求中断"}`);
+    }
     const payload = (await response.json().catch(() => null)) as TemporaryUploadResponse | null;
-    if (!response.ok) throw new Error(`参考视频临时发布失败（HTTP ${response.status}）：${uploadError(payload) || response.statusText}`);
+    if (!response.ok) throw new Error(`${mediaLabel}临时发布失败（HTTP ${response.status}），尚未创建付费视频任务：${uploadError(payload) || response.statusText}`);
 
     const published = normalizeTemporaryUpload(payload, uploadName);
-    if (!published) throw new Error("临时中转没有返回可公开访问的 HTTPS 素材地址");
+    if (!published) throw new Error(`${mediaLabel}临时中转没有返回可公开访问的 HTTPS 地址，尚未创建付费视频任务`);
     try {
         await assertPublishedMediaUrl(published.url, expectedType, signal);
     } catch (error) {
@@ -132,10 +145,17 @@ function normalizedUploadName(name: string, mimeType: string, expectedType: "vid
 }
 
 async function assertPublishedMediaUrl(url: string, expectedType: "video/" | "image/", signal?: AbortSignal) {
-    const response = await fetch(url, { method: "HEAD", signal });
-    if (!response.ok) throw new Error(`参考素材临时地址不可读取（HTTP ${response.status}），未创建付费视频任务`);
+    const mediaLabel = expectedType === "video/" ? "参考视频" : "参考图片";
+    let response: Response;
+    try {
+        response = await fetch(url, { method: "HEAD", signal });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error(`${mediaLabel}临时地址校验失败，尚未创建付费视频任务：${error instanceof Error ? error.message : "网络请求中断"}`);
+    }
+    if (!response.ok) throw new Error(`${mediaLabel}临时地址不可读取（HTTP ${response.status}），尚未创建付费视频任务`);
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
-    if (!contentType.startsWith(expectedType)) throw new Error(`参考素材临时地址返回了错误类型 ${contentType || "unknown"}，未创建付费视频任务`);
+    if (!contentType.startsWith(expectedType)) throw new Error(`${mediaLabel}临时地址返回了错误类型 ${contentType || "unknown"}，尚未创建付费视频任务`);
 }
 
 function temporaryMediaId(value: string) {

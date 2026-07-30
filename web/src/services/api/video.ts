@@ -89,7 +89,7 @@ export type VideoGenerationTask = {
     apimartOmniElements?: ApimartOmniElement[];
 };
 export type VideoGenerationProgress = { percent: number; text: string; stage: "uploading-references" | "submitting" | "submitted" | "queued" | "running" | "saving" | "failed"; providerStatus?: string };
-export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "timeout" | "network" | "unknown";
+export type VideoFailureKind = "input_invalid" | "policy_rejected" | "service_busy" | "upstream_rejected" | "submission_failed" | "timeout" | "network" | "unknown";
 export type VideoFailureInfo = { kind: VideoFailureKind; label: string; advice: string };
 type RequestOptions = { signal?: AbortSignal; onProgress?: (progress: VideoGenerationProgress) => void; onTaskCreated?: (task: VideoGenerationTask) => void; apimartAvatarMode?: ApimartAvatarMode; apimartOmniElements?: ApimartOmniElement[] };
 export type VideoGenerationTaskState =
@@ -173,6 +173,7 @@ export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGen
 export function classifyVideoFailure(message: string): VideoFailureInfo {
     const value = String(message || "").toLowerCase();
     const referenceImageLimit = readReferenceImageLimit(value);
+    if (/尚未创建付费视频任务|尚未取得任务\s*id|临时发布请求失败|临时地址校验失败|创建任务请求失败/.test(value)) return { kind: "submission_failed", label: "任务创建前中断", advice: "当前没有可查询的任务 ID；请按上方具体素材阶段检查后重试。若平台任务日志中已经出现任务，再手工填写该任务 ID。" };
     if (referenceImageLimit) return { kind: "upstream_rejected", label: "平台线路能力不一致", advice: `平台内部线路返回最多 ${referenceImageLimit} 张参考图，与模型广场公开能力不一致；前端未裁剪素材，请保留请求 ID 联系平台，或临时减少图片后重试。` };
     if (/no_account|服务繁忙|service busy|server busy|temporarily unavailable|资源不足|429|限流/.test(value)) return { kind: "service_busy", label: "服务繁忙", advice: "系统会自动等待后重试一次；仍失败时建议稍后再试。" };
     if (/请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元请求体解析失败", advice: "沧元异步上游未能解析请求体；请保留原始错误与请求 ID 后排查转发链路。" };
@@ -442,6 +443,7 @@ async function createTopImageVideoTask(config: AiConfig, model: string, prompt: 
 async function createApimartVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     const modelName = modelOptionName(model);
     const omniReplacement = modelName.toLowerCase() === "kling-v3-omni";
+    const motionControl = modelName.includes("motion-control");
     const channelId = `${decodeChannelModel(model)?.channelId || config.baseUrl}:${apimartCredentialFingerprint(config.apiKey)}`;
     const localImageCount = references.filter((image) => !isPublicMediaUrl(image.url || image.dataUrl)).length;
     const localVideoCount = videoReferences.filter((video) => !isPublicMediaUrl(video.url)).length;
@@ -449,7 +451,7 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
     const imageUrls = await resolveCangyuanReferenceImages(config, references, true, options?.signal);
     let videoUrls: string[] = [];
     try {
-        videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal, /^doubao-seedance-2\.0(?:-|$)/i.test(modelName));
+        videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal, motionControl || /^doubao-seedance-2\.0(?:-|$)/i.test(modelName));
         const requestPrompt = normalizeApimartPromptReferences(prompt);
         const avatarImageUrls = options?.apimartAvatarMode !== "ordinary" && isApimartAvatarModel(modelName) && imageUrls.length && videoUrls.length
             ? await resolveApimartAvatarImageUrls(config, channelId, references, imageUrls, options)
@@ -458,7 +460,6 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
             if (!isPublicMediaUrl(audio.url)) throw new Error(`APIMart 参考音频 ${index + 1} 必须使用公网 HTTP(S) URL`);
             return audio.url;
         });
-        const motionControl = modelName.includes("motion-control");
         const payload = motionControl
             ? {
                 model: modelName,
@@ -481,7 +482,9 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
         return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl), apimartAvatarMode: options?.apimartAvatarMode, apimartOmniElements: options?.apimartOmniElements };
     } catch (error) {
         await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl));
-        throw new Error(readAxiosError(error, "APIMart 视频任务创建失败", modelName, "apimart"));
+        const message = readAxiosError(error, "APIMart 视频任务创建失败", modelName, "apimart");
+        if (!/尚未创建付费视频任务/.test(message) && /failed to fetch|network error|connection|cors/i.test(message)) throw new Error(`APIMart 创建任务请求失败，尚未取得任务 ID：${message}`);
+        throw new Error(message);
     }
 }
 
