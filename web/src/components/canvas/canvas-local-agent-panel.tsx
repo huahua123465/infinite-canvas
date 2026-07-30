@@ -293,6 +293,13 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
         addMessage({ id: messageId, role: "user", text: text || "发送了图片", attachments: files });
         addEventLog("用户发送", { text, attachments: files.map(({ name, type, size }) => ({ name, type, size })) });
         try {
+            let threadId = useAgentStore.getState().activeThreadId;
+            if (!threadId) {
+                const created = await fetchAgentJson<AgentThreadResponse>(endpoint, token, "/agent/codex/threads/new", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+                threadId = created.thread?.id || created.workspace?.activeThreadId || "";
+                if (!threadId) throw new Error("新建对话失败");
+                setAgentState({ activeThreadId: threadId });
+            }
             const data = await fetchAgentJson<{ threadId?: string }>(endpoint, token, "/agent/codex/turn", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -301,7 +308,7 @@ export function CanvasLocalAgentPanel({ embedded, headless, autoConnect }: { emb
                     messageText: text || `发送了 ${files.length} 张图片`,
                     messageId,
                     clientId: clientIdRef.current,
-                    threadId: useAgentStore.getState().activeThreadId || undefined,
+                    threadId,
                     attachments: files.map(({ id, name, type, size, width, height, dataUrl }) => ({ id, name, type, size, width, height, dataUrl })),
                 }),
             });
