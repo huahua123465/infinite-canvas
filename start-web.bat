@@ -103,7 +103,16 @@ echo All local services have been checked or started by this launcher.
 echo Canvas:   http://127.0.0.1:%WEB_PORT%/
 echo Voicebox: http://127.0.0.1:17493/
 echo.
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%CANVAS_URL%' -UseBasicParsing -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }"
+if not errorlevel 1 (
+  echo Web dev server is already running. Opening the canvas...
+  start "" "%CANVAS_URL%"
+  exit /b 0
+)
+
 echo Starting web dev server...
+start "" "%CANVAS_URL%"
 call npm run dev -- --port %WEB_PORT%
 
 pause
