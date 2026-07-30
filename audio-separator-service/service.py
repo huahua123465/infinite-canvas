@@ -190,7 +190,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/jobs":
+        path = urlparse(self.path).path
+        if path == "/normalize-video":
+            self.normalize_video()
+            return
+        if path != "/jobs":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -220,6 +224,79 @@ class Handler(BaseHTTPRequestHandler):
             jobs[job_id] = Job(id=job_id, created_at=time.time())
         job_queue.put(job_id)
         self.send_json({"id": job_id}, HTTPStatus.ACCEPTED)
+
+    def normalize_video(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > MAX_UPLOAD_BYTES:
+            self.send_json({"error": "视频文件为空或超过 2GB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        extension = Path(self.headers.get("X-Filename", "video.mp4")).suffix.lower()
+        if extension not in {".mp4", ".mov", ".webm", ".mkv", ".avi"}:
+            extension = ".mp4"
+        job_dir = WORK_DIR / f"normalize-{uuid.uuid4().hex}"
+        job_dir.mkdir(parents=True)
+        source = job_dir / f"source{extension}"
+        output = job_dir / "reference.mp4"
+        try:
+            remaining = length
+            with source.open("wb") as target:
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    target.write(chunk)
+                    remaining -= len(chunk)
+            if remaining:
+                self.send_json({"error": "视频上传不完整"}, HTTPStatus.BAD_REQUEST)
+                return
+            converted = subprocess.run(
+                [
+                    str(FFMPEG_EXE),
+                    "-y",
+                    "-i",
+                    str(source),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a?",
+                    "-vf",
+                    "fps=30,scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "20",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                    str(output),
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if converted.returncode != 0 or not output.is_file():
+                detail = converted.stderr.decode("utf-8", errors="replace").strip()
+                logging.error("Video normalization failed: %s", detail)
+                self.send_json({"error": "参考视频无法转换为标准 H.264 MP4，请确认源文件完整"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                return
+            size = output.stat().st_size
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", 'attachment; filename="reference.mp4"')
+            self.end_headers()
+            with output.open("rb") as normalized:
+                shutil.copyfileobj(normalized, self.wfile)
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
 
     def do_DELETE(self) -> None:
         parts = urlparse(self.path).path.strip("/").split("/")

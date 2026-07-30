@@ -449,7 +449,7 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
     const imageUrls = await resolveCangyuanReferenceImages(config, references, true, options?.signal);
     let videoUrls: string[] = [];
     try {
-        videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal);
+        videoUrls = await publishCangyuanReferenceVideos(videoReferences, options?.signal, /^doubao-seedance-2\.0(?:-|$)/i.test(modelName));
         const requestPrompt = normalizeApimartPromptReferences(prompt);
         const avatarImageUrls = options?.apimartAvatarMode !== "ordinary" && isApimartAvatarModel(modelName) && imageUrls.length && videoUrls.length
             ? await resolveApimartAvatarImageUrls(config, channelId, references, imageUrls, options)
@@ -1490,7 +1490,7 @@ function safeJsonPreview(value: unknown) {
 
 function normalizeVideoErrorMessage(message: string, model = "", provider = "") {
     if (provider === "apimart" && /probe reference video duration|reference video duration/i.test(message)) {
-        return `APIMart 无法读取参考视频的公网地址或识别视频容器。请确认视频为完整的 MP4、MOV 或 WebM 文件后重试；本地视频会重新发布为带真实文件类型的 HTTPS 地址。\n\n原始错误：${message}`;
+        return `APIMart 无法读取参考视频的公网地址或识别视频容器。本地视频已自动标准化为 H.264 MP4 并以前置播放头发布；如仍失败，请更换完整视频源后重试。\n\n原始错误：${message}`;
     }
     const referenceImageLimit = readReferenceImageLimit(message);
     if (referenceImageLimit) return `平台内部线路返回最多 ${referenceImageLimit} 张参考图，与模型广场公开能力不一致；前端未裁剪素材，请保留请求 ID 联系平台，或临时减少图片后重试。\n\n原始错误：${message}`;
@@ -1603,8 +1603,8 @@ async function resolveCangyuanReferenceImages(config: AiConfig, images: Referenc
     throw failed.reason;
 }
 
-async function publishCangyuanReferenceVideos(videos: ReferenceVideo[], signal?: AbortSignal) {
-    const settled = await Promise.allSettled(videos.map((video) => publishReferenceVideo(video, signal)));
+async function publishCangyuanReferenceVideos(videos: ReferenceVideo[], signal?: AbortSignal, normalize = false) {
+    const settled = await Promise.allSettled(videos.map((video) => publishReferenceVideo(video, signal, normalize)));
     const urls = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failed = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (!failed) return urls;

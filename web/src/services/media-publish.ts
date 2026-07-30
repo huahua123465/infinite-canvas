@@ -11,14 +11,21 @@ type TemporaryUploadResponse = { success?: boolean; error?: string; files?: Arra
 const cache = localforage.createInstance({ name: "infinite-canvas", storeName: "published_media" });
 const TEMP_UPLOAD_URL = "https://tempfile.org/api/upload/local";
 const TEMP_MEDIA_ORIGIN = "https://tempfile.org";
+const LOCAL_MEDIA_SERVICE_URL = "http://127.0.0.1:17372";
 const DEFAULT_CACHE_MS = 45 * 60 * 1000;
 
-export async function publishReferenceVideo(video: ReferenceVideo, signal?: AbortSignal) {
+export async function publishReferenceVideo(video: ReferenceVideo, signal?: AbortSignal, normalize = false) {
     if (/^https:\/\//i.test(video.url || "")) return video.url;
+    const sourceName = video.name || "reference";
+    const publishName = normalize ? `${sourceName.replace(/\.[a-z0-9]+$/i, "")}.mp4` : sourceName;
+    const uploadName = normalizedUploadName(publishName, normalize ? "video/mp4" : "", "video/");
+    const cached = video.storageKey ? await cache.getItem<PublishedMedia>(publishedMediaCacheKey(video.storageKey, uploadName)) : null;
+    if (cached?.url && cached.expiresAt > Date.now() + 10 * 60 * 1000) return cached.url;
     const stored = video.storageKey ? await getMediaBlob(video.storageKey) : null;
     const blob = stored || (video.url?.startsWith("blob:") || video.url?.startsWith("data:") ? await (await fetch(video.url, { signal })).blob() : null);
     if (!blob) throw new Error(`参考视频“${video.name}”本地文件无法读取，请重新上传`);
-    return publishTemporaryMedia(blob, video.name || "reference.mp4", video.storageKey, "video/", signal);
+    const publishedBlob = normalize ? await normalizeReferenceVideo(blob, signal) : blob;
+    return publishTemporaryMedia(publishedBlob, publishName, video.storageKey, "video/", signal);
 }
 
 export async function publishReferenceImage(image: ReferenceImage, signal?: AbortSignal) {
@@ -32,7 +39,7 @@ export async function publishReferenceImage(image: ReferenceImage, signal?: Abor
 
 async function publishTemporaryMedia(blob: Blob, name: string, storageKey: string | undefined, expectedType: "video/" | "image/", signal?: AbortSignal) {
     const uploadName = normalizedUploadName(name, blob.type, expectedType);
-    const cacheKey = storageKey ? `v4:${TEMP_UPLOAD_URL}:${storageKey}:${uploadName}` : "";
+    const cacheKey = storageKey ? publishedMediaCacheKey(storageKey, uploadName) : "";
     const cached = cacheKey ? await cache.getItem<PublishedMedia>(cacheKey) : null;
     if (cached?.url && cached.expiresAt > Date.now() + 10 * 60 * 1000) return cached.url;
 
@@ -88,6 +95,32 @@ function normalizeTemporaryUpload(payload: TemporaryUploadResponse | null, fallb
         url: `${TEMP_MEDIA_ORIGIN}/${encodeURIComponent(file.id)}/download?filename=${encodeURIComponent(fileName)}`,
         expiresAt: typeof file.expiryTime === "number" ? file.expiryTime : Date.now() + DEFAULT_CACHE_MS,
     };
+}
+
+function publishedMediaCacheKey(storageKey: string, uploadName: string) {
+    return `v5:${TEMP_UPLOAD_URL}:${storageKey}:${uploadName}`;
+}
+
+async function normalizeReferenceVideo(blob: Blob, signal?: AbortSignal) {
+    let response: Response;
+    try {
+        response = await fetch(`${LOCAL_MEDIA_SERVICE_URL}/normalize-video`, {
+            method: "POST",
+            headers: { "Content-Type": blob.type || "video/mp4", "X-Filename": "reference-video.mp4" },
+            body: blob,
+            signal,
+        });
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
+        throw new Error("本地视频标准化服务未就绪，请重新运行 start-web.bat 后再试；尚未创建付费视频任务");
+    }
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || `本地参考视频标准化失败（HTTP ${response.status}），尚未创建付费视频任务`);
+    }
+    const normalized = await response.blob();
+    if (!normalized.size) throw new Error("本地参考视频标准化结果为空，尚未创建付费视频任务");
+    return new Blob([normalized], { type: "video/mp4" });
 }
 
 function normalizedUploadName(name: string, mimeType: string, expectedType: "video/" | "image/") {

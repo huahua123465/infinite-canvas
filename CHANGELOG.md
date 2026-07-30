@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [修复] APIMart Seedance 本地参考视频在提交前自动标准化为可探测的 H.264 `faststart` MP4，并恢复普通参考直接写入 `video_urls`，不再增加 Video Asset 审核中转。
+
 ## v0.11.0 - 2026-07-28
 
 + [新增] 提示词来源升级为标准 JSON 注册表，新增 Banana Prompt Quicker，并支持添加自定义 JSON 来源。
