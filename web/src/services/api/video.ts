@@ -481,7 +481,7 @@ async function createApimartVideoTask(config: AiConfig, model: string, prompt: s
         return { id: taskId, provider: "apimart", model, requestMethod: "POST", requestUrl, requestModel: modelName, requestFields: Object.keys(payload), temporaryReferenceUrls: [...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl), apimartAvatarMode: options?.apimartAvatarMode, apimartOmniElements: options?.apimartOmniElements };
     } catch (error) {
         await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls].filter(isTemporaryReferenceMediaUrl));
-        throw new Error(readAxiosError(error, "APIMart 视频任务创建失败"));
+        throw new Error(readAxiosError(error, "APIMart 视频任务创建失败", modelName, "apimart"));
     }
 }
 
@@ -1394,15 +1394,15 @@ function videoResultUrl(payload: VideoResponse | VideoResponseData | SeedanceTas
     return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
-function readAxiosError(error: unknown, fallback: string, model = "") {
+function readAxiosError(error: unknown, fallback: string, model = "", provider = "") {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError(error)) {
         const responseData = error.response?.data;
-        return normalizeVideoErrorMessage(extractErrorMessage(responseData) || statusMessage(error.response?.status, fallback), model);
+        return normalizeVideoErrorMessage(extractErrorMessage(responseData) || statusMessage(error.response?.status, fallback), model, provider);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     const message = error instanceof Error ? error.message : fallback;
-    return normalizeVideoErrorMessage(extractErrorMessage(message) || message, model);
+    return normalizeVideoErrorMessage(extractErrorMessage(message) || message, model, provider);
 }
 
 function videoPollingProgress(provider: VideoGenerationTask["provider"], status: string | undefined, attempt: number, progress?: number): VideoGenerationProgress {
@@ -1488,7 +1488,10 @@ function safeJsonPreview(value: unknown) {
     }
 }
 
-function normalizeVideoErrorMessage(message: string, model = "") {
+function normalizeVideoErrorMessage(message: string, model = "", provider = "") {
+    if (provider === "apimart" && /probe reference video duration|reference video duration/i.test(message)) {
+        return `APIMart 无法读取参考视频的公网地址或识别视频容器。请确认视频为完整的 MP4、MOV 或 WebM 文件后重试；本地视频会重新发布为带真实文件类型的 HTTPS 地址。\n\n原始错误：${message}`;
+    }
     const referenceImageLimit = readReferenceImageLimit(message);
     if (referenceImageLimit) return `平台内部线路返回最多 ${referenceImageLimit} 张参考图，与模型广场公开能力不一致；前端未裁剪素材，请保留请求 ID 联系平台，或临时减少图片后重试。\n\n原始错误：${message}`;
     if (/real person/i.test(message) || /真人人脸|真人/.test(message)) {

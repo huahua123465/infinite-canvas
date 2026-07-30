@@ -31,14 +31,15 @@ export async function publishReferenceImage(image: ReferenceImage, signal?: Abor
 }
 
 async function publishTemporaryMedia(blob: Blob, name: string, storageKey: string | undefined, expectedType: "video/" | "image/", signal?: AbortSignal) {
-    const cacheKey = storageKey ? `v3:${TEMP_UPLOAD_URL}:${storageKey}` : "";
+    const uploadName = normalizedUploadName(name, blob.type, expectedType);
+    const cacheKey = storageKey ? `v4:${TEMP_UPLOAD_URL}:${storageKey}:${uploadName}` : "";
     const cached = cacheKey ? await cache.getItem<PublishedMedia>(cacheKey) : null;
     if (cached?.url && cached.expiresAt > Date.now() + 10 * 60 * 1000) return cached.url;
 
     if (blob.size > 100 * 1024 * 1024) throw new Error(`参考素材“${name}”超过临时中转的 100MB 上限，请压缩后重试`);
 
     const body = new FormData();
-    body.append("files", blob, name);
+    body.append("files", blob, uploadName);
     body.append("expiryHours", "1");
     const response = await fetch(TEMP_UPLOAD_URL, {
         method: "POST",
@@ -48,7 +49,7 @@ async function publishTemporaryMedia(blob: Blob, name: string, storageKey: strin
     const payload = (await response.json().catch(() => null)) as TemporaryUploadResponse | null;
     if (!response.ok) throw new Error(`参考视频临时发布失败（HTTP ${response.status}）：${uploadError(payload) || response.statusText}`);
 
-    const published = normalizeTemporaryUpload(payload, name);
+    const published = normalizeTemporaryUpload(payload, uploadName);
     if (!published) throw new Error("临时中转没有返回可公开访问的 HTTPS 素材地址");
     try {
         await assertPublishedMediaUrl(published.url, expectedType, signal);
@@ -82,11 +83,19 @@ export function isTemporaryReferenceMediaUrl(value: string) {
 function normalizeTemporaryUpload(payload: TemporaryUploadResponse | null, fallbackName: string): PublishedMedia | null {
     const file = payload?.success ? payload.files?.[0] : null;
     if (!file?.id) return null;
-    const fileName = encodeURIComponent(file.name?.trim() || fallbackName);
+    const fileName = file.name?.trim() || fallbackName;
     return {
-        url: `${TEMP_MEDIA_ORIGIN}/${encodeURIComponent(file.id)}/download#${fileName}`,
+        url: `${TEMP_MEDIA_ORIGIN}/${encodeURIComponent(file.id)}/download?filename=${encodeURIComponent(fileName)}`,
         expiresAt: typeof file.expiryTime === "number" ? file.expiryTime : Date.now() + DEFAULT_CACHE_MS,
     };
+}
+
+function normalizedUploadName(name: string, mimeType: string, expectedType: "video/" | "image/") {
+    const extension = expectedType === "video/"
+        ? mimeType === "video/webm" ? "webm" : mimeType === "video/quicktime" ? "mov" : "mp4"
+        : mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
+    const baseName = name.trim().replace(/\.[a-z0-9]+$/i, "") || (expectedType === "video/" ? "reference" : "image");
+    return `${baseName}.${extension}`;
 }
 
 async function assertPublishedMediaUrl(url: string, expectedType: "video/" | "image/", signal?: AbortSignal) {

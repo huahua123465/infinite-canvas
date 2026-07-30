@@ -180,10 +180,12 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
 
 function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
     if (node.type !== CanvasNodeType.Video || (!node.metadata?.content && !node.metadata?.storageKey)) return null;
+    const mimeType = node.metadata.mimeType || "video/mp4";
+    const extension = mimeType === "video/webm" ? "webm" : mimeType === "video/quicktime" ? "mov" : "mp4";
     return {
         id: node.id,
-        name: `${node.title || node.id}.mp4`,
-        type: node.metadata.mimeType || "video/mp4",
+        name: `${node.title || node.id}.${extension}`,
+        type: mimeType,
         url: node.metadata.content,
         storageKey: node.metadata.storageKey,
         bytes: node.metadata.bytes,
