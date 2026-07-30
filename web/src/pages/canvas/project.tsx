@@ -657,6 +657,7 @@ function InfiniteCanvasPage() {
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);
     const toggleAgentPanel = useAgentStore((state) => state.togglePanel);
     const openAgentPanel = useAgentStore((state) => state.openPanel);
+    const setAgentState = useAgentStore((state) => state.setAgentState);
     const setAgentCanvasContext = useAgentStore((state) => state.setCanvasContext);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
@@ -904,6 +905,11 @@ function InfiniteCanvasPage() {
         };
         void restore();
     }, [hydrated, openProject, projectId, navigate]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        setAgentState({ activeThreadId: "", messages: [], tokenUsage: null, pendingTool: null, pendingApprovals: [] });
+    }, [projectId, projectLoaded, setAgentState]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "") || searchParams.has("agentUrl")) return;

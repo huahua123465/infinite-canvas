@@ -2,6 +2,9 @@
 
 ## Unreleased
 
++ [新增] 同步官方 v0.12.0 Canvas Agent：支持三档 Codex 权限与对话内审批、任务进度、调试日志、主动恢复历史和图片附件。
++ [优化] 重构 Agent 对话、思考摘要、工具卡片、过程时间线与长时间等待提示，并升级 Canvas Agent Codex CLI 至 0.145.0。
++ [修复] Agent 停止任务仅中断当前 turn，完善失败原因、历史恢复、图片预览与画布文本复制，同时保留现有 Script、Seedance、APIMart、Voicebox 和插件工作流。
 + [修复] APIMart Seedance 本地参考视频在提交前自动标准化为可探测的 H.264 `faststart` MP4，并恢复普通参考直接写入 `video_urls`，不再增加 Video Asset 审核中转。
 
 ## v0.11.0 - 2026-07-28
