@@ -660,6 +660,7 @@ function InfiniteCanvasPage() {
     const setAgentState = useAgentStore((state) => state.setAgentState);
     const setAgentCanvasContext = useAgentStore((state) => state.setCanvasContext);
     const containerRef = useRef<HTMLDivElement>(null);
+    const agentProjectIdRef = useRef(projectId);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const mangaCardInputRef = useRef<HTMLInputElement>(null);
     const mangaStoryboardInputRef = useRef<HTMLInputElement>(null);
@@ -910,6 +911,15 @@ function InfiniteCanvasPage() {
         if (!projectLoaded) return;
         setAgentState({ activeThreadId: "", messages: [], tokenUsage: null, pendingTool: null, pendingApprovals: [] });
     }, [projectId, projectLoaded, setAgentState]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        if (agentProjectIdRef.current !== projectId && localAgentConnected) {
+            const { url, token } = useAgentStore.getState();
+            void fetch(`${url.trim().replace(/\/+$/, "")}/agent/codex/threads/reset?token=${encodeURIComponent(token.trim())}`, { method: "POST" }).catch(() => undefined);
+        }
+        agentProjectIdRef.current = projectId;
+    }, [localAgentConnected, projectId, projectLoaded]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "") || searchParams.has("agentUrl")) return;
