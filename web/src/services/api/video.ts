@@ -179,6 +179,7 @@ export function classifyVideoFailure(message: string): VideoFailureInfo {
     if (/请求体不是合法\s*json|invalid_request.*json/.test(value)) return { kind: "upstream_rejected", label: "沧元请求体解析失败", advice: "沧元异步上游未能解析请求体；请保留原始错误与请求 ID 后排查转发链路。" };
     if (/fail_to_fetch_task/.test(value)) return { kind: "upstream_rejected", label: "沧元任务转发失败", advice: "请先查看原始错误中的 detail；若没有更具体原因，再联系平台核对当前模型线路。" };
     if (/纯色|无明显主体|分辨率过低|不适合生成视频|invalid image|image quality|low resolution/.test(value)) return { kind: "input_invalid", label: "参考图不适合", advice: "请更换主体清晰、分辨率更高的参考图后重新生成。" };
+    if (/prohibited words or images|flagged as containing prohibited/.test(value)) return { kind: "policy_rejected", label: "提示词或参考素材被火山官方审核拦截", advice: "上游没有返回具体触发项。建议复制当前提示词，使用“AI改提示词”分析可能的违禁表达并改成中性描述；若提示词调整后仍失败，再逐项检查参考图片和参考视频。" };
     if (/内容策略|内容审查|策略拦截|敏感|违禁|审核拒绝|policy|moderation|safety|sensitive|real person|真人人脸|真人/.test(value)) return { kind: "policy_rejected", label: "内容策略拦截", advice: "原任务已被平台终止，查询不会改变结果。请先移除真人正脸、版权 IP 或敏感题材，换用更中性的提示词或非写实参考图后再创建新任务。" };
     if (/leonardo|upstream.*reject|上游.*拒绝|无任何输出|no output/.test(value)) return { kind: "upstream_rejected", label: "上游拒绝", advice: "请调整提示词或参考图；必要时手动切换到其他明确支持的模型。" };
     if (/timeout|超时|expired|长时间未完成/.test(value)) return { kind: "timeout", label: "任务等待超时", advice: "任务 ID 已保留，请优先查询原任务，不要直接重复提交。" };

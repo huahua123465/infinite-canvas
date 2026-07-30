@@ -7,6 +7,7 @@
 + [修复] Agent 停止任务仅中断当前 turn，完善失败原因、历史恢复、图片预览与画布文本复制，同时保留现有 Script、Seedance、APIMart、Voicebox 和插件工作流。
 + [修复] APIMart Seedance 本地参考视频在提交前自动标准化为可探测的 H.264 `faststart` MP4，并恢复普通参考直接写入 `video_urls`，不再增加 Video Asset 审核中转。
 + [修复] APIMart Kling Motion Control 本地参考视频复用 MP4 标准化，并区分素材发布、地址校验、任务创建与生成结果阶段；未取得任务 ID 时不再误报“生成未接回”。
++ [优化] 视频上游返回违禁词或参考素材审核错误时显示火山官方审核拦截，并引导使用“AI改提示词”分析风险表达。
 
 ## v0.11.0 - 2026-07-28
 
