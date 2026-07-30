@@ -203,7 +203,7 @@ function route(handler: (req: Request, res: Response) => Promise<unknown>) {
     return (req: Request, res: Response, next: NextFunction) => void handler(req, res).catch(next);
 }
 
-async function proxyVolcengineSpeech(req: Request, res: Response) {
+export async function proxyVolcengineSpeech(req: Request, res: Response) {
     const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown; resourceId?: unknown; payload?: unknown };
     const apiKey = stringField(body.apiKey);
     const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
@@ -223,7 +223,7 @@ async function proxyVolcengineSpeech(req: Request, res: Response) {
     res.send(data);
 }
 
-async function proxyVolcengineJson(req: Request, res: Response, fallbackPath: string) {
+export async function proxyVolcengineJson(req: Request, res: Response, fallbackPath: string) {
     const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown; path?: unknown; payload?: unknown };
     const apiKey = stringField(body.apiKey);
     const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
@@ -243,7 +243,7 @@ async function proxyVolcengineJson(req: Request, res: Response, fallbackPath: st
     res.send(data);
 }
 
-async function proxyMediaDownload(req: Request, res: Response) {
+export async function proxyMediaDownload(req: Request, res: Response) {
     const url = safeRemoteMediaUrl(stringField((req.body || {}).url));
     if (!url) return void res.status(400).json({ ok: false, error: "missing media url" });
     const upstream = await fetch(url);
@@ -256,7 +256,7 @@ async function proxyMediaDownload(req: Request, res: Response) {
     res.send(data);
 }
 
-async function proxyVoicebox(req: Request, res: Response) {
+export async function proxyVoicebox(req: Request, res: Response) {
     const body = (req.body || {}) as { baseUrl?: unknown; path?: unknown; method?: unknown; payload?: unknown };
     const method = stringField(body.method).toUpperCase() === "POST" ? "POST" : "GET";
     const url = safeVoiceboxUrl(stringField(body.baseUrl), stringField(body.path), method);
@@ -281,7 +281,7 @@ function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
 }
 
-async function openToonflow() {
+export async function openToonflow() {
     if (process.platform !== "win32") throw new Error("ToonFlow 快捷启动当前仅支持 Windows");
     const candidates = [process.env.TOONFLOW_LAUNCHER || "", path.resolve(process.cwd(), "start-toonflow.ps1"), path.resolve(process.cwd(), "..", "start-toonflow.ps1")].filter(Boolean);
     let launcher = "";
@@ -326,7 +326,7 @@ const SEEDANCE_20_FILES = [
     "references/storytelling-framework.md",
 ] as const;
 
-async function loadSeedance20Context() {
+export async function loadSeedance20Context() {
     const root = await findSeedance20Root();
     if (!root) throw new Error("seedance-20 skill package not found; set SEEDANCE_20_SKILL_ROOT to the package directory");
     const files = await Promise.all(
@@ -360,7 +360,7 @@ async function findSeedance20Root() {
 
 const SCREENWRITING_FILES = ["SKILL.md", "references/automatic-story-planning.md"] as const;
 
-async function loadScreenwritingContext() {
+export async function loadScreenwritingContext() {
     const root = await findScreenwritingRoot();
     if (!root) throw new Error("Infinite Canvas screenwriting skill not found; set SCREENWRITING_SKILL_ROOT to the skill directory");
     const files = await Promise.all(SCREENWRITING_FILES.map(async (relativePath) => ({ path: relativePath, content: await fs.readFile(path.join(root, relativePath), "utf8") })));
@@ -387,7 +387,7 @@ async function findScreenwritingRoot() {
     return "";
 }
 
-async function loadCinemaDnaContext() {
+export async function loadCinemaDnaContext() {
     const root = await findCinemaDnaRoot();
     if (!root) throw new Error("cinema-dna-21x9x3 skill not found; set CINEMA_DNA_SKILL_ROOT to the skill directory");
     return { root, files: [{ path: "SKILL.md", content: await fs.readFile(path.join(root, "SKILL.md"), "utf8") }] };
