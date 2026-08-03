@@ -151,6 +151,7 @@ const CHARACTER_REFERENCE_VARIANTS: CharacterReferenceVariant[] = [
     { id: "clothing-detail", title: "服装细节", target: "服装细节参考图，聚焦上衣、领口、袖口、腰部配饰、鞋子或纹理材质，保持与主视图完全同一套服装。" },
 ];
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
+const STORYBOARD_SHOT_QUALITY_CONCURRENCY = 2;
 const STORYBOARD_ASSET_LIMIT = 60;
 const STORYBOARD_ASSET_GRID_COLUMNS = 3;
 const STORYBOARD_ROW_LIMIT = 300;
@@ -2631,8 +2632,11 @@ function InfiniteCanvasPage() {
             setRunningNodeId(scriptNode.id);
             const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
             setStoryboardActionKey("shots:generate");
+            let planningProgressPercent = 0;
             const updatePlanningProgress = (percent: number, text: string) => {
-                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText, storyboardPlanningProgress: { percent, text } } } : item)));
+                const nextPercent = Math.max(planningProgressPercent, Math.min(100, percent));
+                planningProgressPercent = nextPercent;
+                setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...videoSettingsPatch, status: NODE_STATUS_LOADING, errorDetails: undefined, storyboardStep: "shots", storyboardSourceText: sourceText, storyboardPlanningProgress: { percent: nextPercent, text } } } : item)));
             };
             updatePlanningProgress(5, "逐句提取故事事实");
             const storedCheckpoint = scriptNode.metadata?.storyboardPlanningCheckpoint;
@@ -2666,10 +2670,6 @@ function InfiniteCanvasPage() {
             const syncShotQualityErrors = () => {
                 setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardPlanningErrorStage: shotQualityErrors.length ? `部分场景卡待人工修正（${shotQualityErrors.length}项）` : undefined, storyboardPlanningRawResponse: shotQualityErrors.length ? JSON.stringify(shotQualityErrors) : undefined } } : item));
             };
-            const saveShotQualityError = (error: ShotQualityError) => {
-                shotQualityErrors.push(error);
-                syncShotQualityErrors();
-            };
             const parsePlanningAnswer = async <T,>(answer: string, stage: string, parser: (content: string) => T) => {
                 try {
                     return parser(answer);
@@ -2688,16 +2688,28 @@ function InfiniteCanvasPage() {
                     }
                 }
             };
-            const parseShotsWithQualityRetry = async (answer: string, source: string, stage: string, progress: number) => {
-                const parsed = await parsePlanningAnswer(answer, stage, parsePlannedStoryboardShots);
+            const locallyRepairShots = (parsedInput: PlannedStoryboardShot[], batchBeats: StoryboardSourceBeat[]) => {
+                const parsed = plannedShotsForBeats(parsedInput, batchBeats);
+                for (let index = 0; index < parsed.length; index += 1) {
+                    const issues = storyboardShotQualityIssuesForShot(parsed[index]);
+                    const stableLandingRepair = repairStoryboardStableLanding(parsed[index].row, parsed[index].plan, issues);
+                    if (stableLandingRepair) parsed[index] = stableLandingRepair;
+                }
+                return parsed;
+            };
+            const parseShotsWithQualityRetry = async (answer: string, parsedInput: PlannedStoryboardShot[], repairContext: string, stage: string, progress: number, batchBeats: StoryboardSourceBeat[]) => {
+                const parsed = locallyRepairShots(parsedInput, batchBeats);
                 const invalidIndexes = parsed.map((shot, index) => storyboardShotQualityIssuesForShot(shot).length ? index : -1).filter((index) => index >= 0);
                 if (!invalidIndexes.length) return parsed;
-                updatePlanningProgress(progress, `${stage}有 ${invalidIndexes.length} 个场景卡待逐项修正`);
-                for (const index of invalidIndexes) {
+                updatePlanningProgress(progress, `${stage}正在逐镜质量修正（0/${invalidIndexes.length}）`);
+                const repairedShots: Array<PlannedStoryboardShot | undefined> = [];
+                const repairErrors: Array<ShotQualityError | undefined> = [];
+                let completedRepairs = 0;
+                await runLimited(invalidIndexes, STORYBOARD_SHOT_QUALITY_CONCURRENCY, async (index) => {
                     const original = parsed[index];
                     const issues = storyboardShotQualityIssuesForShot(original);
                     const qualitySource = [
-                        source,
+                        repairContext,
                         `【首次模型返回JSON】\n${answer}`,
                         `【解析后的当前shots】\n${JSON.stringify({ shots: parsed })}`,
                         `【只修正第${index + 1}项】\n当前问题：${issues.join("、")}\n只就地修正这一项，其他项、事实ID、顺序、主要可见事实、人物时期、连续性组和转场不得改变。participants 必须明确当前事实支持的 actor/patient；画外成年人双手也要作为 actor，婴儿/幼儿只能作为 patient。actionBeats 是唯一可执行动作链，只写2-3拍；typedActionBeats 与其逐项对应并明确 actor、action、patient、可选 prop 和必填 result，action 写清身体部位或物体、运动方式、作用对象，result 写清物理状态变化。visual 必须逐行重写为0-3、3-9、9-12、12-15秒四段，每段1-2句；0-3秒建场同时执行第一拍，3-9秒承接推进，9-12秒表现反作用/转折和可见结果，12-15秒只保持结果与稳定落点，禁止短动作标签；逐段复用对应 typedActionBeats 的参与者名、道具名、核心物理动词和结果关键词，不做失去追踪关系的同义改写。第一步只使用语义人物/场景/道具名，不生成 @资产名。obstacleReaction 与 turningAction 只是功能说明，不得扩成额外动作。只输出 {"shots":[修正后的这一项]}。`,
@@ -2727,16 +2739,24 @@ function InfiniteCanvasPage() {
                         };
                         const repairedIssues = storyboardShotQualityIssuesForShot(candidate);
                         if (repairedIssues.length) throw new Error(repairedIssues.join("、"));
-                        parsed[index] = candidate;
+                        repairedShots[index] = candidate;
                     } catch (error) {
                         if (isGenerationCanceled(error)) throw error;
                         const errorText = error instanceof Error ? error.message : issues.join("、");
-                        original.plan.renderMode = "still";
-                        original.plan.usePreviousTailFrame = false;
-                        original.plan.qualityError = errorText;
-                        saveShotQualityError({ stage, item: index + 1, error: errorText, rawResponse: qualityAnswer || answer });
+                        repairedShots[index] = { row: [...original.row], plan: { ...original.plan, renderMode: "still", usePreviousTailFrame: false, qualityError: errorText } };
+                        repairErrors[index] = { stage, item: index + 1, error: errorText, rawResponse: qualityAnswer || answer };
+                    } finally {
+                        completedRepairs += 1;
+                        updatePlanningProgress(progress, `${stage}正在逐镜质量修正（${completedRepairs}/${invalidIndexes.length}）`);
                     }
-                }
+                });
+                invalidIndexes.forEach((index) => {
+                    const repairedShot = repairedShots[index];
+                    const repairError = repairErrors[index];
+                    if (repairedShot) parsed[index] = repairedShot;
+                    if (repairError) shotQualityErrors.push(repairError);
+                });
+                if (repairErrors.some(Boolean)) syncShotQualityErrors();
                 return parsed;
             };
             try {
@@ -2825,11 +2845,14 @@ function InfiniteCanvasPage() {
                     syncShotQualityErrors();
                     saveCheckpoint(sourceChunks.length, completedShotBatches, beats, plannedShots, beatsCondensed, originalBeatCount);
                 }
-                if (completedShotBatches) updatePlanningProgress(20 + Math.round((completedShotBatches / batches.length) * 60), `从断点继续：已完成 ${completedShotBatches}/${batches.length} 批镜头`);
+                const batchProgressPercent = (batchIndex: number, stage: number) => 30 + Math.round(((batchIndex + Math.max(0, Math.min(1, stage))) / Math.max(1, batches.length)) * 60);
+                if (completedShotBatches) updatePlanningProgress(batchProgressPercent(completedShotBatches, 0), `从断点继续：已完成 ${completedShotBatches}/${batches.length} 批镜头`);
                 for (let batchIndex = completedShotBatches; batchIndex < batches.length; batchIndex += 1) {
                     const previous = [...plannedShots].reverse().find((shot) => shot.plan.renderMode !== "still")?.plan;
                     const batchTarget = batchClipTargets[batchIndex];
                     const shotSource = buildStoryboardShotBatchSource(storyText, batches[batchIndex], batchIndex, previous, false, directorInstruction, clipPlanInstruction, dramaturgyPlan, batchTarget);
+                    const repairContext = buildStoryboardShotRepairContext(batches[batchIndex], previous, directorInstruction, clipPlanInstruction, dramaturgyPlan, batchTarget);
+                    updatePlanningProgress(batchProgressPercent(batchIndex, 0.05), `第 ${batchIndex + 1}/${batches.length} 批正在生成 ${batchTarget} 个生产片段`);
                     const answer = await requestImageQuestion(
                         generationConfig,
                         [{ role: "user", content: shotSource }],
@@ -2837,7 +2860,16 @@ function InfiniteCanvasPage() {
                         { signal: controller.signal },
                     );
                     const batchErrorStart = shotQualityErrors.length;
-                    const parsedShots = await parseShotsWithQualityRetry(answer, shotSource, `镜头批次 ${batchIndex + 1}/${batches.length}`, 68);
+                    updatePlanningProgress(batchProgressPercent(batchIndex, 0.2), `第 ${batchIndex + 1}/${batches.length} 批正在进行数量/覆盖预检`);
+                    const parsedAnswerShots = await parsePlanningAnswer(answer, `镜头批次 ${batchIndex + 1}/${batches.length}`, parsePlannedStoryboardShots);
+                    const preflightShots = locallyRepairShots(parsedAnswerShots, batches[batchIndex]);
+                    const preflightDynamicShots = preflightShots.filter((shot) => shot.plan.renderMode !== "still");
+                    const preflightCoverage = storyboardCoverage(batches[batchIndex], preflightDynamicShots);
+                    const preflightSummary = preflightDynamicShots.length === batchTarget && !preflightCoverage.missingBeatIds.length
+                        ? "数量与事实覆盖通过"
+                        : `预检发现动态 ${preflightDynamicShots.length}/${batchTarget}，遗漏事实 ${preflightCoverage.missingBeatIds.join("、") || "无"}`;
+                    updatePlanningProgress(batchProgressPercent(batchIndex, 0.35), `第 ${batchIndex + 1}/${batches.length} 批${preflightSummary}，正在逐镜质量修正`);
+                    const parsedShots = await parseShotsWithQualityRetry(answer, preflightShots, repairContext, `镜头批次 ${batchIndex + 1}/${batches.length}`, batchProgressPercent(batchIndex, 0.35), batches[batchIndex]);
                     const initialErrorEnd = shotQualityErrors.length;
                     const initialDynamicShots = plannedShotsForBeats(parsedShots.filter((shot) => shot.plan.renderMode !== "still"), batches[batchIndex]);
                     const initialStillShots = plannedShotsForBeats(parsedShots.filter((shot) => shot.plan.renderMode === "still"), batches[batchIndex]);
@@ -2848,11 +2880,13 @@ function InfiniteCanvasPage() {
                         shotQualityErrors.splice(batchErrorStart);
                         syncShotQualityErrors();
                     } else if (initialDynamicShots.length !== batchTarget || initialDynamicCoverage.missingBeatIds.length) {
-                        updatePlanningProgress(72, `第 ${batchIndex + 1} 批正在定点修正为 ${batchTarget} 个片段并补齐事实引用`);
-                        const countRepairSource = `${shotSource}\n\n【首次模型返回JSON】\n${answer}\n\n【逐项质量修正后的当前shots】\n${JSON.stringify({ shots: parsedShots })}\n\n【定点数量与覆盖修正】\n当前有 ${initialStillShots.length} 个质量失败的still行会由系统另行保留，它们不计动态配额，也不能承担事实覆盖。当前有效动态shots为 ${initialDynamicShots.length} 个，遗漏动态事实ID：${initialDynamicCoverage.missingBeatIds.join("、") || "无"}。保持本批事实、顺序、人物时期和连续性不变，重新输出严格 ${batchTarget} 个全部可作为动态视频的shots；必须由这些动态shots覆盖所有本批事实ID，每个shot只有1个visualBeatId，其余同场背景事实放voiceoverBeatIds。不要返回上述still错误行，只输出完整动态replacement JSON。`;
+                        updatePlanningProgress(batchProgressPercent(batchIndex, 0.7), `第 ${batchIndex + 1}/${batches.length} 批正在整批修正数量与事实覆盖`);
+                        const countRepairSource = `${repairContext}\n\n【首次模型返回JSON】\n${answer}\n\n【逐项质量修正后的当前shots】\n${JSON.stringify({ shots: parsedShots })}\n\n【定点数量与覆盖修正】\n当前有 ${initialStillShots.length} 个质量失败的still行会由系统另行保留，它们不计动态配额，也不能承担事实覆盖。当前有效动态shots为 ${initialDynamicShots.length} 个，遗漏动态事实ID：${initialDynamicCoverage.missingBeatIds.join("、") || "无"}。保持本批事实、顺序、人物时期和连续性不变，重新输出严格 ${batchTarget} 个全部可作为动态视频的shots；必须由这些动态shots覆盖所有本批事实ID，每个shot只有1个visualBeatId，其余同场背景事实放voiceoverBeatIds。不要返回上述still错误行，只输出完整动态replacement JSON。`;
                         try {
                             const countRepairAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: countRepairSource }], () => {}, { signal: controller.signal });
-                            const replacementShots = await parseShotsWithQualityRetry(countRepairAnswer, countRepairSource, `镜头批次 ${batchIndex + 1}/${batches.length} 数量修正`, 74);
+                            updatePlanningProgress(batchProgressPercent(batchIndex, 0.82), `第 ${batchIndex + 1}/${batches.length} 批正在进行整批修正结果的数量/覆盖预检`);
+                            const parsedReplacementShots = await parsePlanningAnswer(countRepairAnswer, `镜头批次 ${batchIndex + 1}/${batches.length} 数量修正`, parsePlannedStoryboardShots);
+                            const replacementShots = await parseShotsWithQualityRetry(countRepairAnswer, parsedReplacementShots, repairContext, `镜头批次 ${batchIndex + 1}/${batches.length} 整批修正`, batchProgressPercent(batchIndex, 0.88), batches[batchIndex]);
                             const replacementDynamicShots = plannedShotsForBeats(replacementShots.filter((shot) => shot.plan.renderMode !== "still"), batches[batchIndex]);
                             const replacementStillShots = plannedShotsForBeats(replacementShots.filter((shot) => shot.plan.renderMode === "still"), batches[batchIndex]);
                             const replacementDynamicCoverage = storyboardCoverage(batches[batchIndex], replacementDynamicShots);
@@ -2878,7 +2912,7 @@ function InfiniteCanvasPage() {
                     }
                     plannedShots.push(...batchShots);
                     saveCheckpoint(sourceChunks.length, batchIndex + 1, beats, plannedShots, beatsCondensed, originalBeatCount);
-                    updatePlanningProgress(20 + Math.round(((batchIndex + 1) / batches.length) * 60), `已完成 ${batchIndex + 1}/${batches.length} 批，共 ${plannedShots.length} 个生产片段`);
+                    updatePlanningProgress(batchProgressPercent(batchIndex, 1), `已完成 ${batchIndex + 1}/${batches.length} 批，共 ${plannedShots.length} 个生产片段`);
                 }
                 const dynamicPlannedShots = plannedShots.filter((shot) => shot.plan.renderMode !== "still");
                 const coverage = storyboardCoverage(beats, plannedShots);
@@ -9377,6 +9411,18 @@ function buildStoryboardShotBatchSource(sourceText: string, beats: StoryboardSou
         `【本批必须全部覆盖的事实】\n${JSON.stringify(beats)}`,
         `【原始故事，仅用于核对语境，不得跳过本批事实】\n${sourceText}`,
     ].join("\n\n");
+}
+
+function buildStoryboardShotRepairContext(beats: StoryboardSourceBeat[], previous: StoryboardShotPlan | undefined, directorInstruction: string, clipPlanInstruction: string, dramaturgyPlan: StoryboardDramaturgyPlan | undefined, targetShotCount: number) {
+    return [
+        "【修正固定契约】\n只修正现有shots JSON，不扩写原故事。保持本批事实顺序、人物关系、人物年龄/时期、唯一主要可见事实、跨批连续性边界和15秒时长不变；sourceBeatIds必须完整覆盖本批事实，并严格等于visualBeatIds与voiceoverBeatIds的并集，每个shot只能有1个visualBeatId。每条shot必须保留完整场景卡：goal、obstacle、stakes、tactic、2-3拍actionBeats及逐项对应且含物理结果的typedActionBeats、participants actor/patient、obstacleReaction、turningAction、result、valueShift、startState与endState。visual固定为0-3、3-9、9-12、12-15秒四段详细物理动作，首段建场同时执行第一拍，末段只保持结果和稳定落点；第一步只使用语义人物/场景/道具名，不生成@资产名。不得新增人物、关系、对白、地点、道具、冲突或结局，只输出合法JSON。",
+        clipPlanInstruction,
+        `【本批预算边界】\n本批总体预算为 ${targetShotCount} 个动态shots；逐项质量修正时只返回被指定的单条shot，不得改变本批数量，只有明确要求整批数量/覆盖修正时才返回完整 ${targetShotCount} 条。still不得承担动态配额或事实覆盖。`,
+        dramaturgyPlan ? `【剧作总纲约束】\n${JSON.stringify(dramaturgyPlan)}\n只继承有事实支持的戏剧功能与双轨节奏，不得覆盖本批事实。` : "",
+        directorInstruction ? `【整体要求/导演提示词】\n${directorInstruction}` : "",
+        previous ? `【上一批最后状态】\n${JSON.stringify(previous)}` : "【上一批最后状态】\n无，这是故事首批。",
+        `【本批事实（含原文证据）】\n${JSON.stringify(beats)}`,
+    ].filter(Boolean).join("\n\n");
 }
 
 function parseStoryboardAssetAnswer(content: string): { style: string; assets: StoryboardAsset[] } {
