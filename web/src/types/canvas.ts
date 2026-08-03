@@ -206,6 +206,70 @@ export type StoryboardShotPlan = {
     valueShift?: string;
 };
 
+export type StoryboardFinalReviewDimensionKey = "factSelection" | "structure" | "characterArc" | "sceneAction" | "pacing" | "audiovisual" | "dialogueNarration" | "continuityPayoff" | "audienceValue" | "commercialDifferentiation";
+export type StoryboardFinalReviewSeverity = "P0" | "P1" | "P2";
+export type StoryboardFinalReviewDimension = {
+    key: StoryboardFinalReviewDimensionKey;
+    label: string;
+    weight: number;
+    score: number;
+    rationale: string;
+};
+export type StoryboardFinalReviewIssue = {
+    id: string;
+    severity: StoryboardFinalReviewSeverity;
+    title: string;
+    description: string;
+    suggestion: string;
+    dimensionKeys: StoryboardFinalReviewDimensionKey[];
+    beatIds: string[];
+    shotIndexes: number[];
+};
+export type StoryboardFinalReviewScoreCap = {
+    id: string;
+    maxScore: number;
+    reason: string;
+    evidence: string[];
+    beatIds: string[];
+    shotIndexes: number[];
+};
+export type StoryboardFinalReviewFinding = {
+    id: string;
+    severity: StoryboardFinalReviewSeverity;
+    category: "opening" | "rhythm" | "climax" | "agency" | "narration" | "repetition" | "ending" | "production";
+    title: string;
+    evidence: string[];
+    beatIds: string[];
+    shotIndexes: number[];
+    scoreCap?: StoryboardFinalReviewScoreCap;
+};
+export type StoryboardProductionGateSummary = {
+    passed: boolean;
+    totalShots: number;
+    dynamicShots: number;
+    blockedShotIndexes: number[];
+    reasons: string[];
+};
+export type StoryboardFinalReview = {
+    contextKey: string;
+    model: string;
+    reviewedAt: number;
+    dimensions: StoryboardFinalReviewDimension[];
+    rawScore: number;
+    totalScore: number;
+    grade: "不建议制作" | "可生产但需改稿" | "建议制作" | "可进入商业成片打磨";
+    summary: string;
+    issues: StoryboardFinalReviewIssue[];
+    deterministicFindings: StoryboardFinalReviewFinding[];
+    scoreCaps: StoryboardFinalReviewScoreCap[];
+    productionGate: StoryboardProductionGateSummary;
+};
+export type StoryboardFinalReviewProgress = {
+    status: "analyzing" | "reviewing" | "completed" | "failed";
+    percent: number;
+    text: string;
+};
+
 export type StoryboardChapter = {
     id: string;
     title: string;
@@ -262,6 +326,9 @@ export type CanvasNodeMetadata = {
     storyboardShotPlans?: Record<string, StoryboardShotPlan>;
     storyboardPlanningProgress?: StoryboardPlanningProgress;
     storyboardPlanningCheckpoint?: StoryboardPlanningCheckpoint;
+    storyboardFinalReview?: StoryboardFinalReview;
+    storyboardFinalReviewProgress?: StoryboardFinalReviewProgress;
+    storyboardFinalReviewError?: string;
     storyboardCoverage?: { covered: number; total: number; missingBeatIds: string[] };
     storyboardProductionMode?: StoryboardProductionMode;
     storyboardProductionScope?: StoryboardProductionScope;

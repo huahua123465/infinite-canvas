@@ -28,6 +28,7 @@ import { buildCinemaDnaPromptInstruction, buildPromptAssistantInstruction, build
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { auditStoryboardProductionContract, type StoryboardProductionContractStage } from "@/lib/canvas/storyboard-production-contract";
+import { buildStoryboardFinalReviewerInput, parseStoryboardFinalReview } from "@/lib/canvas/storyboard-final-review";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -2427,6 +2428,9 @@ function InfiniteCanvasPage() {
                         storyboardPromptErrors: undefined,
                         storyboardPromptRawResponses: undefined,
                         storyboardLockedNarrationChapterIds: [],
+                        storyboardFinalReview: undefined,
+                        storyboardFinalReviewProgress: undefined,
+                        storyboardFinalReviewError: undefined,
                     },
                 };
             }),
@@ -2465,7 +2469,7 @@ function InfiniteCanvasPage() {
             delete promptErrors[String(rowIndex)];
             delete promptRawResponses[String(rowIndex)];
             const remainingQualityErrors = Object.values(plans).filter((plan) => Boolean(plan.qualityError)).length;
-            return { ...node, metadata: { ...node.metadata, storyboardShotPlans: plans, storyboardPromptDetails: promptDetails, storyboardPromptErrors: promptErrors, storyboardPromptRawResponses: promptRawResponses, storyboardLockedNarrationChapterIds: Array.from(locked), storyboardPlanningErrorStage: remainingQualityErrors ? `部分场景卡待人工修正（${remainingQualityErrors}项）` : undefined, storyboardPlanningRawResponse: remainingQualityErrors ? node.metadata?.storyboardPlanningRawResponse : undefined } };
+            return { ...node, metadata: { ...node.metadata, storyboardShotPlans: plans, storyboardPromptDetails: promptDetails, storyboardPromptErrors: promptErrors, storyboardPromptRawResponses: promptRawResponses, storyboardLockedNarrationChapterIds: Array.from(locked), storyboardFinalReview: undefined, storyboardFinalReviewProgress: undefined, storyboardFinalReviewError: undefined, storyboardPlanningErrorStage: remainingQualityErrors ? `部分场景卡待人工修正（${remainingQualityErrors}项）` : undefined, storyboardPlanningRawResponse: remainingQualityErrors ? node.metadata?.storyboardPlanningRawResponse : undefined } };
         }));
     }, []);
 
@@ -2528,6 +2532,70 @@ function InfiniteCanvasPage() {
         setStoryboardActionKey(null);
         message.info("已暂停自动修正，已保留成功项");
     }, [message, storyboardActionKey, stopGenerationByRunningId]);
+
+    const runStoryboardFinalReview = useCallback(async (node: CanvasNodeData) => {
+        const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+        const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+        const beats = scriptNode.metadata?.storyboardSourceBeats || [];
+        const shotPlanMap = scriptNode.metadata?.storyboardShotPlans || {};
+        if (!rows.length || !beats.length) {
+            message.warning("请先完成事实提取与全片分镜规划，再运行编剧终审");
+            return;
+        }
+        const input = {
+            beats,
+            dramaturgy: scriptNode.metadata?.storyboardDramaturgyPlan,
+            rows,
+            shotPlans: rows.map((_, index) => shotPlanMap[String(index)]),
+        };
+        const reviewerInput = buildStoryboardFinalReviewerInput(input);
+        const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+        if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+            openConfigDialog(true);
+            return;
+        }
+        const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
+        setStoryboardActionKey("final-review");
+        setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "analyzing", percent: 20, text: "正在汇总全片事实、剧作总纲与全部场景卡" }, storyboardFinalReviewError: undefined } } : item));
+        const prompt = `你是一名独立的商业影视编剧终审 Reviewer。你只负责审核，不得改写剧本，不得补写镜头，不得虚构输入之外的人物、关系、对白、道具、地点、冲突、事实或结局。
+
+请严格区分两个结论：productionGate 只表示事实、场景卡和生产合同是否合格；你的十维审美评分只表示作品是否好看、是否值得制作。即使 productionGate 通过，也不能据此给高分；productionGate 未通过也仍须完成审美评价，本次审核不得阻断既有三步工作流。
+
+十个维度各按 0-100 分评价，程序会按输入 dimensions 的 weight 加权为满分 100 分。总分 75 为“建议制作”，85 为“可进入商业成片打磨”。必须尊重确定性检查给出的三个评分上限：无具体可见开场问题或动作时最高 79；主角没有明确选择和代价时最高 74；高潮只有旁白总结、没有行动兑现时最高 69。不得为提高分数而推断输入未提供的戏剧事实。
+
+所有问题必须引用输入中真实存在的 beatIds 与零基 shotIndexes；没有有效证据时不得创建问题，不得引用不存在的 ID 或镜头。建议只能说明修改方向，不得直接生成替代剧情。
+
+只返回一个 JSON 对象，不要 Markdown，不要额外解释。格式：
+{"dimensions":[{"key":"factSelection","score":0,"rationale":"证据化说明"}],"summary":"全片结论","issues":[{"id":"issue-1","severity":"P0|P1|P2","title":"问题标题","description":"基于证据的说明","suggestion":"不虚构事实的修改方向","dimensionKeys":["structure"],"beatIds":["有效事实ID"],"shotIndexes":[0]}]}
+dimensions 必须完整覆盖输入给出的十个 key。
+
+【终审输入】
+${JSON.stringify(reviewerInput)}`;
+        try {
+            setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "reviewing", percent: 55, text: "独立 Reviewer 正在进行十维全片审核" }, storyboardFinalReviewError: undefined } } : item));
+            const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: prompt }], () => {}, { signal: controller.signal });
+            const review = parseStoryboardFinalReview(answer, input, { model: generationConfig.model || "unknown" });
+            setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReview: review, storyboardFinalReviewProgress: { status: "completed", percent: 100, text: "全片编剧终审完成" }, storyboardFinalReviewError: undefined } } : item));
+            message.success(`全片编剧终审完成：${review.totalScore}/100，${review.grade}`);
+        } catch (error) {
+            if (isGenerationCanceled(error)) {
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: undefined, storyboardFinalReviewError: undefined } } : item));
+                message.info("已停止全片编剧终审，未修改剧本");
+            } else {
+                const errorText = error instanceof Error ? error.message : "模型请求或终审结果解析失败";
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "failed", percent: 100, text: "全片编剧终审失败" }, storyboardFinalReviewError: `终审失败：${errorText}` } } : item));
+                message.error(`全片编剧终审失败：${errorText}`);
+            }
+        } finally {
+            finishGenerationRequest(scriptNode.id, controller);
+            setStoryboardActionKey(null);
+        }
+    }, [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest]);
+
+    const stopStoryboardFinalReview = useCallback((node: CanvasNodeData) => {
+        if (storyboardActionKey !== "final-review") return;
+        stopGenerationByRunningId(node.id);
+    }, [stopGenerationByRunningId, storyboardActionKey]);
 
     const deleteStoryboardAsset = useCallback((nodeId: string, assetId: string) => {
         setNodes((prev) => prev.map((node) => {
@@ -2964,6 +3032,9 @@ function InfiniteCanvasPage() {
                                       storyboardPromptDetails: {},
                                       storyboardPromptErrors: {},
                                       storyboardPromptRawResponses: {},
+                                      storyboardFinalReview: undefined,
+                                      storyboardFinalReviewProgress: undefined,
+                                      storyboardFinalReviewError: undefined,
                                       ...videoSettingsPatch,
                                       status: NODE_STATUS_SUCCESS,
                                       errorDetails: undefined,
@@ -6158,6 +6229,8 @@ function InfiniteCanvasPage() {
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
+                    onRunFinalReview={(node) => void runStoryboardFinalReview(node)}
+                    onStopFinalReview={stopStoryboardFinalReview}
                     onRepairShot={(node, rowIndex) => void repairStoryboardShots(node, [rowIndex])}
                     onRepairAllShots={(node) => void repairStoryboardShots(node)}
                     onStopShotRepair={stopStoryboardShotRepair}

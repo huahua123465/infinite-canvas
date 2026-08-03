@@ -6,6 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
 import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
+import { storyboardFinalReviewContextKey } from "@/lib/canvas/storyboard-final-review";
 import { storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
 import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotParticipant, type StoryboardShotPlan, type StoryboardTypedActionBeat } from "@/types/canvas";
@@ -46,6 +47,8 @@ type CanvasScriptNodeDialogProps = {
     onBatchGenerateAssets: (node: CanvasNodeData) => void;
     onStopAssetGeneration: (node: CanvasNodeData) => void;
     onGenerateShotsFromInputs: (node: CanvasNodeData) => void;
+    onRunFinalReview: (node: CanvasNodeData) => void;
+    onStopFinalReview: (node: CanvasNodeData) => void;
     onRepairShot: (node: CanvasNodeData, rowIndex: number) => void;
     onRepairAllShots: (node: CanvasNodeData) => void;
     onStopShotRepair: (node: CanvasNodeData) => void;
@@ -66,7 +69,7 @@ type CanvasScriptNodeDialogProps = {
     promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" };
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRepairShot, onRepairAllShots, onStopShotRepair, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairShot, onRepairAllShots, onStopShotRepair, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -355,7 +358,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                     ) : view === "videos" ? (
                         <VideoGenerationView node={node} rows={rows} rowIndexes={dynamicIndexes} promptDetails={promptDetails} actionKey={actionKey} draftCount={videoDraftCount} resultCount={videoResultCount} onGenerateVideo={onGenerateVideo} onBatchGenerateVideos={onBatchGenerateVideos} />
                     ) : (
-                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onValidateCell={revalidateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onRepairShot={onRepairShot} onRepairAllShots={onRepairAllShots} onStopShotRepair={onStopShotRepair} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
+                        <ShotsTable node={node} rows={rows} rowIndexes={activeRowIndexes} actionKey={actionKey} planningStale={planningStale} productionScope={productionScope} promptDetails={promptDetails} narrationLocked={narrationLocked} narrationIssues={narrationIssues} onNarrationLockChange={onNarrationLockChange} onCreateChapterNodes={onCreateChapterNodes} onUpdateCell={updateCell} onValidateCell={revalidateCell} onDeleteRow={deleteRow} onAddRow={addRow} onOpenImport={() => setShotImportOpen(true)} onGenerateShotsFromInputs={onGenerateShotsFromInputs} onRunFinalReview={onRunFinalReview} onStopFinalReview={onStopFinalReview} onRepairShot={onRepairShot} onRepairAllShots={onRepairAllShots} onStopShotRepair={onStopShotRepair} onOpenPrompt={setPromptEditorRowIndex} onOpenShotPlan={setShotPlanEditorRowIndex} onGenerateImage={onGenerateImage} onGenerateVideo={onGenerateVideo} onOpenAssets={openAssets} />
                     )}
                     <ShotImportModal open={shotImportOpen} rowCount={rows.length} onClose={() => setShotImportOpen(false)} onImport={importRows} />
                     {promptEditorRow && promptEditorRowIndex !== null ? (
@@ -529,7 +532,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRepairShot, onRepairAllShots, onStopShotRepair, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRepairShot: (node: CanvasNodeData, rowIndex: number) => void; onRepairAllShots: (node: CanvasNodeData) => void; onStopShotRepair: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
+function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairShot, onRepairAllShots, onStopShotRepair, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRunFinalReview: (node: CanvasNodeData) => void; onStopFinalReview: (node: CanvasNodeData) => void; onRepairShot: (node: CanvasNodeData, rowIndex: number) => void; onRepairAllShots: (node: CanvasNodeData) => void; onStopShotRepair: (node: CanvasNodeData) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     const plans = node.metadata?.storyboardShotPlans || {};
     const chapters = node.metadata?.storyboardChapters || [];
@@ -545,6 +548,11 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
     const displayRows = rowIndexes.map((rowIndex) => ({ row: rows[rowIndex], rowIndex }));
     const planningButtonText = `${rows.length ? "重新" : "自动"}规划${productionScope === "single" ? "单集" : "完整故事"}`;
     const dramaturgy = node.metadata?.storyboardDramaturgyPlan;
+    const finalReviewInput = useMemo(() => {
+        const allRows = normalizeRows(node.metadata?.storyboardRows);
+        return { beats: node.metadata?.storyboardSourceBeats || [], dramaturgy: node.metadata?.storyboardDramaturgyPlan, rows: allRows, shotPlans: allRows.map((_, index) => node.metadata?.storyboardShotPlans?.[String(index)]) };
+    }, [node.metadata?.storyboardDramaturgyPlan, node.metadata?.storyboardRows, node.metadata?.storyboardShotPlans, node.metadata?.storyboardSourceBeats]);
+    const finalReviewContextKey = useMemo(() => storyboardFinalReviewContextKey(finalReviewInput), [finalReviewInput]);
     return (
         <>
             {planningStale ? <div className="flex h-11 shrink-0 items-center border-b border-amber-400/20 bg-amber-500/10 px-8 text-xs font-semibold text-amber-100">当前表格来自旧生产配置，请点击下方“{planningButtonText}”生成新的片段数量后再继续。</div> : null}
@@ -565,6 +573,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                     {dramaturgy.warnings.length ? <div className="shrink-0 text-amber-200" title={dramaturgy.warnings.join("\n")}>{dramaturgy.warnings.length} 项需留意</div> : null}
                 </div>
             ) : null}
+            {!planningStale ? <StoryboardFinalReviewPanel node={node} actionKey={actionKey} contextKey={finalReviewContextKey} onRun={() => onRunFinalReview(node)} onStop={() => onStopFinalReview(node)} /> : null}
             {!planningStale && rows.length && chapters.length ? (
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[#303030] bg-[#171717] px-8 text-xs text-[#c9c9c9]">
                     <span className="font-semibold text-white">自动规划 · 15秒/条</span>
@@ -672,6 +681,70 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                 </Button>
             </div>
         </>
+    );
+}
+
+function StoryboardFinalReviewPanel({ node, actionKey, contextKey, onRun, onStop }: { node: CanvasNodeData; actionKey?: string | null; contextKey: string; onRun: () => void; onStop: () => void }) {
+    const review = node.metadata?.storyboardFinalReview;
+    const progress = node.metadata?.storyboardFinalReviewProgress;
+    const error = node.metadata?.storyboardFinalReviewError;
+    const beats = node.metadata?.storyboardSourceBeats || [];
+    const rows = normalizeRows(node.metadata?.storyboardRows);
+    const missing = [!beats.length ? "缺少完整事实" : "", !node.metadata?.storyboardDramaturgyPlan ? "缺少剧作总纲" : "", !rows.length ? "缺少分镜" : ""].filter(Boolean);
+    const stale = Boolean(review && review.contextKey !== contextKey);
+    const running = actionKey === "final-review";
+    const interrupted = !running && (progress?.status === "analyzing" || progress?.status === "reviewing");
+    const issues = review?.issues || [];
+    return (
+        <section className="shrink-0 border-b border-emerald-400/10 bg-[#121715] px-8 py-3 text-xs text-[#c8d1cc]">
+            <div className="flex items-start gap-5">
+                <div className="w-28 shrink-0">
+                    <div className="font-semibold text-emerald-100">全片终审</div>
+                    <div className="mt-1 text-[11px] text-[#7f8b84]">审美软门槛</div>
+                </div>
+                <div className="min-w-0 flex-1">
+                    {!review && !running && !error ? <p className="leading-5 text-[#aeb8b2]">生产门禁只判断能否制作，不代表故事好看。终审会从全片结构、人物、节奏与商业吸引力独立评分。</p> : null}
+                    {running ? (
+                        <div className="flex items-center gap-3 text-emerald-100"><LoaderCircle className="size-4 animate-spin" /><span>{progress?.text || "正在进行全片剧作终审…"}</span>{progress?.percent !== undefined ? <span className="text-emerald-200/60">{progress.percent}%</span> : null}</div>
+                    ) : null}
+                    {interrupted && !error ? <div className="rounded-md border border-amber-400/20 bg-amber-500/8 px-3 py-2 text-amber-100">上次终审已中断，可以重新发起审核。</div> : null}
+                    {error && !running ? <div className="rounded-md border border-red-400/20 bg-red-500/8 px-3 py-2 text-red-100">{error}</div> : null}
+                    {review ? (
+                        <div className={stale ? "opacity-60" : ""}>
+                            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                                <span className="text-2xl font-bold text-white">{review.totalScore}<span className="text-xs font-normal text-[#88928c]"> / 100</span></span>
+                                <span className="font-semibold text-emerald-100">{review.grade}</span>
+                                {stale ? <span className="rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-200">内容已变化，结果已过期</span> : null}
+                            </div>
+                            <p className="mt-1 leading-5 text-[#aeb8b2]">{review.summary}</p>
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                                <span className={review.productionGate.passed ? "text-emerald-200" : "text-amber-200"}>生产门禁：{review.productionGate.passed ? "通过" : `阻断 ${review.productionGate.blockedShotIndexes.length} 镜`}</span>
+                                <span>共 {review.productionGate.totalShots} 镜 · 动态 {review.productionGate.dynamicShots} 镜</span>
+                                {review.productionGate.reasons.length ? <span title={review.productionGate.reasons.join("\n")} className="text-amber-100">{review.productionGate.reasons.join("；")}</span> : null}
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1 lg:grid-cols-5">
+                                {review.dimensions.map((dimension) => <div key={dimension.key} title={`${dimension.rationale}\n权重 ${dimension.weight}%`} className="flex items-center justify-between gap-2 border-b border-white/5 py-1"><span className="truncate text-[#aab4ae]">{dimension.label}</span><span className="shrink-0 font-semibold text-white">{dimension.score}<span className="font-normal text-[#77817b]">/100</span></span></div>)}
+                            </div>
+                            {review.scoreCaps.length ? <div className="mt-3 rounded-md border border-amber-400/15 bg-amber-500/5 px-3 py-2 text-amber-100"><span className="font-semibold">评分上限：</span>{review.scoreCaps.map((cap) => `最高 ${cap.maxScore} 分：${cap.reason}`).join("；")}</div> : null}
+                            {review.deterministicFindings.length ? <div className="mt-2 text-[11px] leading-5 text-[#929d96]"><span className="font-semibold text-[#bdc8c1]">自动预审：</span>{review.deterministicFindings.map((finding) => `${finding.severity} ${finding.title}${finding.shotIndexes.length ? `（镜头 ${finding.shotIndexes.map((index) => index + 1).join("、")}）` : ""}`).join("；")}</div> : null}
+                            {issues.length ? (
+                                <div className="mt-3 grid gap-2 lg:grid-cols-3">
+                                    {(["P0", "P1", "P2"] as const).map((severity) => {
+                                        const scoped = issues.filter((issue) => issue.severity === severity);
+                                        if (!scoped.length) return null;
+                                        return <div key={severity} className="rounded-md border border-white/8 bg-black/15 p-3"><div className={`font-semibold ${severity === "P0" ? "text-red-200" : severity === "P1" ? "text-amber-200" : "text-cyan-100"}`}>{severity} · {scoped.length} 项</div><div className="mt-2 space-y-2">{scoped.slice(0, 3).map((issue) => <div key={issue.id}><div className="font-semibold text-white">{issue.title}</div><div className="mt-0.5 line-clamp-2 leading-5 text-[#9fa9a3]" title={issue.description}>{issue.description}</div>{issue.shotIndexes.length || issue.beatIds.length ? <div className="mt-1 text-[11px] text-[#78827c]">{issue.shotIndexes.length ? `镜头 ${issue.shotIndexes.map((index) => index + 1).join("、")}` : ""}{issue.shotIndexes.length && issue.beatIds.length ? " · " : ""}{issue.beatIds.length ? `事实 ${issue.beatIds.join("、")}` : ""}</div> : null}<div className="mt-1 line-clamp-2 text-emerald-100/80" title={issue.suggestion}>建议：{issue.suggestion}</div></div>)}{scoped.length > 3 ? <div className="text-[11px] text-[#77817b]">另有 {scoped.length - 3} 项，重新终审后按优先级继续处理</div> : null}</div></div>;
+                                    })}
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+                </div>
+                <div className="shrink-0">
+                    <Button danger={running} size="small" disabled={!running && (Boolean(missing.length) || Boolean(actionKey))} title={missing.length ? missing.join("、") : undefined} icon={running ? <Square className="size-3.5" /> : review ? <RefreshCw className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={running ? onStop : onRun}>{running ? "停止终审" : review ? "重新终审" : error ? "重试全片终审" : "开始全片终审"}</Button>
+                    {missing.length ? <div className="mt-1 max-w-40 text-right text-[10px] text-amber-200/75">{missing.join("、")}</div> : null}
+                </div>
+            </div>
+        </section>
     );
 }
 
