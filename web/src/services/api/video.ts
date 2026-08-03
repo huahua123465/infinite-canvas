@@ -6,12 +6,13 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { assertVideoGenerationParameters } from "@/lib/video-generation-preflight";
 import { isCangyuanSeedanceFramePair, isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoReferenceVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
+import { deleteTemporaryReferenceMedia, isTemporaryReferenceMediaUrl, publishReferenceAudio, publishReferenceImage, publishReferenceVideo } from "@/services/media-publish";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isCangyuanSd5SeedanceModel, isSeedanceVideoConfig, normalizeSeedanceApiResolution, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceModelFixedResolution, seedanceVideoReferenceError, CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { buildApiUrl, decodeChannelModel, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { runModelScript } from "@/services/api/model-script-runtime";
+import { fetchModelPricing, findModelPricing, modelPricingReferenceLimits } from "@/services/api/model-pricing";
 import { resolveModelScript } from "@/stores/use-model-script-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ApimartAvatarMode, ApimartOmniElement, ReferenceAudio, ReferenceVideo, VideoRequestReferenceSummary, VideoRequestSummary } from "@/types/media";
@@ -32,6 +33,7 @@ type VideoResponseData = {
     fail_reason?: string;
     video?: { url?: string };
     raw_data?: { video_url?: string; url?: string };
+    object?: string;
 };
 type VideoResponse = {
     id?: string;
@@ -49,6 +51,7 @@ type VideoResponse = {
     content?: { video_url?: string; url?: string } | null;
     video?: { url?: string };
     raw_data?: { video_url?: string; url?: string };
+    object?: string;
     data?: VideoResponseData[] | VideoResponseData;
 };
 type ApiVideoEnvelope = { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
@@ -76,7 +79,7 @@ type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: strin
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = {
     id: string;
-    provider: "openai" | "seedance" | "cangyuan" | "top-image" | "apimart" | "script";
+    provider: "openai" | "seedance" | "cangyuan" | "top-image" | "apimart" | "meaicc" | "script";
     model: string;
     cangyuanEndpoint?: "videos" | "video-generations";
     requestMethod?: "POST";
@@ -136,9 +139,10 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
     options?.onProgress?.({ percent: 16, text: `视频任务已创建：${modelOptionName(task.model)} · ${task.id}`, stage: "submitted" });
-    const delayMs = task.provider === "seedance" || task.provider === "top-image" ? 30000 : task.provider === "cangyuan" || task.provider === "apimart" ? 5000 : 2500;
+    const delayMs = task.provider === "seedance" || task.provider === "top-image" ? 30000 : task.provider === "meaicc" ? 21000 : task.provider === "cangyuan" || task.provider === "apimart" ? 5000 : 2500;
     const startedAt = Date.now();
     let pollRetryCount = 0;
+    if (task.provider === "meaicc") await delay(delayMs, options?.signal);
     for (let attempt = 0; Date.now() - startedAt < VIDEO_MAX_WAIT_MS; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let state: VideoGenerationTaskState;
@@ -195,6 +199,11 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         if (videoReferences.length || audioReferences.length) throw new Error("自定义视频调用脚本目前只接收提示词和参考图，请移除参考视频或参考音频");
         return createModelScriptVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     }
+    if (requestConfig.apiFormat === "meaicc") {
+        const pricing = await fetchModelPricing(requestConfig.baseUrl);
+        const item = findModelPricing(pricing, requestConfig.model);
+        if (!(Number(item?.model_price) > 0) || !modelPricingReferenceLimits(item)) throw new Error("MEAICC 实时模型广场未公布当前模型的价格或素材上限，已停止创建付费任务");
+    }
     assertVideoGenerationParameters({ config, prompt, references, videoReferences, audioReferences });
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "cangyuan" || isCangyuanSeedanceVideoRequest(requestConfig, selectedModel)) {
@@ -205,6 +214,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     }
     if (requestConfig.apiFormat === "apimart") {
         return createApimartVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
+    if (requestConfig.apiFormat === "meaicc") {
+        return createMeaiccVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
@@ -226,6 +238,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "cangyuan") return pollCangyuanVideoTask(requestConfig, task, options);
     if (task.provider === "apimart") return pollApimartVideoTask(requestConfig, task, options);
+    if (task.provider === "meaicc") return pollMeaiccVideoTask(requestConfig, task, options);
     return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
 }
 
@@ -401,6 +414,58 @@ async function createCangyuanVideoTask(config: AiConfig, model: string, prompt: 
         await deleteTemporaryReferenceMedia([...imageUrls, ...referenceVideos].filter(isTemporaryReferenceMediaUrl));
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
+}
+
+async function createMeaiccVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const imageUrls: string[] = [];
+    const videoUrls: string[] = [];
+    const audioUrls: string[] = [];
+    try {
+        for (const image of references) {
+            const directUrl = image.url || image.dataUrl || "";
+            imageUrls.push(/^https?:\/\//i.test(directUrl) ? directUrl : await publishReferenceImage(image, options?.signal));
+        }
+        for (const video of videoReferences) videoUrls.push(/^https?:\/\//i.test(video.url) ? video.url : await publishReferenceVideo(video, options?.signal));
+        for (const audio of audioReferences) audioUrls.push(/^https?:\/\//i.test(audio.url) ? audio.url : await publishReferenceAudio(audio, options?.signal));
+        const media = [
+            ...references.map((image, index) => ({ type: image.videoReferenceRole === "firstFrame" ? "first_frame" : image.videoReferenceRole === "lastFrame" ? "last_frame" : "reference_image", url: imageUrls[index] })),
+            ...videoUrls.map((url) => ({ type: "reference_video", url })),
+            ...audioUrls.map((url) => ({ type: "reference_voice", url })),
+        ];
+        const requestModel = modelOptionName(model);
+        const payload = {
+            model: requestModel,
+            input: { prompt, ...(media.length ? { media } : {}) },
+            parameters: {
+                resolution: normalizeVideoResolution(config.vquality),
+                ratio: normalizeCangyuanVideoRatio(config.size),
+                duration: normalizeSeedanceDuration(config.videoSeconds),
+            },
+        };
+        const requestUrl = aiApiUrl(config, "/videos");
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(requestUrl, payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const taskId = cangyuanVideoTaskId(created);
+        if (!taskId) throw new Error("MEAICC 视频接口没有返回任务 ID");
+        const temporaryReferenceUrls = [...imageUrls, ...videoUrls, ...audioUrls].filter(isTemporaryReferenceMediaUrl);
+        return { id: taskId, provider: "meaicc", model, requestMethod: "POST", requestUrl, requestModel, requestFields: ["model", "input.prompt", ...(media.length ? ["input.media"] : []), "parameters.resolution", "parameters.ratio", "parameters.duration"], temporaryReferenceUrls };
+    } catch (error) {
+        await deleteTemporaryReferenceMedia([...imageUrls, ...videoUrls, ...audioUrls].filter(isTemporaryReferenceMediaUrl));
+        throw new Error(readAxiosError(error, "MEAICC 视频任务创建失败", modelOptionName(model), "meaicc"));
+    }
+}
+
+async function pollMeaiccVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+    const status = stringValue(video.status).trim();
+    const normalized = status.toLowerCase();
+    if (normalized === "succeeded" || normalized === "completed") {
+        const nested = !Array.isArray(video.data) ? video.data : undefined;
+        const url = video.object || nested?.object || cangyuanVideoUrl(video);
+        if (!url) return { status: "failed", error: "MEAICC 任务已完成，但没有返回视频地址", providerStatus: status };
+        return { status: "completed", result: { url, mimeType: "video/mp4" }, providerStatus: status, progress: 100 };
+    }
+    if (normalized.startsWith("failed")) return { status: "failed", error: status.replace(/^failed\s*:?\s*/i, "") || "MEAICC 视频生成失败", providerStatus: status };
+    return { status: "pending", providerStatus: status || "RUNNING", progress: normalizeProgress(video.progress) };
 }
 
 async function createTopImageVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {

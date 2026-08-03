@@ -2,6 +2,7 @@ import { CANGYUAN_SD5_SEEDANCE_REFERENCE_LIMITS, CANGYUAN_SD5_SEEDANCE_REFERENCE
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { apimartModelInfo } from "@/lib/apimart-model-catalog";
+import { cachedModelPricing, findModelPricing, modelPricingReferenceLimits } from "@/services/api/model-pricing";
 
 export type VideoReferenceLimits = Readonly<{
     images: number;
@@ -68,6 +69,13 @@ export function videoReferenceCapability(model: string): VideoReferenceCapabilit
 
 export function videoReferenceLimits(model: string) {
     return videoReferenceCapability(model)?.limits || null;
+}
+
+export function videoReferenceLimitsForConfig(config: AiConfig, model: string) {
+    const requestConfig = resolveModelRequestConfig(config, model);
+    if (requestConfig.apiFormat !== "meaicc") return videoReferenceLimits(model);
+    const item = findModelPricing(cachedModelPricing(requestConfig.baseUrl), modelOptionName(model));
+    return modelPricingReferenceLimits(item);
 }
 
 export function isOmniImageVideoModel(model: string) {

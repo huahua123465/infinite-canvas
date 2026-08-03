@@ -4,7 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { apimartModelInfo } from "@/lib/apimart-model-catalog";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark" | "cangyuan" | "top-image" | "apimart";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "cangyuan" | "top-image" | "apimart" | "meaicc";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ModelChannel = {
@@ -67,6 +67,7 @@ const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const CANGYUAN_BASE_URL = "https://ai.cangyuansuanli.cn";
 const TOP_IMAGE_BASE_URL = "https://sucai.luxvault.top";
 const APIMART_BASE_URL = "https://api.apimart.ai";
+const MEAICC_BASE_URL = "https://api.meaicc.com";
 const VOICEBOX_CHANNEL_ID = "local-voicebox";
 const VOICEBOX_MODEL_OPTION = `${VOICEBOX_CHANNEL_ID}${CHANNEL_MODEL_SEPARATOR}Voicebox`;
 
@@ -178,6 +179,7 @@ export function filterModelsByCapability(models: string[], capability?: ModelCap
 }
 
 function channelModelMatchesCapability(channel: Pick<ModelChannel, "apiFormat">, model: string, capability?: ModelCapability) {
+    if (channel.apiFormat === "meaicc") return !capability || capability === "video";
     if (capability === "video" && channel.apiFormat === "ark" && isArkEndpointModelName(model)) return true;
     if (channel.apiFormat === "top-image") {
         if (capability === "image") return modelOptionName(model) === "gpt-image-2";
@@ -401,6 +403,7 @@ export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "cangyuan") return CANGYUAN_BASE_URL;
     if (apiFormat === "top-image") return TOP_IMAGE_BASE_URL;
     if (apiFormat === "apimart") return APIMART_BASE_URL;
+    if (apiFormat === "meaicc") return MEAICC_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
@@ -410,6 +413,7 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
     if (apiFormat === "cangyuan") return "cangyuan";
     if (apiFormat === "top-image") return "top-image";
     if (apiFormat === "apimart") return "apimart";
+    if (apiFormat === "meaicc") return "meaicc";
     return "openai";
 }
 

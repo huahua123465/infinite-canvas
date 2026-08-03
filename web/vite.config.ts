@@ -25,6 +25,12 @@ export default defineConfig({
                 changeOrigin: true,
                 rewrite: (requestPath) => requestPath.replace(/^\/api\/proxy\/voicebox/, ""),
             },
+            "/api/proxy/meaicc/pricing": {
+                target: "https://api.meaicc.com",
+                changeOrigin: true,
+                secure: true,
+                rewrite: () => "/api/pricing",
+            },
         },
     },
     resolve: {

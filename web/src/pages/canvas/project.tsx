@@ -6533,6 +6533,7 @@ function clearVideoTaskMetadataPatch(): Partial<CanvasNodeMetadata> {
         videoTaskRequestFields: undefined,
         videoTaskRequestSummary: undefined,
         videoTaskApimartOmniElements: undefined,
+        videoTaskTemporaryReferenceUrls: undefined,
         videoGenerationProgress: undefined,
     };
 }
@@ -6550,6 +6551,7 @@ function videoTaskMetadata(task: VideoGenerationTask): Partial<CanvasNodeMetadat
         videoTaskRequestFields: task.requestFields,
         videoTaskRequestSummary: task.requestSummary,
         videoTaskApimartOmniElements: task.apimartOmniElements,
+        videoTaskTemporaryReferenceUrls: task.temporaryReferenceUrls,
     };
 }
 
@@ -6570,6 +6572,7 @@ function videoTaskFromMetadata(metadata?: CanvasNodeMetadata, config?: AiConfig)
         requestFields: metadata.videoTaskRequestFields,
         requestSummary: metadata.videoTaskRequestSummary,
         apimartOmniElements: metadata.videoTaskApimartOmniElements,
+        temporaryReferenceUrls: metadata.videoTaskTemporaryReferenceUrls,
     };
 }
 
@@ -6580,6 +6583,7 @@ function videoTaskProviderFromConfig(config: AiConfig | undefined, model: string
     if (requestConfig.apiFormat === "ark") return "seedance";
     if (requestConfig.apiFormat === "top-image") return "top-image";
     if (requestConfig.apiFormat === "apimart") return "apimart";
+    if (requestConfig.apiFormat === "meaicc") return "meaicc";
     return "openai";
 }
 

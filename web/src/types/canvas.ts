@@ -317,7 +317,7 @@ export type CanvasNodeMetadata = {
     storyboardVideoConfigCustomized?: boolean;
     videoGenerationProgress?: VideoGenerationProgress;
     videoTaskId?: string;
-    videoTaskProvider?: "openai" | "seedance" | "cangyuan" | "top-image" | "apimart" | "script";
+    videoTaskProvider?: "openai" | "seedance" | "cangyuan" | "top-image" | "apimart" | "meaicc" | "script";
     videoTaskModel?: string;
     videoTaskEndpoint?: "videos" | "video-generations";
     videoTaskSubmittedAt?: string;
@@ -327,6 +327,7 @@ export type CanvasNodeMetadata = {
     videoTaskRequestFields?: string[];
     videoTaskRequestSummary?: VideoRequestSummary;
     videoTaskApimartOmniElements?: ApimartOmniElement[];
+    videoTaskTemporaryReferenceUrls?: string[];
     workspaceKind?: "storyboard-character-assets" | "storyboard-scene-assets" | "storyboard-prop-assets" | "storyboard-videos" | "character-references";
     workspaceSourceNodeId?: string;
     workspaceStoryboardChapterId?: string;

@@ -3,7 +3,7 @@ import localforage from "localforage";
 import { getMediaBlob } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceVideo } from "@/types/media";
+import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type PublishedMedia = { url: string; expiresAt: number };
 type TemporaryUploadResponse = { success?: boolean; error?: string; files?: Array<{ id?: string; name?: string; url?: string; expiryTime?: number }> };
@@ -43,8 +43,16 @@ export async function publishReferenceImage(image: ReferenceImage, signal?: Abor
     return publishTemporaryMedia(blob, image.name || "reference.png", image.storageKey, "image/", signal);
 }
 
-async function publishTemporaryMedia(blob: Blob, name: string, storageKey: string | undefined, expectedType: "video/" | "image/", signal?: AbortSignal) {
-    const mediaLabel = expectedType === "video/" ? "参考视频" : "参考图片";
+export async function publishReferenceAudio(audio: ReferenceAudio, signal?: AbortSignal) {
+    if (/^https:\/\//i.test(audio.url || "")) return audio.url;
+    const stored = audio.storageKey ? await getMediaBlob(audio.storageKey) : null;
+    const blob = stored || (audio.url?.startsWith("blob:") || audio.url?.startsWith("data:") ? await (await fetch(audio.url, { signal })).blob() : null);
+    if (!blob) throw new Error(`参考音频“${audio.name}”本地文件无法读取，请重新上传；尚未创建付费视频任务`);
+    return publishTemporaryMedia(blob, audio.name || "reference.mp3", audio.storageKey, "audio/", signal);
+}
+
+async function publishTemporaryMedia(blob: Blob, name: string, storageKey: string | undefined, expectedType: "video/" | "image/" | "audio/", signal?: AbortSignal) {
+    const mediaLabel = expectedType === "video/" ? "参考视频" : expectedType === "audio/" ? "参考音频" : "参考图片";
     const uploadName = normalizedUploadName(name, blob.type, expectedType);
     const cacheKey = storageKey ? publishedMediaCacheKey(storageKey, uploadName) : "";
     const cached = cacheKey ? await cache.getItem<PublishedMedia>(cacheKey) : null;
@@ -136,16 +144,18 @@ async function normalizeReferenceVideo(blob: Blob, signal?: AbortSignal) {
     return new Blob([normalized], { type: "video/mp4" });
 }
 
-function normalizedUploadName(name: string, mimeType: string, expectedType: "video/" | "image/") {
+function normalizedUploadName(name: string, mimeType: string, expectedType: "video/" | "image/" | "audio/") {
     const extension = expectedType === "video/"
         ? mimeType === "video/webm" ? "webm" : mimeType === "video/quicktime" ? "mov" : "mp4"
+        : expectedType === "audio/"
+          ? mimeType === "audio/wav" || mimeType === "audio/x-wav" ? "wav" : mimeType === "audio/mp4" ? "m4a" : "mp3"
         : mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
-    const baseName = name.trim().replace(/\.[a-z0-9]+$/i, "") || (expectedType === "video/" ? "reference" : "image");
+    const baseName = name.trim().replace(/\.[a-z0-9]+$/i, "") || (expectedType === "video/" ? "reference" : expectedType === "audio/" ? "audio" : "image");
     return `${baseName}.${extension}`;
 }
 
-async function assertPublishedMediaUrl(url: string, expectedType: "video/" | "image/", signal?: AbortSignal) {
-    const mediaLabel = expectedType === "video/" ? "参考视频" : "参考图片";
+async function assertPublishedMediaUrl(url: string, expectedType: "video/" | "image/" | "audio/", signal?: AbortSignal) {
+    const mediaLabel = expectedType === "video/" ? "参考视频" : expectedType === "audio/" ? "参考音频" : "参考图片";
     let response: Response;
     try {
         response = await fetch(url, { method: "HEAD", signal });

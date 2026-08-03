@@ -4,7 +4,7 @@ import { Cpu } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { videoReferenceLimitsLabel, videoReferenceLimitsTitle } from "@/lib/video-model-capabilities";
-import { cangyuanPricingKey, fetchCangyuanModelPricing, findModelPricing, formatModelPricing, type ModelPricingIndex } from "@/services/api/model-pricing";
+import { cangyuanPricingKey, fetchModelPricing, findModelPricing, formatModelPricing, modelPricingReferenceLimits, type ModelPricingIndex } from "@/services/api/model-pricing";
 import { modelOptionLabel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { apimartModelInfo, apimartSeedancePricing } from "@/lib/apimart-model-catalog";
 
@@ -23,6 +23,7 @@ type ModelPickerProps = {
 
 export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder = "选择模型", estimateSeconds, estimateReferenceVideoSeconds = 0, onMissingConfig }: ModelPickerProps) {
     const [pricingByBaseUrl, setPricingByBaseUrl] = useState<Record<string, ModelPricingIndex>>({});
+    const [pricingErrors, setPricingErrors] = useState<string[]>([]);
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
     const pricingKeys = useMemo(
         () =>
@@ -30,7 +31,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 new Set(
                     options
                         .map((model) => resolveModelChannel(config, model))
-                        .filter((channel) => channel.apiFormat === "cangyuan")
+                        .filter((channel) => channel.apiFormat === "cangyuan" || channel.apiFormat === "meaicc")
                         .map((channel) => cangyuanPricingKey(channel.baseUrl))
                         .filter(Boolean),
                 ),
@@ -43,10 +44,15 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 const channel = resolveModelChannel(config, model);
                 const apimart = channel.apiFormat === "apimart" ? apimartModelInfo(modelOptionName(model)) : null;
                 const apimartPricing = channel.apiFormat === "apimart" ? apimartSeedancePricing(modelOptionName(model), config.vquality, estimateSeconds, estimateReferenceVideoSeconds) : null;
-                const pricing = channel.apiFormat === "cangyuan" ? formatModelPricing(findModelPricing(pricingByBaseUrl[cangyuanPricingKey(channel.baseUrl)], modelOptionName(model)), estimateSeconds) : null;
-                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={apimartPricing?.price || apimart?.price || pricing?.label} unitPrice={apimartPricing?.uploadedVideoPrice || pricing?.unitLabel} priceTitle={apimartPricing?.title || apimart?.priceTitle || pricing?.title} referenceLabel={apimart ? (apimart.references ? `${apimart.references.images}·${apimart.references.videos}·${apimart.references.audios}` : "待核对") : undefined} /> };
+                const pricingKey = cangyuanPricingKey(channel.baseUrl);
+                const pricingItem = findModelPricing(pricingByBaseUrl[pricingKey], modelOptionName(model));
+                const pricing = channel.apiFormat === "cangyuan" || channel.apiFormat === "meaicc" ? formatModelPricing(pricingItem, estimateSeconds, channel.apiFormat === "meaicc" ? "$" : "¥") : null;
+                const meaiccLimits = channel.apiFormat === "meaicc" ? modelPricingReferenceLimits(pricingItem) : null;
+                const pricingError = pricingErrors.includes(pricingKey);
+                const priceTitle = channel.apiFormat === "meaicc" ? [pricing?.title, pricingItem?.description, "价格与素材上限来自 MEAICC 实时模型广场"].filter(Boolean).join("；") : pricing?.title;
+                return { value: model, label: <ModelLabel config={config} model={model} capability={capability} price={apimartPricing?.price || apimart?.price || (pricingError ? "价格读取失败" : pricing?.label)} unitPrice={apimartPricing?.uploadedVideoPrice || pricing?.unitLabel} priceTitle={apimartPricing?.title || apimart?.priceTitle || priceTitle} referenceLabel={apimart ? (apimart.references ? `${apimart.references.images}·${apimart.references.videos}·${apimart.references.audios}` : "待核对") : meaiccLimits ? `${meaiccLimits.images}·${meaiccLimits.videos}·${meaiccLimits.audios}` : undefined} /> };
             }),
-        [capability, config, estimateReferenceVideoSeconds, estimateSeconds, options, pricingByBaseUrl],
+        [capability, config, estimateReferenceVideoSeconds, estimateSeconds, options, pricingByBaseUrl, pricingErrors],
     );
     const pricingOptionsKey = options.join("\n");
     const current = value || "";
@@ -55,9 +61,16 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     useEffect(() => {
         if (!pricingKeys.length) return;
         let cancelled = false;
-        void Promise.all(pricingKeys.map(async (key) => [key, await fetchCangyuanModelPricing(key)] as const)).then((entries) => {
+        void Promise.all(pricingKeys.map(async (key) => {
+            try {
+                return [key, await fetchModelPricing(key), false] as const;
+            } catch {
+                return [key, {}, true] as const;
+            }
+        })).then((entries) => {
             if (cancelled || !entries.length) return;
-            setPricingByBaseUrl((currentPricing) => ({ ...currentPricing, ...Object.fromEntries(entries) }));
+            setPricingByBaseUrl((currentPricing) => ({ ...currentPricing, ...Object.fromEntries(entries.map(([key, index]) => [key, index])) }));
+            setPricingErrors(entries.filter(([, , failed]) => failed).map(([key]) => key));
         });
         return () => {
             cancelled = true;

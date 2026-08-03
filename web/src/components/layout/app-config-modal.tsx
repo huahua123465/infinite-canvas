@@ -47,6 +47,7 @@ const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "沧元算力", value: "cangyuan" },
     { label: "Top Image", value: "top-image" },
     { label: "APIMart", value: "apimart" },
+    { label: "MEAICC", value: "meaicc" },
 ];
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
@@ -157,6 +158,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         }
         setLoadingChannelId(channel.id);
         try {
+            if (channel.apiFormat === "meaicc") invalidateCangyuanModelPricing(channel.baseUrl);
             const models = await fetchChannelModels(channel);
             if (channel.apiFormat === "cangyuan") invalidateCangyuanModelPricing(channel.baseUrl);
             updateChannels(config.channels.map((item) => (item.id === channel.id ? { ...item, models } : item)));
@@ -176,6 +178,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         }
         setLoadingChannelId("all");
         try {
+            runnable.filter((channel) => channel.apiFormat === "meaicc").forEach((channel) => invalidateCangyuanModelPricing(channel.baseUrl));
             const entries = await Promise.all(runnable.map(async (channel) => [channel.id, await fetchChannelModels(channel)] as const));
             const modelMap = new Map(entries);
             runnable.filter((channel) => channel.apiFormat === "cangyuan").forEach((channel) => invalidateCangyuanModelPricing(channel.baseUrl));
@@ -626,6 +629,7 @@ function apiFormatLabel(apiFormat: ApiCallFormat) {
     if (apiFormat === "cangyuan") return "沧元算力";
     if (apiFormat === "top-image") return "Top Image";
     if (apiFormat === "apimart") return "APIMart";
+    if (apiFormat === "meaicc") return "MEAICC";
     return "OpenAI";
 }
 

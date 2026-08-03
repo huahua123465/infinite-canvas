@@ -1307,7 +1307,7 @@ function buildVideoRequestAudit(metadata?: CanvasNodeMetadata) {
     const method = metadata.videoTaskRequestMethod || "POST";
     const url = metadata.videoTaskRequestUrl || fallbackVideoTaskRequestUrl(metadata);
     const model = metadata.videoTaskRequestModel || modelOptionName(metadata.videoTaskModel || metadata.model || "") || "未记录";
-    const route = metadata.videoTaskProvider === "cangyuan" ? "沧元视频" : metadata.videoTaskProvider === "seedance" ? "方舟 Seedance" : metadata.videoTaskProvider === "top-image" ? "Top Image 视频" : metadata.videoTaskProvider === "apimart" ? "APIMart 视频" : "OpenAI 兼容视频";
+    const route = metadata.videoTaskProvider === "cangyuan" ? "沧元视频" : metadata.videoTaskProvider === "seedance" ? "方舟 Seedance" : metadata.videoTaskProvider === "top-image" ? "Top Image 视频" : metadata.videoTaskProvider === "apimart" ? "APIMart 视频" : metadata.videoTaskProvider === "meaicc" ? "MEAICC 视频" : "OpenAI 兼容视频";
     const submittedAt = formatVideoTaskSubmittedAt(metadata.videoTaskSubmittedAt);
     const fields = metadata.videoTaskRequestFields?.join(", ") || "未记录（旧任务）";
     return {

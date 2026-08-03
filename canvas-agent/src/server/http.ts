@@ -9,7 +9,7 @@ import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { CanvasSession } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { loadCinemaDnaContext, loadScreenwritingContext, loadSeedance20Context, openToonflow, proxyMediaDownload, proxyVoicebox, proxyVolcengineJson, proxyVolcengineSpeech } from "../http-server.js";
+import { loadCinemaDnaContext, loadScreenwritingContext, loadSeedance20Context, openToonflow, proxyMeaiccPricing, proxyMediaDownload, proxyVoicebox, proxyVolcengineJson, proxyVolcengineSpeech } from "../http-server.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
 export function startHttpServer() {
@@ -100,6 +100,7 @@ export function startHttpServer() {
         res.json({ ok: true });
     }));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
+    app.get("/api/proxy/meaicc/pricing", route(proxyMeaiccPricing));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.post("/api/proxy/volcengine/voice-clone", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/voice_clone")));
     app.post("/api/proxy/volcengine/get-voice", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/get_voice")));

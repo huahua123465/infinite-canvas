@@ -1,7 +1,8 @@
 import { CANGYUAN_SD5_SEEDANCE_REFERENCE_TOTAL_LIMIT, isCangyuanSd5SeedanceModel, isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits } from "@/lib/video-model-capabilities";
+import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel, videoReferenceLimits, videoReferenceLimitsForConfig } from "@/lib/video-model-capabilities";
 import { imageToDataUrl } from "@/services/image-storage";
+import { fetchModelPricing } from "@/services/api/model-pricing";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ApimartOmniElement, ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -28,9 +29,13 @@ export type VideoPreflightResult = {
 };
 
 const seedanceRatios = new Set(["16:9", "9:16", "1:1", "21:9", "3:4", "4:3"]);
+const meaiccRatios = new Set(["16:9", "9:16", "1:1", "3:4", "4:3"]);
 const grokDurations = new Set([4, 6, 8, 10, 12, 15]);
 
 export async function inspectVideoGenerationInput(input: VideoPreflightInput): Promise<VideoPreflightResult> {
+    const selectedModel = input.config.model || input.config.videoModel;
+    const requestConfig = resolveModelRequestConfig(input.config, selectedModel);
+    if (requestConfig.apiFormat === "meaicc") await fetchModelPricing(requestConfig.baseUrl);
     const issues = validateVideoGenerationParameters(input);
     if (typeof document !== "undefined" && input.references.length) {
         const model = modelOptionName(input.config.model || input.config.videoModel).trim().toLowerCase();
@@ -57,6 +62,7 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const isCangyuan = requestConfig.apiFormat === "cangyuan" || requestConfig.baseUrl.toLowerCase().includes("ai.cangyuansuanli.cn");
     const isTopImage = requestConfig.apiFormat === "top-image";
     const isApimart = requestConfig.apiFormat === "apimart";
+    const isMeaicc = requestConfig.apiFormat === "meaicc";
     if (!prompt) issues.push(blocked("prompt_empty", "视频提示词不能为空", "请填写视频内容、动作和镜头描述。"));
     if (/@(?:image|图片)\d+/i.test(prompt) && !input.references.length) issues.push(blocked("prompt_image_reference_missing", "提示词引用了图片，但实际没有提交参考图", "请确认参考图从输入端连入视频节点后再生成。"));
     if (/@(?:video|视频)\d+/i.test(prompt) && !input.videoReferences.length) issues.push(blocked("prompt_video_reference_missing", "提示词引用了视频，但实际没有提交参考视频", "请确认参考视频从输入端连入视频节点后再生成。"));
@@ -64,7 +70,16 @@ export function validateVideoGenerationParameters(input: VideoPreflightInput) {
     const maxPromptLength = model.startsWith("grok-video") ? 4096 : isSoraVideoModel(model) || isVeoVideoModel(model) || isCangyuanSd5SeedanceModel(model) ? 1200 : 5000;
     if (prompt.length > maxPromptLength) issues.push(blocked("prompt_too_long", `当前模型提示词不能超过 ${maxPromptLength} 个字符`, "请精简提示词后再生成。"));
 
-    if (isCangyuanSd5SeedanceModel(model)) {
+    if (isMeaicc) {
+        const limits = videoReferenceLimitsForConfig(input.config, selectedModel);
+        if (!limits) issues.push(blocked("meaicc_model_catalog", "MEAICC 当前模型未公布素材上限或价格，不能创建付费任务", "请刷新模型列表，或改选模型广场中已明确标注能力和价格的型号。"));
+        if (limits && input.references.length > limits.images) issues.push(blocked("meaicc_images", `当前 MEAICC 模型参考图不能超过 ${limits.images} 张`, "请移除多余参考图。"));
+        if (limits && input.videoReferences.length > limits.videos) issues.push(blocked("meaicc_videos", `当前 MEAICC 模型参考视频不能超过 ${limits.videos} 条`, "请移除多余参考视频。"));
+        if (limits && input.audioReferences.length > limits.audios) issues.push(blocked("meaicc_audios", `当前 MEAICC 模型参考音频不能超过 ${limits.audios} 条`, "请移除多余参考音频。"));
+        if (!meaiccRatios.has(ratio)) issues.push(blocked("meaicc_ratio", `MEAICC Seedance 不支持当前画幅 ${ratio}`, "请选择 16:9、9:16、1:1、3:4 或 4:3。"));
+        const inputVideoSeconds = input.videoReferences.reduce((total, item) => total + (item.durationMs || 0), 0) / 1000;
+        if (inputVideoSeconds + duration > 25) issues.push(blocked("meaicc_video_duration", `参考视频与输出视频合计不能超过 25 秒（当前约 ${Number((inputVideoSeconds + duration).toFixed(2))} 秒）`, "请裁短参考视频或降低输出时长。"));
+    } else if (isCangyuanSd5SeedanceModel(model)) {
         const limits = videoReferenceLimits(model)!;
         if (duration < 4 || duration > 15) issues.push(blocked("sd5_seedance_duration", "沧元 SD5 Seedance 视频时长必须为 4-15 秒", "请修改当前镜头时长"));
         if (!["16:9", "9:16"].includes(ratio)) issues.push(blocked("sd5_seedance_ratio", "沧元 SD5 Seedance 仅支持 16:9 或 9:16", "请选择横屏或竖屏"));

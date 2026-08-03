@@ -70,6 +70,7 @@ export function startHttpServer() {
         res.status(202).json({ ok: true, message: "正在打开 ToonFlow" });
     }));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
+    app.get("/api/proxy/meaicc/pricing", route(proxyMeaiccPricing));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
     app.post("/api/proxy/volcengine/voice-clone", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/voice_clone")));
     app.post("/api/proxy/volcengine/get-voice", route((req, res) => proxyVolcengineJson(req, res, "/api/v3/tts/get_voice")));
@@ -253,6 +254,15 @@ export async function proxyMediaDownload(req: Request, res: Response) {
     res.setHeader("Cache-Control", "no-store");
     const length = upstream.headers.get("content-length");
     if (length) res.setHeader("Content-Length", length);
+    res.send(data);
+}
+
+export async function proxyMeaiccPricing(_req: Request, res: Response) {
+    const upstream = await fetch("https://api.meaicc.com/api/pricing", { headers: { Accept: "application/json" } });
+    const data = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+    res.setHeader("Cache-Control", "no-store");
     res.send(data);
 }
 

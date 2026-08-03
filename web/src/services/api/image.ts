@@ -9,6 +9,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 import { APIMART_MODELS, apimartModelInfo } from "@/lib/apimart-model-catalog";
+import { documentedModelPricingNames, fetchModelPricing, findModelPricing, modelPricingReferenceLimits } from "@/services/api/model-pricing";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -1179,6 +1180,19 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
 export async function fetchChannelModels(channel: ModelChannel) {
     if (channel.apiFormat === "apimart") {
         return APIMART_MODELS;
+    }
+    if (channel.apiFormat === "meaicc") {
+        const [models, pricing] = await Promise.all([
+            fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat }),
+            fetchModelPricing(channel.baseUrl),
+        ]);
+        const matchedModels = models.filter((model) => {
+            const item = findModelPricing(pricing, model);
+            return Number(item?.model_price) > 0 && Boolean(modelPricingReferenceLimits(item));
+        });
+        const catalogModels = documentedModelPricingNames(pricing);
+        if (!catalogModels.length) throw new Error("MEAICC 模型广场当前没有公布可用视频模型的素材上限与价格");
+        return matchedModels.length ? matchedModels : catalogModels;
     }
     return fetchImageModels({ baseUrl: channel.baseUrl, apiKey: channel.apiKey, apiFormat: channel.apiFormat });
 }

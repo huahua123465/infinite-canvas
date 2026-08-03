@@ -7,6 +7,7 @@ export type ModelPricingItem = {
     request_unit?: string;
     description?: string;
     tags?: string | string[];
+    quota_type?: number;
 };
 
 export type ModelPricingIndex = Record<string, ModelPricingItem>;
@@ -16,6 +17,7 @@ type PricingResponse = {
 };
 
 const pricingRequests = new Map<string, Promise<ModelPricingIndex>>();
+const pricingIndexes = new Map<string, ModelPricingIndex>();
 
 const pricingAliases: Record<string, string[]> = {
     sora2: ["openai-sora2"],
@@ -27,20 +29,62 @@ export function cangyuanPricingKey(baseUrl: string) {
 }
 
 export async function fetchCangyuanModelPricing(baseUrl: string) {
+    return fetchModelPricing(baseUrl).catch(() => ({} as ModelPricingIndex));
+}
+
+export function fetchModelPricing(baseUrl: string) {
     const key = cangyuanPricingKey(baseUrl);
-    if (!key) return {};
+    if (!key) return Promise.resolve({} as ModelPricingIndex);
     const cached = pricingRequests.get(key);
     if (cached) return cached;
-    const request: Promise<ModelPricingIndex> = axios
-        .get<PricingResponse>(`${key}/api/pricing`)
-        .then((response) => indexPricingItems(response.data.data || []))
-        .catch(() => ({} as ModelPricingIndex));
+    const request = requestPricing(key).then((response) => {
+        const index = indexPricingItems(response.data.data || []);
+        pricingIndexes.set(key, index);
+        return index;
+    });
     pricingRequests.set(key, request);
+    void request.catch(() => {
+        if (pricingRequests.get(key) === request) pricingRequests.delete(key);
+    });
     return request;
 }
 
+async function requestPricing(baseUrl: string) {
+    if (!isMeaiccPricingOrigin(baseUrl)) return axios.get<PricingResponse>(`${baseUrl}/api/pricing`);
+    const agentUrl = meaiccAgentPricingUrl();
+    if (agentUrl) {
+        try {
+            return await axios.get<PricingResponse>(agentUrl);
+        } catch (error) {
+            if (!axios.isAxiosError(error) || (error.response?.status !== 404 && error.response?.status !== 405)) throw error;
+        }
+    }
+    return axios.get<PricingResponse>("/api/proxy/meaicc/pricing");
+}
+
+function isMeaiccPricingOrigin(baseUrl: string) {
+    try {
+        return new URL(baseUrl).hostname.toLowerCase() === "api.meaicc.com";
+    } catch {
+        return false;
+    }
+}
+
+function meaiccAgentPricingUrl() {
+    if (typeof localStorage === "undefined") return "";
+    const endpoint = (localStorage.getItem("canvas-agent-url") || "").trim().replace(/\/+$/, "");
+    const token = (localStorage.getItem("canvas-agent-token") || "").trim();
+    return endpoint && token ? `${endpoint}/api/proxy/meaicc/pricing?token=${encodeURIComponent(token)}` : "";
+}
+
 export function invalidateCangyuanModelPricing(baseUrl: string) {
-    pricingRequests.delete(cangyuanPricingKey(baseUrl));
+    const key = cangyuanPricingKey(baseUrl);
+    pricingRequests.delete(key);
+    pricingIndexes.delete(key);
+}
+
+export function cachedModelPricing(baseUrl: string) {
+    return pricingIndexes.get(cangyuanPricingKey(baseUrl));
 }
 
 export function findModelPricing(index: ModelPricingIndex | undefined, model: string) {
@@ -49,17 +93,30 @@ export function findModelPricing(index: ModelPricingIndex | undefined, model: st
     return index[name] || pricingAliases[name]?.map((alias) => index[alias]).find(Boolean);
 }
 
-export function formatModelPricing(item: ModelPricingItem | undefined, estimateSeconds?: string | number) {
+export function formatModelPricing(item: ModelPricingItem | undefined, estimateSeconds?: string | number, currency = "¥") {
     const price = Number(item?.model_price);
     if (!Number.isFinite(price) || price <= 0) return null;
     const perSecond = isPerSecondPricing(item);
     const unit = perSecond ? "秒" : priceUnit(item);
-    const unitText = `¥${formatMoney(price)}/${unit}`;
+    const unitText = `${currency}${formatMoney(price)}/${unit}`;
     const seconds = Number(estimateSeconds);
     if (perSecond && Number.isFinite(seconds) && seconds > 0) {
-        return { label: `约¥${formatMoney(price * seconds)}`, unitLabel: `${unitText}`, title: `${unitText}，按 ${seconds}s 估算` };
+        return { label: `约${currency}${formatMoney(price * seconds)}`, unitLabel: `${unitText}`, title: `${unitText}，按 ${seconds}s 估算` };
     }
     return { label: unitText, unitLabel: undefined, title: unitText };
+}
+
+export function modelPricingReferenceLimits(item: ModelPricingItem | undefined) {
+    const match = /(\d+)\s*图\s*\/\s*(\d+)\s*视频\s*\/\s*(\d+)\s*音频/.exec(item?.description || "");
+    return match ? { images: Number(match[1]), videos: Number(match[2]), audios: Number(match[3]) } : null;
+}
+
+export function documentedModelPricingNames(index: ModelPricingIndex) {
+    return Object.values(index)
+        .filter((item) => Number(item.model_price) > 0 && Boolean(modelPricingReferenceLimits(item)))
+        .map((item) => item.model_name?.trim() || "")
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
 }
 
 function indexPricingItems(items: ModelPricingItem[]) {
