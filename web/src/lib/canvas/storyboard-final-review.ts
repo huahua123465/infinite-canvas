@@ -10,6 +10,7 @@ import type {
     StoryboardShotPlan,
     StoryboardSourceBeat,
 } from "@/types/canvas";
+import { parsePlannedStoryboardShots, storyboardShotQualityIssuesForShot, storyboardSpeechParts, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 
 export const STORYBOARD_FINAL_REVIEW_DIMENSIONS: ReadonlyArray<{ key: StoryboardFinalReviewDimensionKey; label: string; weight: number }> = [
     { key: "factSelection", label: "事实忠实与取舍", weight: 10 },
@@ -185,3 +186,190 @@ function stringArray(value: unknown) { return Array.isArray(value) ? value.map(c
 function numberArray(value: unknown) { return Array.isArray(value) ? value.map(Number).filter(Number.isInteger) : []; }
 function isDimensionKey(value: string): value is StoryboardFinalReviewDimensionKey { return STORYBOARD_FINAL_REVIEW_DIMENSIONS.some((item) => item.key === value); }
 function uniqueCaps(values: StoryboardFinalReviewScoreCap[]) { return Array.from(new Map(values.map((value) => [value.id, value])).values()); }
+
+export type StoryboardFinalReviewOptimizationIssue = Pick<StoryboardFinalReviewIssue, "id" | "severity" | "title" | "description" | "suggestion" | "dimensionKeys" | "beatIds" | "shotIndexes">;
+export type StoryboardFinalReviewOptimizationInput = {
+    contract: "storyboard-final-review-optimization/v1";
+    instruction: string;
+    shotCount: number;
+    shotOrder: number[];
+    lockedNarrationChapterIds: string[];
+    lockedFields: string[];
+    issues: StoryboardFinalReviewOptimizationIssue[];
+    dramaturgy?: StoryboardDramaturgyPlan;
+    beats: StoryboardSourceBeat[];
+    shots: Array<{ shotIndex: number; editable: boolean; narrationLocked: boolean; row: string[]; plan?: StoryboardShotPlan }>;
+};
+export type StoryboardFinalReviewOptimizationSuccess = { shotIndex: number; row: string[]; plan: StoryboardShotPlan };
+export type StoryboardFinalReviewOptimizationFailure = { shotIndex: number; reason: string };
+export type StoryboardFinalReviewOptimizationResult = {
+    successes: StoryboardFinalReviewOptimizationSuccess[];
+    failures: StoryboardFinalReviewOptimizationFailure[];
+    ignoredShotIndexes: number[];
+};
+
+const optimizationLockedFields = [
+    "shotIndex", "sourceBeatIds", "visualBeatIds", "voiceoverBeatIds", "chapterId", "timeStage", "continuityGroupId",
+    "transition", "renderMode", "usePreviousTailFrame",
+];
+
+/** Selects only located P1/P2 review issues. P0 production failures must use the production repair path. */
+export function selectStoryboardFinalReviewOptimizationIssues(
+    review: StoryboardFinalReview,
+    shotCount: number,
+    issueIds?: string[],
+): StoryboardFinalReviewOptimizationIssue[] {
+    const selectedIds = issueIds?.length ? new Set(issueIds) : undefined;
+    const reviewerIssues: StoryboardFinalReviewOptimizationIssue[] = review.issues;
+    const deterministicIssues: StoryboardFinalReviewOptimizationIssue[] = review.deterministicFindings.map((issue) => ({
+        id: issue.id, severity: issue.severity, title: issue.title, description: issue.evidence.join("；"),
+        suggestion: "仅在现有事实边界内定点调整相关镜头，消除该项全片审美问题。", dimensionKeys: [], beatIds: issue.beatIds, shotIndexes: issue.shotIndexes,
+    }));
+    return Array.from(new Map([...reviewerIssues, ...deterministicIssues].map((issue) => [issue.id, issue])).values()).flatMap((issue) => {
+        if (issue.severity === "P0" || selectedIds && !selectedIds.has(issue.id)) return [];
+        const shotIndexes = unique(issue.shotIndexes.filter((index) => Number.isInteger(index) && index >= 0 && index < shotCount));
+        return shotIndexes.length ? [{ ...issue, beatIds: unique(issue.beatIds), shotIndexes }] : [];
+    });
+}
+
+export function buildStoryboardFinalReviewOptimizationInput(
+    input: StoryboardFinalReviewInput,
+    review: StoryboardFinalReview,
+    issueIds?: string[],
+    lockedNarrationChapterIds: string[] = [],
+): StoryboardFinalReviewOptimizationInput {
+    const issues = selectStoryboardFinalReviewOptimizationIssues(review, input.rows.length, issueIds);
+    const targetIndexes = new Set(issues.flatMap((issue) => issue.shotIndexes));
+    const contextIndexes = new Set<number>();
+    targetIndexes.forEach((index) => [index - 1, index, index + 1].forEach((value) => {
+        if (value >= 0 && value < input.rows.length) contextIndexes.add(value);
+    }));
+    const relevantBeatIds = new Set([
+        ...issues.flatMap((issue) => issue.beatIds),
+        ...Array.from(contextIndexes).flatMap((index) => input.shotPlans[index]?.sourceBeatIds || []),
+    ]);
+    return {
+        contract: "storyboard-final-review-optimization/v1",
+        instruction: "只优化 editable=true 的现有镜头，并按 shotIndex 返回。不得新增、删除、合并、拆分或重排镜头，不得虚构事实、事实 ID、人物、关系、地点、道具、对白或结局。participants 的姓名、角色、人物时期和来源事实必须原样保留；narrationLocked=true 时对白旁白列必须逐字保留，其他镜头也只能保留或删减已有对白，不得新增或改写台词。输出 shots 数组；每项包含 shotIndex、九列字段 visual/shotSize/lighting/dialogue/sound/camera/imagePrompt（时长固定15s）及完整场景卡字段。所有 lockedFields 必须原样返回。相邻镜头只用于连续性参考，不得返回。",
+        shotCount: input.rows.length,
+        shotOrder: input.rows.map((_, index) => index),
+        lockedNarrationChapterIds: unique(lockedNarrationChapterIds),
+        lockedFields: optimizationLockedFields,
+        issues,
+        dramaturgy: input.dramaturgy,
+        beats: input.beats.filter((beat) => relevantBeatIds.has(beat.id)),
+        shots: Array.from(contextIndexes).sort((a, b) => a - b).map((shotIndex) => ({
+            shotIndex,
+            editable: targetIndexes.has(shotIndex),
+            narrationLocked: Boolean(input.shotPlans[shotIndex]?.chapterId && lockedNarrationChapterIds.includes(input.shotPlans[shotIndex]?.chapterId || "")),
+            row: [...input.rows[shotIndex]],
+            plan: input.shotPlans[shotIndex],
+        })),
+    };
+}
+
+/** Strict, per-shot parser. One invalid model item never discards other valid optimized shots. */
+export function parseStoryboardFinalReviewOptimization(
+    content: string | unknown,
+    input: StoryboardFinalReviewInput,
+    optimizationInput: StoryboardFinalReviewOptimizationInput,
+): StoryboardFinalReviewOptimizationResult {
+    let data: unknown;
+    try {
+        data = typeof content === "string" ? JSON.parse(content.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim()) : content;
+    } catch (error) {
+        return { successes: [], failures: optimizationInput.issues.flatMap((issue) => issue.shotIndexes).filter((value, index, values) => values.indexOf(value) === index).map((shotIndex) => ({ shotIndex, reason: `优化结果不是合法 JSON：${error instanceof Error ? error.message : String(error)}` })), ignoredShotIndexes: [] };
+    }
+    const records = Array.isArray(data) ? data : data && typeof data === "object" && Array.isArray((data as { shots?: unknown }).shots) ? (data as { shots: unknown[] }).shots : [];
+    const targets = unique(optimizationInput.issues.flatMap((issue) => issue.shotIndexes));
+    const targetSet = new Set(targets);
+    const seen = new Set<number>();
+    const successes: StoryboardFinalReviewOptimizationSuccess[] = [];
+    const failures: StoryboardFinalReviewOptimizationFailure[] = [];
+    const ignoredShotIndexes: number[] = [];
+    records.forEach((record) => {
+        const raw = record && typeof record === "object" ? record as Record<string, unknown> : undefined;
+        const shotIndex = Number(raw?.shotIndex);
+        if (!Number.isInteger(shotIndex) || !targetSet.has(shotIndex)) {
+            if (Number.isInteger(shotIndex)) ignoredShotIndexes.push(shotIndex);
+            return;
+        }
+        if (seen.has(shotIndex)) {
+            failures.push({ shotIndex, reason: "同一目标镜头返回了多次" });
+            return;
+        }
+        seen.add(shotIndex);
+        const originalPlan = input.shotPlans[shotIndex];
+        if (!originalPlan) {
+            failures.push({ shotIndex, reason: "原镜头缺少场景卡，必须先修复生产问题" });
+            return;
+        }
+        const lockedMismatch = optimizationLockedFields.some((field) => field !== "shotIndex" && !sameLockedValue(raw[field], originalPlan[field as keyof StoryboardShotPlan]));
+        if (lockedMismatch) {
+            failures.push({ shotIndex, reason: "模型修改或遗漏了锁定字段" });
+            return;
+        }
+        let parsed: PlannedStoryboardShot | undefined;
+        try { parsed = parsePlannedStoryboardShots(JSON.stringify([raw]))[0]; } catch { parsed = undefined; }
+        if (!parsed) {
+            failures.push({ shotIndex, reason: "模型没有返回完整可解析的九列镜头与场景卡" });
+            return;
+        }
+        parsed.plan = { ...parsed.plan, ...pickLockedPlan(originalPlan) };
+        const originalParticipants = participantIdentity(originalPlan);
+        if (participantIdentity(parsed.plan) !== originalParticipants) {
+            failures.push({ shotIndex, reason: "模型修改了锁定的人物身份、时期、角色或来源事实" });
+            return;
+        }
+        const originalSpeech = storyboardSpeechParts(input.rows[shotIndex]?.[5] || "");
+        const optimizedSpeech = storyboardSpeechParts(parsed.row[5] || "");
+        if (optimizedSpeech.dialogues.some((dialogue) => !originalSpeech.dialogues.some((original) => original.includes(dialogue)))) {
+            failures.push({ shotIndex, reason: "模型新增或改写了原镜头中不存在的对白" });
+            return;
+        }
+        if (originalPlan.chapterId && optimizationInput.lockedNarrationChapterIds.includes(originalPlan.chapterId) && parsed.row[5] !== input.rows[shotIndex]?.[5]) {
+            failures.push({ shotIndex, reason: "本章旁白已经人工锁定，必须逐字保留对白旁白列" });
+            return;
+        }
+        const allowedBeatIds = new Set(input.beats.map((beat) => beat.id));
+        const returnedBeatIds = [
+            ...parsed.plan.sourceBeatIds, ...(parsed.plan.visualBeatIds || []), ...(parsed.plan.voiceoverBeatIds || []),
+            ...(parsed.plan.participants || []).flatMap((participant) => participant.sourceBeatIds || []),
+        ];
+        if (returnedBeatIds.some((id) => !allowedBeatIds.has(id))) {
+            failures.push({ shotIndex, reason: "模型返回了来源中不存在的事实 ID" });
+            return;
+        }
+        const qualityIssues = storyboardShotQualityIssuesForShot(parsed);
+        if (qualityIssues.length) {
+            failures.push({ shotIndex, reason: qualityIssues.join("；") });
+            return;
+        }
+        successes.push({ shotIndex, row: parsed.row, plan: parsed.plan });
+    });
+    targets.filter((shotIndex) => !seen.has(shotIndex)).forEach((shotIndex) => failures.push({ shotIndex, reason: "模型未返回该目标镜头" }));
+    const failedIndexes = new Set(failures.map((item) => item.shotIndex));
+    return { successes: successes.filter((item) => !failedIndexes.has(item.shotIndex)), failures, ignoredShotIndexes: unique(ignoredShotIndexes) };
+}
+
+function sameLockedValue(actual: unknown, expected: unknown) {
+    if (Array.isArray(expected)) return Array.isArray(actual) && actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+    return actual === expected;
+}
+
+function pickLockedPlan(plan: StoryboardShotPlan): Partial<StoryboardShotPlan> {
+    return {
+        sourceBeatIds: [...plan.sourceBeatIds], visualBeatIds: [...(plan.visualBeatIds || [])], voiceoverBeatIds: [...(plan.voiceoverBeatIds || [])],
+        chapterId: plan.chapterId, timeStage: plan.timeStage, continuityGroupId: plan.continuityGroupId, transition: plan.transition,
+        renderMode: plan.renderMode, usePreviousTailFrame: plan.usePreviousTailFrame,
+    };
+}
+
+function participantIdentity(plan: StoryboardShotPlan) {
+    return JSON.stringify((plan.participants || []).map((participant) => ({
+        name: participant.name,
+        role: participant.role,
+        lifeStage: participant.lifeStage || "",
+        sourceBeatIds: [...(participant.sourceBeatIds || [])],
+    })).sort((left, right) => `${left.name}|${left.role}|${left.lifeStage}|${left.sourceBeatIds.join(",")}`.localeCompare(`${right.name}|${right.role}|${right.lifeStage}|${right.sourceBeatIds.join(",")}`)));
+}

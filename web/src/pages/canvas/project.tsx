@@ -28,7 +28,7 @@ import { buildCinemaDnaPromptInstruction, buildPromptAssistantInstruction, build
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 import { auditStoryboardProductionContract, type StoryboardProductionContractStage } from "@/lib/canvas/storyboard-production-contract";
-import { buildStoryboardFinalReviewerInput, parseStoryboardFinalReview } from "@/lib/canvas/storyboard-final-review";
+import { buildStoryboardFinalReviewOptimizationInput, buildStoryboardFinalReviewerInput, parseStoryboardFinalReview, parseStoryboardFinalReviewOptimization, storyboardFinalReviewContextKey } from "@/lib/canvas/storyboard-final-review";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { buildImagePresetPatch, type CanvasImagePresetId } from "@/lib/canvas/canvas-image-presets";
 import { setLastDirectorDeskCanvasId } from "@/lib/canvas/director-desk-routing";
@@ -248,6 +248,23 @@ const STORYBOARD_DRAMATURGY_PROMPT = `你是服务于 AI 短剧生产的总编�
 8. visualMotifs 只能选原文中已经存在、可反复出现的物件、动作、空间、光线或声音，不得虚构象征物。
 9. dialoguePrinciples 要求口语化、少解释、优先原文原话或旁白证据；不得编造煽情独白。
 10. 输出前自检 ID、事实、时间顺序、可拍摄性和节奏对比。`;
+
+function buildStoryboardFinalReviewPrompt(reviewerInput: unknown) {
+    return `你是一名独立的商业影视编剧终审 Reviewer。你只负责审核，不得改写剧本，不得补写镜头，不得虚构输入之外的人物、关系、对白、道具、地点、冲突、事实或结局。
+
+请严格区分两个结论：productionGate 只表示事实、场景卡和生产合同是否合格；你的十维审美评分只表示作品是否好看、是否值得制作。即使 productionGate 通过，也不能据此给高分；productionGate 未通过也仍须完成审美评价，本次审核不得阻断既有三步工作流。
+
+十个维度各按 0-100 分评价，程序会按输入 dimensions 的 weight 加权为满分 100 分。总分 75 为“建议制作”，85 为“可进入商业成片打磨”。必须尊重确定性检查给出的三个评分上限：无具体可见开场问题或动作时最高 79；主角没有明确选择和代价时最高 74；高潮只有旁白总结、没有行动兑现时最高 69。不得为提高分数而推断输入未提供的戏剧事实。
+
+所有问题必须引用输入中真实存在的 beatIds 与零基 shotIndexes；没有有效证据时不得创建问题，不得引用不存在的 ID 或镜头。建议只能说明修改方向，不得直接生成替代剧情。
+
+只返回一个 JSON 对象，不要 Markdown，不要额外解释。格式：
+{"dimensions":[{"key":"factSelection","score":0,"rationale":"证据化说明"}],"summary":"全片结论","issues":[{"id":"issue-1","severity":"P0|P1|P2","title":"问题标题","description":"基于证据的说明","suggestion":"不虚构事实的修改方向","dimensionKeys":["structure"],"beatIds":["有效事实ID"],"shotIndexes":[0]}]}
+dimensions 必须完整覆盖输入给出的十个 key。
+
+【终审输入】
+${JSON.stringify(reviewerInput)}`;
+}
 const STORYBOARD_SINGLE_EPISODE_CONDENSE_PROMPT = `你是漫剧单集编剧。请把完整故事事实浓缩为一集短片所需的核心事实，允许舍弃支线和重复信息，但不得改写关键因果、人物关系、重大转折和结局。
 
 只输出 JSON，不要 Markdown，不要解释：
@@ -788,6 +805,7 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const storyboardFinalReviewRunnerRef = useRef<((node: CanvasNodeData) => Promise<void>) | null>(null);
     const generationBatchControllersRef = useRef(new Map<string, AbortController>());
     const recoveringVideoTasksRef = useRef(new Map<string, AbortController>());
     const tailFrameBackfillRef = useRef(new Set<string>());
@@ -2473,11 +2491,11 @@ function InfiniteCanvasPage() {
         }));
     }, []);
 
-    const repairStoryboardShots = useCallback(async (node: CanvasNodeData, requestedIndexes?: number[]) => {
+    const repairStoryboardShots = useCallback(async (node: CanvasNodeData, requestedIndexes?: number[], autoReview = false) => {
         const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
         const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
         const plans = scriptNode.metadata?.storyboardShotPlans || {};
-        const rowIndexes = (requestedIndexes?.length ? requestedIndexes : storyboardActiveRowIndexes(scriptNode, rows)).filter((index) => Boolean(rows[index] && plans[String(index)]?.qualityError));
+        const rowIndexes = (requestedIndexes?.length ? requestedIndexes : rows.map((_, index) => index)).filter((index) => Boolean(rows[index] && plans[String(index)]?.qualityError));
         if (!rowIndexes.length) return;
         const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
         if (!isAiConfigReady(generationConfig, generationConfig.model)) {
@@ -2515,8 +2533,14 @@ function InfiniteCanvasPage() {
                     clearTimeout(timeoutId);
                 }
             }
-            if (failed.length) message.warning(`自动修正完成：成功 ${repairedCount} 项，失败 ${failed.length} 项；失败项已保留`, 6);
-            else message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频`);
+            if (failed.length) message.warning(`自动修正完成：成功 ${repairedCount} 项，失败 ${failed.length} 项；失败项已保留，修复全部后才能自动复审`, 6);
+            else if (autoReview) {
+                message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频，正在自动发起全片终审`);
+                setTimeout(() => {
+                    const latestNode = nodesRef.current.find((item) => item.id === scriptNode.id);
+                    if (latestNode) void storyboardFinalReviewRunnerRef.current?.(latestNode);
+                }, 0);
+            } else message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频`);
         } catch (error) {
             if (isGenerationCanceled(error)) message.info(`自动修正已暂停，已保留成功的 ${repairedCount} 项`);
             else message.error(error instanceof Error ? `自动修正失败：${error.message}` : "自动修正失败");
@@ -2532,6 +2556,20 @@ function InfiniteCanvasPage() {
         setStoryboardActionKey(null);
         message.info("已暂停自动修正，已保留成功项");
     }, [message, storyboardActionKey, stopGenerationByRunningId]);
+
+    const repairAllStoryboardProductionProblems = useCallback((node: CanvasNodeData) => {
+        const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+        const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+        const plans = scriptNode.metadata?.storyboardShotPlans || {};
+        const repairableIndexes = rows.flatMap((_, index) => plans[String(index)]?.qualityError ? [index] : []);
+        const missingPlanCount = rows.filter((_, index) => !plans[String(index)]).length;
+        if (!repairableIndexes.length) {
+            message.warning(missingPlanCount ? `${missingPlanCount} 个镜头缺少场景卡，需要重新规划完整故事后再终审` : "当前没有可自动修复的生产问题");
+            return;
+        }
+        if (missingPlanCount) message.warning(`将先修复 ${repairableIndexes.length} 个场景卡错误；另有 ${missingPlanCount} 个镜头缺少场景卡，需要重新规划`);
+        void repairStoryboardShots(scriptNode, repairableIndexes, true);
+    }, [message, repairStoryboardShots]);
 
     const runStoryboardFinalReview = useCallback(async (node: CanvasNodeData) => {
         const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
@@ -2557,20 +2595,7 @@ function InfiniteCanvasPage() {
         const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
         setStoryboardActionKey("final-review");
         setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "analyzing", percent: 20, text: "正在汇总全片事实、剧作总纲与全部场景卡" }, storyboardFinalReviewError: undefined } } : item));
-        const prompt = `你是一名独立的商业影视编剧终审 Reviewer。你只负责审核，不得改写剧本，不得补写镜头，不得虚构输入之外的人物、关系、对白、道具、地点、冲突、事实或结局。
-
-请严格区分两个结论：productionGate 只表示事实、场景卡和生产合同是否合格；你的十维审美评分只表示作品是否好看、是否值得制作。即使 productionGate 通过，也不能据此给高分；productionGate 未通过也仍须完成审美评价，本次审核不得阻断既有三步工作流。
-
-十个维度各按 0-100 分评价，程序会按输入 dimensions 的 weight 加权为满分 100 分。总分 75 为“建议制作”，85 为“可进入商业成片打磨”。必须尊重确定性检查给出的三个评分上限：无具体可见开场问题或动作时最高 79；主角没有明确选择和代价时最高 74；高潮只有旁白总结、没有行动兑现时最高 69。不得为提高分数而推断输入未提供的戏剧事实。
-
-所有问题必须引用输入中真实存在的 beatIds 与零基 shotIndexes；没有有效证据时不得创建问题，不得引用不存在的 ID 或镜头。建议只能说明修改方向，不得直接生成替代剧情。
-
-只返回一个 JSON 对象，不要 Markdown，不要额外解释。格式：
-{"dimensions":[{"key":"factSelection","score":0,"rationale":"证据化说明"}],"summary":"全片结论","issues":[{"id":"issue-1","severity":"P0|P1|P2","title":"问题标题","description":"基于证据的说明","suggestion":"不虚构事实的修改方向","dimensionKeys":["structure"],"beatIds":["有效事实ID"],"shotIndexes":[0]}]}
-dimensions 必须完整覆盖输入给出的十个 key。
-
-【终审输入】
-${JSON.stringify(reviewerInput)}`;
+        const prompt = buildStoryboardFinalReviewPrompt(reviewerInput);
         try {
             setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "reviewing", percent: 55, text: "独立 Reviewer 正在进行十维全片审核" }, storyboardFinalReviewError: undefined } } : item));
             const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: prompt }], () => {}, { signal: controller.signal });
@@ -2592,8 +2617,124 @@ ${JSON.stringify(reviewerInput)}`;
         }
     }, [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest]);
 
+    storyboardFinalReviewRunnerRef.current = runStoryboardFinalReview;
+
     const stopStoryboardFinalReview = useCallback((node: CanvasNodeData) => {
         if (storyboardActionKey !== "final-review") return;
+        stopGenerationByRunningId(node.id);
+    }, [stopGenerationByRunningId, storyboardActionKey]);
+
+    const optimizeStoryboardFinalReview = useCallback(async (node: CanvasNodeData, issueIds?: string[]) => {
+        const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
+        const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
+        const plans = scriptNode.metadata?.storyboardShotPlans || {};
+        const review = scriptNode.metadata?.storyboardFinalReview;
+        const input = {
+            beats: scriptNode.metadata?.storyboardSourceBeats || [],
+            dramaturgy: scriptNode.metadata?.storyboardDramaturgyPlan,
+            rows,
+            shotPlans: rows.map((_, index) => plans[String(index)]),
+        };
+        if (!review || review.contextKey !== storyboardFinalReviewContextKey(input)) {
+            message.warning("终审结果已失效，请先重新终审");
+            return;
+        }
+        if (!review.productionGate.passed) {
+            message.warning("生产门禁未通过，请先修复全部生产问题，再按终审建议优化");
+            return;
+        }
+        const optimizationInput = buildStoryboardFinalReviewOptimizationInput(input, review, issueIds, scriptNode.metadata?.storyboardLockedNarrationChapterIds || []);
+        if (!optimizationInput.issues.length) {
+            message.info("没有可定位到镜头的 P1/P2 问题需要优化");
+            return;
+        }
+        const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
+        if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+            openConfigDialog(true);
+            return;
+        }
+        const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
+        const oldScore = review.totalScore;
+        let optimizedSaved = false;
+        setStoryboardActionKey("final-review-optimize");
+        setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "reviewing", percent: 25, text: "正在按终审建议批量优化目标镜头" }, storyboardFinalReviewError: undefined } } : item));
+        try {
+            const optimizePrompt = `你是影视剧本定点修稿编辑。严格执行输入契约，只修改 editable=true 的镜头。锁定事实 ID、人物关系、结局、镜头数量与顺序、章节、人物时期、连续性和动态视频预算；不得新增事实、角色、地点、道具或对白。只依据 issues 调整目标镜头的动作、场景卡、节奏、已有旁白和视听表达。只返回 JSON：{"shots":[...]}。\n【定点优化输入】${JSON.stringify(optimizationInput)}`;
+            const answer = await requestImageQuestion(generationConfig, [{ role: "user", content: optimizePrompt }], () => {}, { signal: controller.signal });
+            const result = parseStoryboardFinalReviewOptimization(answer, input, optimizationInput);
+            if (!result.successes.length) throw new Error(`没有镜头通过优化校验：${result.failures.map((item) => `镜头${item.shotIndex + 1} ${item.reason}`).join("；")}`);
+
+            const nextRows = rows.map((row) => [...row]);
+            const nextPlans = { ...plans };
+            const promptDetails = { ...(scriptNode.metadata?.storyboardPromptDetails || {}) };
+            const promptErrors = { ...(scriptNode.metadata?.storyboardPromptErrors || {}) };
+            const promptRawResponses = { ...(scriptNode.metadata?.storyboardPromptRawResponses || {}) };
+            result.successes.forEach(({ shotIndex, row, plan }) => {
+                nextRows[shotIndex] = [nextRows[shotIndex][0] || "", nextRows[shotIndex][1] || "15s", ...row.slice(2)];
+                nextPlans[String(shotIndex)] = plan;
+                delete promptDetails[String(shotIndex)];
+                delete promptErrors[String(shotIndex)];
+                delete promptRawResponses[String(shotIndex)];
+            });
+            const normalizedRows = renumberStoryboardRowsForCanvas(nextRows);
+            const optimizedNode: CanvasNodeData = {
+                ...scriptNode,
+                metadata: {
+                    ...scriptNode.metadata,
+                    content: storyboardRowsToMarkdownForCanvas(normalizedRows),
+                    storyboardRows: [STORYBOARD_COLUMNS, ...normalizedRows],
+                    storyboardShotPlans: nextPlans,
+                    storyboardPromptDetails: promptDetails,
+                    storyboardPromptErrors: promptErrors,
+                    storyboardPromptRawResponses: promptRawResponses,
+                    storyboardFinalReview: review,
+                    storyboardFinalReviewProgress: { status: "analyzing", percent: 70, text: "优化已保存，正在自动进行独立复审" },
+                    storyboardFinalReviewError: undefined,
+                },
+            };
+            setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? optimizedNode : item));
+            optimizedSaved = true;
+
+            const reviewInput = {
+                beats: optimizedNode.metadata?.storyboardSourceBeats || [],
+                dramaturgy: optimizedNode.metadata?.storyboardDramaturgyPlan,
+                rows: normalizedRows,
+                shotPlans: normalizedRows.map((_, index) => nextPlans[String(index)]),
+            };
+            const reviewerInput = buildStoryboardFinalReviewerInput(reviewInput);
+            const reviewPrompt = buildStoryboardFinalReviewPrompt(reviewerInput);
+            try {
+                const reviewAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: reviewPrompt }], () => {}, { signal: controller.signal });
+                const nextReview = parseStoryboardFinalReview(reviewAnswer, reviewInput, { model: generationConfig.model || "unknown" });
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReview: nextReview, storyboardFinalReviewProgress: { status: "completed", percent: 100, text: "定点优化与自动复审完成" }, storyboardFinalReviewError: undefined } } : item));
+                const failureText = result.failures.length ? `，${result.failures.length} 个镜头校验失败并保留原内容` : "";
+                message.success(`已优化 ${result.successes.length} 个镜头并完成复审：${oldScore} → ${nextReview.totalScore}${failureText}`, 7);
+                if (result.failures.length) message.warning(`未修改：${result.failures.map((item) => `镜头${item.shotIndex + 1}（${item.reason}）`).join("；")}`, 10);
+            } catch (error) {
+                if (isGenerationCanceled(error)) throw error;
+                const reason = error instanceof Error ? error.message : "复审失败";
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReview: undefined, storyboardFinalReviewProgress: { status: "failed", percent: 100, text: "优化已保存，但自动复审失败" }, storyboardFinalReviewError: `优化已保存；复审失败：${reason}` } } : item));
+                message.warning(`已保存 ${result.successes.length} 个优化镜头，但自动复审失败：${reason}`, 7);
+                if (result.failures.length) message.warning(`未修改：${result.failures.map((item) => `镜头${item.shotIndex + 1}（${item.reason}）`).join("；")}`, 10);
+            }
+        } catch (error) {
+            if (isGenerationCanceled(error)) {
+                if (optimizedSaved) setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReview: undefined, storyboardFinalReviewProgress: undefined, storyboardFinalReviewError: "优化内容已保存，自动复审已停止，请重新终审" } } : item));
+                else setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: undefined, storyboardFinalReviewError: undefined } } : item));
+                message.info("已停止终审优化；已落盘的优化内容会保留");
+            } else {
+                const reason = error instanceof Error ? error.message : "终审优化失败";
+                setNodes((prev) => prev.map((item) => item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardFinalReviewProgress: { status: "failed", percent: 100, text: "终审优化失败" }, storyboardFinalReviewError: reason } } : item));
+                message.error(`终审优化失败：${reason}`);
+            }
+        } finally {
+            finishGenerationRequest(scriptNode.id, controller);
+            setStoryboardActionKey(null);
+        }
+    }, [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest]);
+
+    const stopStoryboardFinalReviewOptimization = useCallback((node: CanvasNodeData) => {
+        if (storyboardActionKey !== "final-review-optimize") return;
         stopGenerationByRunningId(node.id);
     }, [stopGenerationByRunningId, storyboardActionKey]);
 
@@ -6231,6 +6372,9 @@ ${JSON.stringify(reviewerInput)}`;
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onRunFinalReview={(node) => void runStoryboardFinalReview(node)}
                     onStopFinalReview={stopStoryboardFinalReview}
+                    onRepairAllProductionProblems={repairAllStoryboardProductionProblems}
+                    onOptimizeFinalReview={(node, issueIds) => void optimizeStoryboardFinalReview(node, issueIds)}
+                    onStopFinalReviewOptimization={stopStoryboardFinalReviewOptimization}
                     onRepairShot={(node, rowIndex) => void repairStoryboardShots(node, [rowIndex])}
                     onRepairAllShots={(node) => void repairStoryboardShots(node)}
                     onStopShotRepair={stopStoryboardShotRepair}
