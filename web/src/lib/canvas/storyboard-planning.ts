@@ -310,7 +310,7 @@ export function storyboardActionHasEvidence(content: string, beat: StoryboardTyp
         const actionText = clause.replace(CAMERA_PHRASE_PATTERN, "").replace(ABSTRACT_PHRASE_PATTERN, "").replace(STATIC_PHRASE_PATTERN, "").trim();
         return Boolean(actionText) && !storyboardIsPureNonExecutableState(actionText, beat);
     });
-    return actorBound && targetBound && actionTracked && executableClause && !storyboardIsPureNonExecutableState(beat.action, beat) && !storyboardIsPureNonExecutableState(beat.result || "", beat);
+    return actorBound && targetBound && actionTracked && executableClause && !storyboardIsPureNonExecutableState(beat.action, beat);
 }
 
 function storyboardVisualTimelineSegments(value: string) {
