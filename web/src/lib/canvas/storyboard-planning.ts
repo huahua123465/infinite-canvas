@@ -106,14 +106,39 @@ export function storyboardDramaturgyQualityIssues(plan: StoryboardDramaturgyPlan
     ].filter(Boolean);
 }
 
-export function parsePlannedStoryboardShots(content: string): PlannedStoryboardShot[] {
+export function storyboardDurationSeconds(value?: string | number, fallback = 15) {
+    const parsed = typeof value === "number" ? value : Number(String(value || "").match(/\d+(?:\.\d+)?/)?.[0]);
+    return Number.isFinite(parsed) && parsed >= 4 ? Math.round(parsed * 10) / 10 : fallback;
+}
+
+function formatStoryboardSecond(value: number) { return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1))); }
+
+export function storyboardTimelineRanges(value?: string | number): Array<[number, number]> {
+    const duration = storyboardDurationSeconds(value);
+    if (duration === 15) return [[0, 3], [3, 9], [9, 12], [12, 15]];
+    if (duration <= 4) return [[0, 1], [1, 2], [2, 3], [3, duration]];
+    const first = Math.min(Math.max(1, Math.round(duration * .2)), duration - 3);
+    const second = Math.min(Math.max(first + 1, Math.round(duration * .6)), duration - 2);
+    const third = Math.min(Math.max(second + 1, Math.round(duration * .8)), duration - 1);
+    return [[0, first], [first, second], [second, third], [third, duration]];
+}
+
+export function storyboardTimelineRangeLabels(value?: string | number) { return storyboardTimelineRanges(value).map(([start, end]) => `${formatStoryboardSecond(start)}-${formatStoryboardSecond(end)}秒`); }
+
+export function storyboardTimelineInstruction(value?: string | number) {
+    const duration = storyboardDurationSeconds(value);
+    const labels = storyboardTimelineRangeLabels(duration);
+    return `每条片段固定${formatStoryboardSecond(duration)}秒，duration 必须写 "${formatStoryboardSecond(duration)}s"，visual 必须逐行使用“${labels[0]}：”“${labels[1]}：”“${labels[2]}：”“${labels[3]}：”四段。`;
+}
+
+export function parsePlannedStoryboardShots(content: string, durationSeconds = 15): PlannedStoryboardShot[] {
     const data = parseJson(content) as { shots?: unknown[] } | unknown[];
     const records = Array.isArray(data) ? data : data.shots;
     if (!Array.isArray(records)) return [];
     return records.flatMap((value) => {
         if (!value || typeof value !== "object") return [];
         const item = value as Record<string, unknown>;
-        const row = ["", "15s", text(item.visual), text(item.shotSize), text(item.lighting), text(item.dialogue), text(item.sound), text(item.camera), text(item.imagePrompt)];
+        const row = ["", `${formatStoryboardSecond(storyboardDurationSeconds(durationSeconds))}s`, text(item.visual), text(item.shotSize), text(item.lighting), text(item.dialogue), text(item.sound), text(item.camera), text(item.imagePrompt)];
         if (!row[2]) return [];
         const transition = text(item.transition) as StoryboardShotTransition;
         return [{
@@ -316,27 +341,28 @@ export function storyboardActionHasEvidence(content: string, beat: StoryboardTyp
 }
 
 function storyboardVisualTimelineSegments(value: string) {
-    return Array.from(value.matchAll(/(?:^|\n)\s*(\d+)\s*[-—–~至]\s*(\d+)\s*秒\s*[：:]\s*([^\n]+)/g)).map((item) => ({ start: Number(item[1]), end: Number(item[2]), content: item[3].trim() }));
+    return Array.from(value.matchAll(/(?:^|\n)\s*(\d+(?:\.\d+)?)\s*[-—–~至]\s*(\d+(?:\.\d+)?)\s*秒\s*[：:]\s*([^\n]+)/g)).map((item) => ({ start: Number(item[1]), end: Number(item[2]), content: item[3].trim() }));
 }
 
-function storyboardVisualTimelineHasExpectedStructure(value: string) {
+function storyboardVisualTimelineHasExpectedStructure(value: string, durationSeconds: number) {
     const segments = storyboardVisualTimelineSegments(value);
-    const expected = [[0, 3], [3, 9], [9, 12], [12, 15]];
+    const expected = storyboardTimelineRanges(durationSeconds);
     return segments.length === 4 && segments.every((segment, index) => segment.start === expected[index][0] && segment.end === expected[index][1]);
 }
 
-function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) {
+function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan, durationSeconds: number) {
     const segments = storyboardVisualTimelineSegments(value);
-    if (!storyboardVisualTimelineHasExpectedStructure(value)) return "画面描述缺少0-3、3-9、9-12、12-15秒四段详细时间轴";
+    if (!storyboardVisualTimelineHasExpectedStructure(value, durationSeconds)) return `画面描述缺少${storyboardTimelineRangeLabels(durationSeconds).join("、")}四段详细时间轴`;
     const beats = plan.typedActionBeats || [];
     const actionMismatchIndex = beats.findIndex((beat, index) => !storyboardActionHasEvidence(segments[storyboardActionBeatSegmentIndex(beats.length, index)]?.content || "", beat));
     if (actionMismatchIndex >= 0) return `画面描述第${actionMismatchIndex + 1}段没有展开对应类型化动作节拍`;
-    if (!/稳定|保持|停住|静止|落点|不再|维持/.test(segments[3].content)) return "画面描述12-15秒缺少结果保持和稳定落点";
+    if (!/稳定|保持|停住|静止|落点|不再|维持/.test(segments[3].content)) return `画面描述${storyboardTimelineRangeLabels(durationSeconds)[3]}缺少结果保持和稳定落点`;
     return "";
 }
 
 export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): PlannedStoryboardShot {
-    if (!storyboardVisualTimelineIssue(shot.row[2] || "", shot.plan)) return shot;
+    const duration = storyboardDurationSeconds(shot.row[1]);
+    if (!storyboardVisualTimelineIssue(shot.row[2] || "", shot.plan, duration)) return shot;
     const beats = shot.plan.typedActionBeats || [];
     if (beats.length < 2 || beats.length > 3 || beats.length !== shot.plan.actionBeats?.length) return shot;
     if (beats.some((beat) => !beat.actor.trim() || !beat.action.trim() || !beat.patient.trim() || !beat.result?.trim())) return shot;
@@ -347,19 +373,20 @@ export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): Pl
     if (beats.length === 2 && !bridge) return shot;
     const describeBeat = (beat: StoryboardTypedActionBeat) => beat.prop ? `${beat.actor}使用${beat.prop}${beat.action}${beat.patient}` : `${beat.actor}${beat.action}${beat.patient}`;
     const lastBeat = beats.at(-1)!;
+    const labels = storyboardTimelineRangeLabels(duration);
     const rebuilt = [
-        `0-3秒：同一场景内确认既有站位，同时${describeBeat(beats[0])}，形成物理结果：${beats[0].result}。`,
+        `${labels[0]}：同一场景内确认既有站位，同时${describeBeat(beats[0])}，形成物理结果：${beats[0].result}。`,
         beats[2]
-            ? `3-9秒：承接上一拍结果，${describeBeat(beats[1])}，形成物理结果：${beats[1].result}。`
-            : `3-9秒：保持第一拍已经形成的${beats[0].result}，承受既有阻力反作用：${bridge}。`,
+            ? `${labels[1]}：承接上一拍结果，${describeBeat(beats[1])}，形成物理结果：${beats[1].result}。`
+            : `${labels[1]}：保持第一拍已经形成的${beats[0].result}，承受既有阻力反作用：${bridge}。`,
         beats[2]
-            ? `9-12秒：承接已有反作用完成动作转折，${describeBeat(beats[2])}；可见结果：${finalResult}。`
-            : `9-12秒：${describeBeat(lastBeat)}，形成物理结果：${lastBeat.result}；可见结果：${finalResult}。`,
-        `12-15秒：保持${finalResult}与${endState}，人物姿态和场景结构稳定不变，停在当前结果落点，画面不再增加新动作。`,
+            ? `${labels[2]}：承接已有反作用完成动作转折，${describeBeat(beats[2])}；可见结果：${finalResult}。`
+            : `${labels[2]}：${describeBeat(lastBeat)}，形成物理结果：${lastBeat.result}；可见结果：${finalResult}。`,
+        `${labels[3]}：保持${finalResult}与${endState}，人物姿态和场景结构稳定不变，停在当前结果落点，画面不再增加新动作。`,
     ];
     const originalVisual = shot.row[2] || "";
     const originalSegments = storyboardVisualTimelineSegments(originalVisual);
-    const expectedStructure = storyboardVisualTimelineHasExpectedStructure(originalVisual);
+    const expectedStructure = storyboardVisualTimelineHasExpectedStructure(originalVisual, duration);
     const segmentLines = expectedStructure
         ? originalSegments.map((segment, index) => `${segment.start}-${segment.end}秒：${segment.content}`)
         : [...rebuilt];
@@ -372,7 +399,7 @@ export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): Pl
     }
     const visual = segmentLines.join("\n");
     const candidate = { row: shot.row.map((cell, index) => index === 2 ? visual : cell), plan: { ...shot.plan } };
-    return storyboardVisualTimelineIssue(visual, shot.plan) ? shot : candidate;
+    return storyboardVisualTimelineIssue(visual, shot.plan, duration) ? shot : candidate;
 }
 
 export function storyboardShotQualityAssessmentForShot(shot: PlannedStoryboardShot) {
@@ -387,7 +414,8 @@ export function storyboardShotQualityAssessmentForShot(shot: PlannedStoryboardSh
     const unboundHumanPatient = (plan.typedActionBeats || []).some((item) => participantByName.has(item.patient) && participantByName.get(item.patient)?.role !== "patient");
     const infantActor = (plan.participants || []).find((item) => item.role === "actor" && /出生|新生儿|婴儿|宝宝|襁褓|幼儿/.test(`${item.name} ${item.lifeStage || ""}`));
     const infantCareAction = Boolean(infantActor && (plan.typedActionBeats || []).some((item) => item.actor === infantActor.name && /抱起|抱住|托住|喂养|喂奶|换尿布|照料|照护|护理|包裹|拢紧|整理襁褓|调整包裹|安置|穿衣|擦洗/.test(item.action)));
-    const visualTimelineIssue = storyboardVisualTimelineIssue(shot.row[2] || "", plan);
+    const duration = storyboardDurationSeconds(shot.row[1]);
+    const visualTimelineIssue = storyboardVisualTimelineIssue(shot.row[2] || "", plan, duration);
     const actionCountMismatch = (plan.actionBeats?.length || 0) !== (plan.typedActionBeats?.length || 0);
     const typedActionMissingResult = (plan.typedActionBeats || []).some((item) => !item.result?.trim());
     const blockers = [
@@ -405,7 +433,7 @@ export function storyboardShotQualityAssessmentForShot(shot: PlannedStoryboardSh
         humanRoleRequired && unboundActor ? "类型化动作节拍的执行者未标记 actor 职责" : "",
         humanRoleRequired && unboundHumanPatient ? "类型化动作节拍命中的人物承受者未绑定 patient 职责" : "",
         humanRoleRequired && infantCareAction ? "婴儿/幼儿不能作为成人照护动作的执行者" : "",
-        narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
+        narrationLength > Math.max(16, Math.round(duration * 3.2)) ? `旁白超过${Math.max(16, Math.round(duration * 3.2))}字（当前${narrationLength}字）` : "",
         !plan.result ? "缺少可见结果" : "",
         !plan.valueShift ? "缺少价值变化" : "",
         !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
@@ -455,7 +483,7 @@ function parseTypedActionBeats(value: unknown): StoryboardTypedActionBeat[] {
     });
 }
 
-export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], scope: StoryboardProductionScope = "series") {
+export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: StoryboardSourceBeat[], scope: StoryboardProductionScope = "series", durationSeconds = 15) {
     const beatById = new Map(beats.map((beat) => [beat.id, beat]));
     const chapters: StoryboardChapter[] = [];
     let currentChapter: StoryboardChapter | undefined;
@@ -486,14 +514,14 @@ export function planStoryboardProduction(shots: PlannedStoryboardShot[], beats: 
         if (!chapter) return;
         indexes.forEach((index) => {
             const shot = shots[index];
-            shot.row[1] = "15s";
+            shot.row[1] = `${formatStoryboardSecond(storyboardDurationSeconds(durationSeconds))}s`;
             chapter.shotIndexes.push(index);
             shot.plan.chapterId = chapter.id;
             shot.plan.chapterTitle = chapter.title;
             if (shot.plan.renderMode !== "still") shot.plan.renderMode = "video";
         });
         const chapterVideoCount = chapter.shotIndexes.filter((index) => shots[index].plan.renderMode === "video").length;
-        chapter.durationSeconds = chapterVideoCount * 15;
+        chapter.durationSeconds = chapterVideoCount * storyboardDurationSeconds(durationSeconds);
         chapter.targetClipCount = chapterVideoCount;
         previousBoundary = boundary;
     });
@@ -508,8 +536,8 @@ export function storyboardSingleEpisodeBeatTarget() {
     return 18;
 }
 
-export function storyboardPlanningConfigKey(scope: StoryboardProductionScope) {
-    return `scene-contract-v6/${scope}/episode-budget-8-12/natural-chapters/15s`;
+export function storyboardPlanningConfigKey(scope: StoryboardProductionScope, durationSeconds = 15) {
+    return `scene-contract-v6/${scope}/episode-budget-8-12/natural-chapters/${formatStoryboardSecond(storyboardDurationSeconds(durationSeconds))}s`;
 }
 
 export function storyboardTotalClipTarget(factCount: number) {
@@ -529,8 +557,9 @@ export function storyboardBatchClipTargets(batches: StoryboardSourceBeat[][], to
     });
 }
 
-export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, totalTarget?: number) {
-    const clipRule = "每个动态片段固定15秒，只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜，0-3秒建立场景与站位并执行第一拍，3-9秒承接首拍结果推进第二拍，9-12秒形成反作用、动作转折和可见结果，12-15秒只保持稳定落点。第一步画面描述的前三段必须写清执行者、身体部位或道具、动作对象与物理结果，禁止短动作标签。旁白目标36-45个汉字，硬上限48个汉字。相邻背景事实只有在同地点、同人物时期且不要求第二段可见剧情时才能由旁白承载。";
+export function storyboardClipPlanInstruction(scope: StoryboardProductionScope, totalTarget?: number, durationSeconds = 15) {
+    const duration = storyboardDurationSeconds(durationSeconds);
+    const clipRule = `${storyboardTimelineInstruction(duration)}只允许1个主要可见事实、1个地点和1个人物时期；使用2-3个因果相承的物理动作节拍与1个主运镜。第一步画面描述的前三段必须写清执行者、身体部位或道具、动作对象与物理结果。旁白不超过${Math.max(16, Math.round(duration * 3.2))}个汉字。`;
     const budgetRule = totalTarget ? `完整生产的动态视频总预算严格为${totalTarget}个，必须通过把同地点、同人物时期的非主要事实放入voiceoverBeatIds覆盖，不能增加镜头突破预算。` : "";
     if (scope === "single") return `这是整篇故事的单集浓缩生产。${budgetRule}${clipRule}无法放入的次要细节继续浓缩，不得把多个地点、人物时期或主要事件硬塞进同一视频。`;
     return `这是完整故事生产。${budgetRule}${clipRule}每集优先安排8-12个动态片段，并在固定预算内形成建置、推进、转折与稳定结尾；章节只按童年、青年、成家、中年、晚年、身后等宽泛人生阶段，以及迁徙、婚姻、重大损失、身体状态不可逆变化和高潮/结局等强转折划分；不得因任意phase、timeStage文案或地点小变化切章，也不得按一事实一片段无限拆分。`;

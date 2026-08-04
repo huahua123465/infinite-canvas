@@ -9,7 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { getNodeDefinition, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { generationErrorDisplayText } from "@/lib/canvas/generation-error";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
-import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
+import { storyboardDurationSeconds, storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
 import { isSeedanceMini8sModel, seedanceModelFixedResolution } from "@/lib/seedance-video";
 import { isOmniImageVideoModel, isOmniVideoToVideoModel, isSoraVideoModel, isVeoVideoModel } from "@/lib/video-model-capabilities";
@@ -2393,7 +2393,7 @@ function ScriptNodeContent({ node, theme, onOpenScript }: NodeContentRendererPro
     const promptDetails = node.metadata?.storyboardPromptDetails || {};
     const filledRows = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
     const productionScope = node.metadata?.storyboardProductionScope || "series";
-    const planningConfigKey = storyboardPlanningConfigKey(productionScope);
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope, storyboardDurationSeconds(node.metadata?.seconds));
     const planningStale = Boolean(rows.length && node.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
     const isReady = filledRows > 0 && !planningStale;
     const readyAssets = assets.filter((asset) => asset.imageUrl || asset.storageKey).length;

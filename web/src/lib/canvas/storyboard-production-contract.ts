@@ -209,14 +209,15 @@ function validateParticipants(contract: StoryboardProductionContract, block: (co
         const patientBaseName = storyboardCharacterBaseName(beat.patient);
         if ((participantNames.has(patientBaseName) || factualCharacters.has(patientBaseName)) && !patients.has(patientBaseName)) block("action_patient_unbound", `动作节拍 ${index + 1} 命中的人物承受者“${beat.patient}”未绑定 patient 职责`, "typedActionBeats");
         if (!beat.action.trim()) block("action_missing", `动作节拍 ${index + 1} 缺少可见物理动作`, "typedActionBeats");
-        const actor = contract.participants.find((item) => item.name === beat.actor && item.role === "actor");
-        const actorAssets = contract.assets.filter((item) => item.kind === "character" && (item.name === beat.actor || item.baseName === beat.actor));
+        const actor = contract.participants.find((item) => storyboardCharacterBaseName(item.name) === actorBaseName && item.role === "actor");
+        const actorAssets = contract.assets.filter((item) => item.kind === "character" && storyboardCharacterBaseName(item.baseName || item.name || "") === actorBaseName);
         if (actor && (isInfant(`${actor.name} ${actor.lifeStage || ""}`) || actorAssets.some((item) => isInfant(`${item.name} ${item.lifeStage || ""}`))) && isAdultCareAction(beat.action)) block("infant_adult_care_action", `婴儿参与者“${actor.name}”不能执行成人照护动作：${beat.action}`, "typedActionBeats");
     });
 }
 
-function storyboardCharacterBaseName(value: string) {
+export function storyboardCharacterBaseName(value: string) {
     return value.trim()
+        .replace(/^(?:(?:\d{1,3}|[零〇一二两三四五六七八九十百]{1,5})岁(?:时期|阶段|时)?的?)/u, "")
         .replace(/^(?:新生儿|婴儿|幼儿|童年|少年|少女|青年|年轻|成年|中年|晚年|老年)[时期阶段的\s·：:-]*/u, "")
         .replace(/[\s·：:-]*(?:新生儿|婴儿|幼儿|童年|少年|少女|青年|年轻|成年|中年|晚年|老年)(?:时期|阶段)?$/u, "")
         .trim();
@@ -255,23 +256,24 @@ function validateFinalPrompt(contract: StoryboardProductionContract, block: (cod
     if (contract.duration === 15 && segments.some((segment, index) => segment.start !== expected15s[index][0] || segment.end !== expected15s[index][1])) block("timeline_15s_ranges_invalid", "15 秒镜头必须使用 0-3、3-9、9-12、12-15 秒四段时间轴", "videoMotionPrompt");
     if (!/稳定|保持|停住|静止|落点|不再/.test(segments.at(-1)?.content || "")) block("timeline_final_unstable", "最后一段必须保持已形成的结果，不得引入新剧情", "videoMotionPrompt");
     const timelineText = segments.map((segment) => segment.content).join("\n");
-    const participantNames = new Set(contract.participants.map((participant) => participant.name));
+    const participantNames = new Set(contract.participants.map((participant) => storyboardCharacterBaseName(participant.name)));
     const propNames = new Set(contract.actionBeats.map((beat) => beat.prop).filter((name): name is string => Boolean(name)));
     contract.assets.filter((asset) =>
-        (asset.role === "characterIdentity" && (participantNames.has(asset.name || "") || participantNames.has(asset.baseName || asset.name || "")))
+        (asset.role === "characterIdentity" && participantNames.has(storyboardCharacterBaseName(asset.baseName || asset.name || "")))
         || (asset.role === "propContinuity" && (propNames.has(asset.name || "") || Array.from(propNames).some((name) => Boolean(asset.name?.includes(name))))),
     ).forEach((asset) => {
         const matchingBeatIndexes = contract.actionBeats.flatMap((beat, index) => {
-            const characterMatch = asset.role === "characterIdentity" && [beat.actor, beat.patient].some((name) => name === asset.name || name === asset.baseName);
+            const assetCharacterName = storyboardCharacterBaseName(asset.baseName || asset.name || "");
+            const characterMatch = asset.role === "characterIdentity" && [beat.actor, beat.patient].some((name) => storyboardCharacterBaseName(name) === assetCharacterName);
             const propMatch = asset.role === "propContinuity" && Boolean(beat.prop && (beat.prop === asset.name || Boolean(asset.name?.includes(beat.prop))));
             return characterMatch || propMatch ? [storyboardActionBeatSegmentIndex(contract.actionBeats.length, index)] : [];
         });
         const targetSegments = matchingBeatIndexes.length ? Array.from(new Set(matchingBeatIndexes)).map((index) => segments[index]?.content || "") : [timelineText];
-        if (!targetSegments.every((segment) => segment.includes(asset.mention))) block("asset_missing_from_action_timeline", `${asset.mention}只声明了参考职责，没有在每个实际参与的动作时间段中使用`, "videoMotionPrompt");
+        if (!targetSegments.every((segment) => hasExactMention(segment, asset.mention))) block("asset_missing_from_action_timeline", `${asset.mention}只声明了参考职责，没有在每个实际参与的动作时间段中使用`, "videoMotionPrompt");
     });
     const startFrame = contract.videoMotionPrompt.match(/【起始画面】([\s\S]*?)【\d+秒时间轴】/)?.[1] || "";
     contract.assets.filter((asset) => asset.role === "sceneSpace").forEach((asset) => {
-        if (!`${startFrame}\n${segments[0]?.content || ""}`.includes(asset.mention)) block("scene_missing_from_opening", `${asset.mention}必须出现在起始画面或0-3秒建场动作中`, "videoMotionPrompt");
+        if (!hasExactMention(`${startFrame}\n${segments[0]?.content || ""}`, asset.mention)) block("scene_missing_from_opening", `${asset.mention}必须出现在起始画面或首段建场动作中`, "videoMotionPrompt");
     });
 }
 
@@ -319,6 +321,11 @@ function mention(value: string) {
     return name ? `@${name}` : "";
 }
 
+function hasExactMention(text: string, value: string) {
+    const escaped = mention(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return Boolean(escaped && new RegExp(`${escaped}(?=$|[\\s，,、。；;：:）)】\\]])`).test(text));
+}
+
 function unique(values: string[]) {
     return Array.from(new Set(values));
 }
@@ -332,10 +339,11 @@ function sameList(first: string[], second: string[]) {
 }
 
 function addCharacterStage(groups: Map<string, string[][]>, name: string, stage?: string) {
-    if (!name.trim() || !stage?.trim()) return;
+    const normalizedName = storyboardCharacterBaseName(name);
+    if (!normalizedName || !stage?.trim()) return;
     const normalizedStage = normalizeTimeStage(stage);
     const candidates = normalizeKnownCharacterAgeStages(normalizedStage);
-    groups.set(name.trim(), [...(groups.get(name.trim()) || []), candidates.length ? candidates : [normalizedStage]]);
+    groups.set(normalizedName, [...(groups.get(normalizedName) || []), candidates.length ? candidates : [normalizedStage]]);
 }
 
 function normalizeKnownCharacterAgeStages(value: string) {

@@ -10,7 +10,7 @@ import type {
     StoryboardShotPlan,
     StoryboardSourceBeat,
 } from "@/types/canvas";
-import { parsePlannedStoryboardShots, storyboardShotQualityIssuesForShot, storyboardSpeechParts, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
+import { parsePlannedStoryboardShots, storyboardDurationSeconds, storyboardShotQualityIssuesForShot, storyboardSpeechParts, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
 
 export const STORYBOARD_FINAL_REVIEW_DIMENSIONS: ReadonlyArray<{ key: StoryboardFinalReviewDimensionKey; label: string; weight: number }> = [
     { key: "factSelection", label: "事实忠实与取舍", weight: 10 },
@@ -250,7 +250,7 @@ export function buildStoryboardFinalReviewOptimizationInput(
     ]);
     return {
         contract: "storyboard-final-review-optimization/v1",
-        instruction: "只优化 editable=true 的现有镜头，并按 shotIndex 返回。不得新增、删除、合并、拆分或重排镜头，不得虚构事实、事实 ID、人物、关系、地点、道具、对白或结局。participants 的姓名、角色、人物时期和来源事实必须原样保留；narrationLocked=true 时对白旁白列必须逐字保留，其他镜头也只能保留或删减已有对白，不得新增或改写台词。输出 shots 数组；每项包含 shotIndex、九列字段 visual/shotSize/lighting/dialogue/sound/camera/imagePrompt（时长固定15s）及完整场景卡字段。所有 lockedFields 必须原样返回。相邻镜头只用于连续性参考，不得返回。",
+        instruction: "只优化 editable=true 的现有镜头，并按 shotIndex 返回。不得新增、删除、合并、拆分或重排镜头，不得虚构事实、事实 ID、人物、关系、地点、道具、对白或结局。participants 的姓名、角色、人物时期和来源事实必须原样保留；narrationLocked=true 时对白旁白列必须逐字保留，其他镜头也只能保留或删减已有对白，不得新增或改写台词。输出 shots 数组；每项包含 shotIndex、九列字段 visual/shotSize/lighting/dialogue/sound/camera/imagePrompt，时长逐镜锁定为输入 row 的原值，并包含完整场景卡字段。所有 lockedFields 必须原样返回。相邻镜头只用于连续性参考，不得返回。",
         shotCount: input.rows.length,
         shotOrder: input.rows.map((_, index) => index),
         lockedNarrationChapterIds: unique(lockedNarrationChapterIds),
@@ -310,11 +310,12 @@ export function parseStoryboardFinalReviewOptimization(
             return;
         }
         let parsed: PlannedStoryboardShot | undefined;
-        try { parsed = parsePlannedStoryboardShots(JSON.stringify([raw]))[0]; } catch { parsed = undefined; }
+        try { parsed = parsePlannedStoryboardShots(JSON.stringify([raw]), storyboardDurationSeconds(input.rows[shotIndex]?.[1]))[0]; } catch { parsed = undefined; }
         if (!parsed) {
             failures.push({ shotIndex, reason: "模型没有返回完整可解析的九列镜头与场景卡" });
             return;
         }
+        parsed.row[1] = input.rows[shotIndex]?.[1] || parsed.row[1];
         parsed.plan = { ...parsed.plan, ...pickLockedPlan(originalPlan) };
         const originalParticipants = participantIdentity(originalPlan);
         if (participantIdentity(parsed.plan) !== originalParticipants) {

@@ -7,7 +7,7 @@ import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
 import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardFinalReviewContextKey } from "@/lib/canvas/storyboard-final-review";
-import { storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardShotQualityWarningsForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
+import { storyboardDurationSeconds, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardShotQualityWarningsForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
 import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotParticipant, type StoryboardShotPlan, type StoryboardTypedActionBeat } from "@/types/canvas";
 
@@ -91,7 +91,8 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const episodes = node?.metadata?.storyboardChapters || [];
     const activeEpisodeId = episodes.some((episode) => episode.id === node?.metadata?.storyboardActiveChapterId) ? node?.metadata?.storyboardActiveChapterId || "" : episodes[0]?.id || "";
     const productionScope = node?.metadata?.storyboardProductionScope || "series";
-    const planningConfigKey = storyboardPlanningConfigKey(productionScope);
+    const defaultDurationSeconds = storyboardDurationSeconds(node?.metadata?.seconds);
+    const planningConfigKey = storyboardPlanningConfigKey(productionScope, defaultDurationSeconds);
     const planningStale = Boolean(rows.length && node?.metadata?.storyboardSourceBeats?.length && node.metadata?.storyboardPlanningConfigKey !== planningConfigKey);
     const allAssets = node?.metadata?.storyboardAssets || [];
     const assets = allAssets.filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
@@ -197,7 +198,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         revalidateShot(rowIndex, row);
     };
 
-    const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, "15s", "", "", "", "", "", "", ""]]);
+    const addRow = () => saveRows((currentRows) => [...currentRows, [`${currentRows.length + 1}`, `${defaultDurationSeconds}s`, "", "", "", "", "", "", ""]]);
     const deleteRow = (rowIndex: number) => saveRows((currentRows) => currentRows.filter((_, index) => index !== rowIndex));
     const importRows = (importedRows: string[][], mode: ShotImportMode, insertAfter: number) => {
         saveRows((currentRows) => mergeImportedRows(currentRows, importedRows, mode, insertAfter));
@@ -299,9 +300,9 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                             <Step index="1" title="故事拆分" detail={planningProgress ? `${planningProgress.percent}% ${planningProgress.text}` : planningStale ? "需要重新规划" : coverage ? `${coverage.covered}/${coverage.total} 个事实，共 ${episodes.length || 1} 章` : `${filledCount}/${rows.length} 片段待校对`} active={view === "shots"} done={!planningStale && Boolean(coverage ? coverage.covered === coverage.total : filledCount > 0) && (productionScope !== "series" || narrationLocked)} onClick={() => setView("shots")} />
                             <Step index="2" title="资产生成" detail={planningStale ? "等待故事拆分" : `${readyAssets}/${assets.length || 0} 已生成，还差 ${Math.max(missingAssets, 0)} 个`} active={view === "assets"} done={!planningStale && assets.length > 0 && readyAssets === assets.length} onClick={openAssets} />
                             <Step index="3" title="合成提示词" detail={planningStale ? "等待重新规划" : `${dynamicPromptCount}/${dynamicIndexes.length} 个视频片段已合成${failedPromptCount ? `，失败 ${failedPromptCount}` : ""}`} active={view === "prompts"} done={!planningStale && dynamicIndexes.length > 0 && dynamicPromptCount === dynamicIndexes.length} onClick={openPrompts} />
-                            <Step index="4" title="视频生成" detail={`当前章 ${videoResultCount}/${dynamicIndexes.length} 已生成 · 15秒/条`} active={view === "videos"} done={dynamicIndexes.length > 0 && videoResultCount >= dynamicIndexes.length} onClick={openVideos} />
+                            <Step index="4" title="视频生成" detail={`当前章 ${videoResultCount}/${dynamicIndexes.length} 已生成 · ${storyboardRowsDurationLabel(rows, dynamicIndexes, shotPlans, node.metadata?.seconds)}`} active={view === "videos"} done={dynamicIndexes.length > 0 && videoResultCount >= dynamicIndexes.length} onClick={openVideos} />
                         </div>
-                        {view === "shots" ? <div className="shrink-0 text-xs text-[#a8a8a8]">{episodes.length ? `自动拆为 ${episodes.length} 章 · ${allDynamicCount} 条 × 15 秒` : "完整故事自动拆章 · 每条 15 秒"}</div> : null}
+                        {view === "shots" ? <div className="shrink-0 text-xs text-[#a8a8a8]">{episodes.length ? `自动拆为 ${episodes.length} 章 · ${storyboardDurationCountText(allDynamicCount, storyboardRowsDurationLabel(rows, Object.keys(shotPlans).map(Number).filter((index) => shotPlans[String(index)]?.renderMode !== "still"), shotPlans, node.metadata?.seconds))}` : `完整故事自动拆章 · 每条 ${defaultDurationSeconds} 秒`}</div> : null}
                         {!planningStale && productionScope === "series" && episodes.length ? <Select value={activeEpisodeId} className="!min-w-56" options={episodes.map((episode) => ({ value: episode.id, label: `${episode.title}（${episode.shotIndexes.length}片段 / ${episode.shotIndexes.reduce((total, index) => total + (shotPlans[String(index)]?.renderMode === "video" ? storyboardDurationSeconds(rows[index]?.[1]) : 0), 0)}秒）` }))} onChange={(episodeId) => onActiveEpisodeChange(node.id, episodeId)} /> : null}
                         {view === "assets" ? (
                             <AssetPrepToolbar
@@ -647,7 +648,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
             {!planningStale ? <StoryboardFinalReviewPanel node={node} actionKey={actionKey} contextKey={finalReviewContextKey} onRun={() => onRunFinalReview(node)} onStop={() => onStopFinalReview(node)} onRepairAll={() => onRepairAllProductionProblems(node)} onOptimize={(issueIds) => onOptimizeFinalReview(node, issueIds)} onStopOptimization={() => onStopFinalReviewOptimization(node)} onLocateShot={locateShot} /> : null}
             {!planningStale && rows.length && chapters.length ? (
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[#303030] bg-[#171717] px-8 text-xs text-[#c9c9c9]">
-                    <span className="font-semibold text-white">自动规划 · 15秒/条</span>
+                    <span className="font-semibold text-white">自动规划 · {storyboardRowsDurationLabel(rows, videoRowIndexes, plans, node.metadata?.seconds)}</span>
                     <span>{activeEpisode?.title}</span>
                     <span>{rowIndexes.length} 个生产片段</span>
                     <span className="text-emerald-200">{videoCount} 个动态视频</span>
@@ -675,7 +676,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
                                             <span className="font-semibold text-white">第 {row[0] || rowIndex + 1} 镜</span>
-                                            <span className="text-xs text-[#9ca59f]">{row[1] || "15s"}</span>
+                                            <span className="text-xs text-[#9ca59f]">{row[1] || `${storyboardDurationSeconds(node.metadata?.seconds)}s`}</span>
                                             <span className={`rounded px-2 py-0.5 text-[10px] font-semibold ${plan?.renderMode === "video" ? "bg-emerald-500/15 text-emerald-200" : "bg-cyan-500/15 text-cyan-100"}`}>{plan?.renderMode === "video" ? "动态视频" : "静态分镜"}</span>
                                             {plan?.dramaticFunction ? <span className="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">{dramaticFunctionLabel(plan.dramaticFunction)}</span> : null}
                                         </div>
@@ -861,7 +862,7 @@ function PromptComposeView({ node, rows, rowIndexes, actionKey, promptDetails, c
                                 <div className="flex items-center gap-3 border-b border-white/8 px-5 py-3">
                                     <span className="grid size-9 place-items-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-sm font-bold text-emerald-100">{row?.[0] || rowIndex + 1}</span>
                                     <div>
-                                        <div className="font-semibold text-white">第 {row?.[0] || rowIndex + 1} 镜 · {row?.[1] || "15s"}</div>
+                                        <div className="font-semibold text-white">第 {row?.[0] || rowIndex + 1} 镜 · {row?.[1] || `${storyboardDurationSeconds(node.metadata?.seconds)}s`}</div>
                                         <div className="mt-0.5 text-[11px] text-[#879189]">{isDynamic ? "动态视频 · 四段连续动作" : "静态事实 · 不参与批量视频"}</div>
                                     </div>
                                     <div className="ml-auto flex items-center gap-2">
@@ -1251,6 +1252,16 @@ function parseShotPlanTypedActionBeats(value: string): StoryboardTypedActionBeat
         const [actor, action, patient, prop, result] = line.split(/[|｜]/).map((item) => item.trim());
         return actor && action && patient ? [{ actor, action, patient, prop: prop && prop !== "-" ? prop : undefined, result: result || undefined }] : [];
     }).slice(0, 3);
+}
+
+function storyboardRowsDurationLabel(rows: string[][], rowIndexes: number[], _plans: Record<string, StoryboardShotPlan>, fallback?: string) {
+    const durations = Array.from(new Set(rowIndexes.map((index) => storyboardDurationSeconds(rows[index]?.[1] || fallback))));
+    if (!durations.length) return `${storyboardDurationSeconds(fallback)}秒/条`;
+    return durations.length === 1 ? `${durations[0]}秒/条` : "按分镜时长";
+}
+
+function storyboardDurationCountText(count: number, durationLabel: string) {
+    return durationLabel === "按分镜时长" ? `${count} 条 · 按分镜时长` : `${count} 条 × ${durationLabel.replace(/\/条$/, "")}`;
 }
 
 function BatchSceneSheetButton({ node, actionKey, scenes, onBatchGenerateSceneSheets, onStopSceneSheets }: { node: CanvasNodeData; actionKey?: string | null; scenes: StoryboardAsset[]; onBatchGenerateSceneSheets: (node: CanvasNodeData) => void; onStopSceneSheets: (node: CanvasNodeData) => void }) {
