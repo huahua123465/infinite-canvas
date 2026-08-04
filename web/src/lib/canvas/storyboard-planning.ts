@@ -240,31 +240,91 @@ export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     });
 }
 
-const PHYSICAL_ACTION_PATTERN = /握|抓|拿|放|抬|举|推|拉|拖|拽|牵|扶|抱|托|按|压|点|敲|砸|劈|切|刺|挥|踢|蹬|踩|跨|越|迈|走|跑|冲|退|转|蹲|跪|坐|站|起身|俯身|弯腰|伸|收|递|接|掀|揭|开|关|倒|撒|扬|捡|拾|擦|洗|穿|脱|系|解|绑|包|卷|铺|移|翻|撞|落|滚|滑|摇|点燃|熄灭|撕|折|塞|拔|插/;
-const BODY_PART_PATTERN = /头|脸|眼|肩|臂|手|掌|指|腰|背|腿|膝|脚|足|身体|身躯|重心|步伐|脚步|转身|侧身|俯身|起身/;
+const BODY_PART_PATTERN = /头|脸|眼|目光|肩|臂|手|掌|指|腰|背|腿|膝|脚|足|身体|身躯|姿态|重心|步伐|脚步|转身|侧身|俯身|起身/;
 const CAMERA_PHRASE_PATTERN = /(?:镜头|运镜|摄影机|摄像机|机位|画面)\s*(?:向前|向后|向左|向右|上升|下降)?\s*(?:推近|拉远|摇摄|移动|平移|跟拍|跟随|升降)|(?:镜头|画面)中/g;
 const ABSTRACT_PHRASE_PATTERN = /(?:意识到|明白|感到|陷入沉思|内心|心理|情绪变化|做出决定)|(?:观察|注视|凝视|等待)(?:前方|四周|对方|远处)?(?:并|且|然后|随后)?/g;
-const STATIC_PHRASE_PATTERN = /(?:保持|维持|身体)(?:不动|静止)|站着(?=(?:观察|注视|凝视|等待|$))/g;
+const STATIC_PHRASE_PATTERN = /(?:(?:头|脸|眼|肩|臂|手|掌|指|腰|背|腿|膝|脚|足|身体|身躯|姿态)?(?:保持|维持)(?:身体|姿态)?(?:不动|静止)|身体(?:不动|静止))|站着(?=(?:观察|注视|凝视|等待|$))/g;
+const NON_EXECUTABLE_STATE_PATTERN = /意识到|明白|感到|陷入沉思|内心|心理|情绪|观察|注视|凝视|等待|疲惫|乏力|发麻|麻木|疼痛|酸痛|僵硬|保持(?:身体|姿态)?(?:不动|静止)|维持(?:身体|姿态)?(?:不动|静止)|身体(?:不动|静止)/g;
+const EXECUTABLE_SUBJECT_PATTERN = /头部|脸部|眼睛|目光|肩膀|手臂|手掌|手指|腰部|背部|双腿|左腿|右腿|膝盖|脚掌|脚步|头|脸|眼|肩|臂|手|掌|指|腰|背|腿|膝|脚|足|身体|身躯|姿态|重心|步伐/g;
+const POSITION_STATE_PATTERN = /(?:处于|位于|站在|坐在|躺在|停在|留在|存在于)([^，,。；;！!？?]*)$/;
+const PURE_POSITION_PATTERN = /^(?:(?:在|朝|向|面向|朝向|靠着?|贴着?|摆在|放置于))?(?:桌(?:上|边)?|墙(?:上|边)?|地(?:上|面)?|门(?:前|边)?|窗(?:前|边)?|前方|后方|左侧|右侧|上方|下方|旁边|附近|原地|前|后|左|右|上|下|旁|边|内|外|中)$/;
 
-function storyboardActionHasEvidence(content: string, beat: StoryboardTypedActionBeat) {
+function storyboardIsPureNonExecutableState(value: string, beat: StoryboardTypedActionBeat) {
+    const positionTail = value.match(POSITION_STATE_PATTERN)?.[1] || "";
+    if (positionTail && !BODY_PART_PATTERN.test(positionTail)) {
+        if (!beat.prop || !positionTail.includes(beat.prop)) return true;
+        if (/^(?:旁|边|内|外|中|上|下|前|后|左|右|附近|原地|位置)$/.test(positionTail.replaceAll(beat.prop, "").trim())) return true;
+    }
+    let residue = value
+        .replace(CAMERA_PHRASE_PATTERN, "")
+        .replace(NON_EXECUTABLE_STATE_PATTERN, "")
+        .replaceAll(beat.actor, "")
+        .replaceAll(beat.patient, "");
+    if (beat.prop) residue = residue.replaceAll(beat.prop, "");
+    residue = residue
+        .replace(EXECUTABLE_SUBJECT_PATTERN, "")
+        .replace(/(?:仍然|依然|继续|只是|仅仅|并且|同时|随后|然后|的|着|了|对|与|和|被|由)/g, "")
+        .replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")
+        .trim();
+    return !residue || PURE_POSITION_PATTERN.test(residue);
+}
+
+export function storyboardActionBeatSegmentIndex(beatCount: number, beatIndex: number) {
+    return beatCount === 2 && beatIndex === 1 ? 2 : Math.min(beatIndex, 2);
+}
+
+export function storyboardActionHasEvidence(content: string, beat: StoryboardTypedActionBeat) {
     return content.split(/[，,。；;！!？?]/).map((clause) => clause.trim()).filter(Boolean).some((clause) => {
         const actionText = clause.replace(CAMERA_PHRASE_PATTERN, "").replace(ABSTRACT_PHRASE_PATTERN, "").replace(STATIC_PHRASE_PATTERN, "").trim();
         const subject = BODY_PART_PATTERN.test(actionText) || Boolean(beat.prop && actionText.includes(beat.prop));
-        return subject && PHYSICAL_ACTION_PATTERN.test(actionText);
+        return subject && !storyboardIsPureNonExecutableState(beat.action, beat) && !storyboardIsPureNonExecutableState(beat.result || "", beat) && !storyboardIsPureNonExecutableState(actionText, beat);
     });
 }
 
-function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) {
-    const segments = Array.from(value.matchAll(/(?:^|\n)\s*(\d+)\s*[-—–~至]\s*(\d+)\s*秒\s*[：:]\s*([^\n]+)/g)).map((item) => ({ start: Number(item[1]), end: Number(item[2]), content: item[3].trim() }));
+function storyboardVisualTimelineSegments(value: string) {
+    return Array.from(value.matchAll(/(?:^|\n)\s*(\d+)\s*[-—–~至]\s*(\d+)\s*秒\s*[：:]\s*([^\n]+)/g)).map((item) => ({ start: Number(item[1]), end: Number(item[2]), content: item[3].trim() }));
+}
+
+function storyboardVisualTimelineHasExpectedStructure(value: string) {
+    const segments = storyboardVisualTimelineSegments(value);
     const expected = [[0, 3], [3, 9], [9, 12], [12, 15]];
-    if (segments.length !== 4 || segments.some((segment, index) => segment.start !== expected[index][0] || segment.end !== expected[index][1])) return "画面描述缺少0-3、3-9、9-12、12-15秒四段详细时间轴";
-    const minimumLengths = [24, 32, 24, 18];
-    const shallowIndex = segments.findIndex((segment, index) => Array.from(segment.content.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length < minimumLengths[index]);
-    if (shallowIndex >= 0) return `画面描述${segments[shallowIndex].start}-${segments[shallowIndex].end}秒过于简略，必须写清执行者、身体部位或物体、动作对象和物理变化`;
-    const actionMismatchIndex = (plan.typedActionBeats || []).findIndex((beat, index) => !storyboardActionHasEvidence(segments[Math.min(index, 2)]?.content || "", beat));
+    return segments.length === 4 && segments.every((segment, index) => segment.start === expected[index][0] && segment.end === expected[index][1]);
+}
+
+function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) {
+    const segments = storyboardVisualTimelineSegments(value);
+    if (!storyboardVisualTimelineHasExpectedStructure(value)) return "画面描述缺少0-3、3-9、9-12、12-15秒四段详细时间轴";
+    const beats = plan.typedActionBeats || [];
+    const actionMismatchIndex = beats.findIndex((beat, index) => !storyboardActionHasEvidence(segments[storyboardActionBeatSegmentIndex(beats.length, index)]?.content || "", beat));
     if (actionMismatchIndex >= 0) return `画面描述第${actionMismatchIndex + 1}段没有展开对应类型化动作节拍`;
     if (!/稳定|保持|停住|静止|落点|不再|维持/.test(segments[3].content)) return "画面描述12-15秒缺少结果保持和稳定落点";
     return "";
+}
+
+export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): PlannedStoryboardShot {
+    if (storyboardVisualTimelineHasExpectedStructure(shot.row[2] || "")) return shot;
+    const beats = shot.plan.typedActionBeats || [];
+    if (beats.length < 2 || beats.length > 3 || beats.length !== shot.plan.actionBeats?.length) return shot;
+    if (beats.some((beat) => !beat.actor.trim() || !beat.action.trim() || !beat.patient.trim() || !beat.result?.trim())) return shot;
+    const finalResult = shot.plan.result?.trim() || beats.at(-1)?.result?.trim() || "";
+    const endState = shot.plan.endState?.trim() || "";
+    if (!finalResult || !endState) return shot;
+    const bridge = shot.plan.obstacleReaction?.trim() || "";
+    if (beats.length === 2 && !bridge) return shot;
+    const describeBeat = (beat: StoryboardTypedActionBeat) => `${beat.actor}${beat.action}${beat.patient}${beat.prop ? `，使用${beat.prop}` : ""}`;
+    const lastBeat = beats.at(-1)!;
+    const visual = [
+        `0-3秒：同一场景内确认既有站位，同时${describeBeat(beats[0])}，形成物理结果：${beats[0].result}。`,
+        beats[2]
+            ? `3-9秒：承接上一拍结果，${describeBeat(beats[1])}，形成物理结果：${beats[1].result}。`
+            : `3-9秒：保持第一拍已经形成的${beats[0].result}，承受既有阻力反作用：${bridge}。`,
+        beats[2]
+            ? `9-12秒：承接已有反作用完成动作转折，${describeBeat(beats[2])}；可见结果：${finalResult}。`
+            : `9-12秒：${describeBeat(lastBeat)}，形成物理结果：${lastBeat.result}；可见结果：${finalResult}。`,
+        `12-15秒：保持${finalResult}与${endState}，人物姿态和场景结构稳定不变，停在当前结果落点，画面不再增加新动作。`,
+    ].join("\n");
+    const candidate = { row: shot.row.map((cell, index) => index === 2 ? visual : cell), plan: { ...shot.plan } };
+    return storyboardVisualTimelineIssue(visual, shot.plan) ? shot : candidate;
 }
 
 export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) {

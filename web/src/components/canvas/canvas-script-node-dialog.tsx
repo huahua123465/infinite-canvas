@@ -1244,7 +1244,7 @@ function ChapterNarrationPanel({ node, rows, rowIndexes, chapterId, locked, issu
             <textarea readOnly value={text || "本章暂未安排旁白；可直接在表格“对白旁白”列填写。"} className="thin-scrollbar h-16 resize-none rounded-md border border-white/10 bg-black/25 px-3 py-2 leading-5 text-[#d8e4e7] outline-none" />
             <div className="flex min-w-44 flex-col items-end gap-2">
                 {issues.length ? <span className="max-w-64 text-right text-[11px] leading-4 text-amber-200" title={issues.join("\n")}>{issues[0]}{issues.length > 1 ? `，另有 ${issues.length - 1} 项` : ""}</span> : <span className="text-[11px] text-emerald-200">旁白时长和内容检查通过</span>}
-                <Button size="small" type={locked ? "default" : "primary"} danger={locked} disabled={!locked && issues.length > 0} icon={locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />} onClick={() => onLockChange(node.id, chapterId, !locked)}>
+                <Button size="small" type={locked ? "default" : "primary"} danger={locked} icon={locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />} onClick={() => onLockChange(node.id, chapterId, !locked)}>
                     {locked ? "解锁旁白" : "锁定本章旁白"}
                 </Button>
             </div>
