@@ -1331,10 +1331,6 @@ function storyboardNarrationBudget(row?: string[]) {
     return storyboardSpeechParts(row?.[5] || "").dialogues.length ? 34 : 48;
 }
 
-function storyboardDurationSeconds(value?: string) {
-    return Math.max(1, Number(value?.match(/\d+(?:\.\d+)?/)?.[0]) || 15);
-}
-
 function AssetPrepToolbar({ node, actionKey, assets, groupedAssets, missingCount, batchProgress, preparing, generatingAssets, hasPartialAssets, readyAssets, onPrepareAssets, onBatchGenerateAssets, onStopAssetGeneration }: { node: CanvasNodeData; actionKey?: string | null; assets: StoryboardAsset[]; groupedAssets: Record<StoryboardAssetKind, StoryboardAsset[]>; missingCount: number; batchProgress?: StoryboardAssetBatchProgress; preparing: boolean; generatingAssets: boolean; hasPartialAssets: boolean; readyAssets: number; onPrepareAssets: (node: CanvasNodeData) => void; onBatchGenerateAssets: (node: CanvasNodeData) => void; onStopAssetGeneration: (node: CanvasNodeData) => void }) {
     return (
         <div className="flex shrink-0 items-center gap-4">
