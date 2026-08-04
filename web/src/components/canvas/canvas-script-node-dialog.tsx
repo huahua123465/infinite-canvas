@@ -158,7 +158,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     }, [activeEpisodeId, narrationLocked, productionScope, view]);
 
     useEffect(() => {
-        if (!node || planningStale || view !== "assets" || (productionScope === "series" && activeEpisodeId && !narrationLocked) || activeEpisodePrepared || actionKey === "asset:prepare" || node.metadata?.storyboardAssetError) return;
+        if (!node || planningStale || view !== "assets" || (productionScope === "series" && activeEpisodeId && !narrationLocked) || activeEpisodePrepared || actionKey === "asset:prepare" || node.metadata?.storyboardAssetProgress || node.metadata?.storyboardAssetError) return;
         onPrepareAssets(node);
     }, [actionKey, activeEpisodeId, activeEpisodePrepared, narrationLocked, node, onPrepareAssets, planningStale, productionScope, view]);
 

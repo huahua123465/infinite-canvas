@@ -758,6 +758,7 @@ function InfiniteCanvasPage() {
     const [storyboardActionKey, setStoryboardActionKey] = useState<string | null>(null);
     const [storyboardPromptProgress, setStoryboardPromptProgress] = useState<{ current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" } | undefined>();
     const storyboardProducerPausedRef = useRef(new Set<string>());
+    const storyboardAssetPreparationRef = useRef(new Set<string>());
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -1271,6 +1272,7 @@ function InfiniteCanvasPage() {
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const promptAssistantNode = promptAssistantNodeId ? nodeById.get(promptAssistantNodeId) || null : null;
     const scriptNode = scriptNodeId ? nodeById.get(scriptNodeId) || null : null;
+    const alignedScriptNode = useMemo(() => scriptNode ? alignStoryboardNodeAssetsWithCurrentStyle(scriptNode) : null, [scriptNode]);
     const scriptVideoCounts = useMemo(() => storyboardVideoCountsForScript(scriptNode, nodes), [nodes, scriptNode]);
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
@@ -3144,6 +3146,7 @@ function InfiniteCanvasPage() {
     const prepareStoryboardAssets = useCallback(
         async (node: CanvasNodeData) => {
             const scriptNode = withStoryboardVideoSettings(node);
+            if (storyboardAssetPreparationRef.current.has(scriptNode.id)) return;
             if (scriptNode !== node) setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? scriptNode : item)));
             const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
             const activeIndexes = storyboardActiveRowIndexes(scriptNode, rows);
@@ -3157,6 +3160,7 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 return;
             }
+            storyboardAssetPreparationRef.current.add(scriptNode.id);
             setStoryboardActionKey("asset:prepare");
             const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
             const updateProgress = (percent: number, text: string) => {
@@ -3222,6 +3226,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...scriptNode.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage, storyboardAssetProgress: undefined } } : item)));
                 message.error(errorMessage);
             } finally {
+                storyboardAssetPreparationRef.current.delete(scriptNode.id);
                 finishGenerationRequest(scriptNode.id, controller);
                 setStoryboardActionKey(null);
             }
@@ -6438,7 +6443,7 @@ function InfiniteCanvasPage() {
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
 
                 <CanvasScriptNodeDialog
-                    node={scriptNode ? alignStoryboardNodeAssetsWithCurrentStyle(scriptNode) : null}
+                    node={alignedScriptNode}
                     open={Boolean(scriptNode)}
                     actionKey={storyboardActionKey}
                     promptProgress={storyboardPromptProgress}
@@ -9831,13 +9836,14 @@ function alignStoryboardAssetsWithSourceStyle(parsed: { style: string; assets: S
         if (!clean) return style;
         return clean.includes(style) ? clean : `${style}，${clean}`;
     };
-    return {
-        style,
-        assets: parsed.assets.map((asset) => ({
-            ...asset,
-            prompt: withStyle(asset.prompt || asset.description),
-        })),
-    };
+    let changed = style !== parsed.style;
+    const assets = parsed.assets.map((asset) => {
+        const prompt = withStyle(asset.prompt || asset.description);
+        if (prompt === asset.prompt) return asset;
+        changed = true;
+        return { ...asset, prompt };
+    });
+    return changed ? { style, assets } : parsed;
 }
 
 function alignStoryboardNodeAssetsWithCurrentStyle(node: CanvasNodeData): CanvasNodeData {
