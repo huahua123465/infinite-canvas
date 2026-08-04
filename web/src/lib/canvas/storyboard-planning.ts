@@ -148,87 +148,113 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
     });
 }
 
-export function parseStoryboardShotQualityRepair(content: string): PlannedStoryboardShot {
+export function parseStoryboardShotQualityRepair(content: string, current?: PlannedStoryboardShot): PlannedStoryboardShot {
     let data: unknown;
     try {
         data = parseJson(content);
     } catch (error) {
         throw new SyntaxError(error instanceof Error ? error.message : "修正响应不是合法 JSON");
     }
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("修正响应根路径必须是对象");
-    const shots = (data as Record<string, unknown>).shots;
-    if (!Array.isArray(shots)) throw new Error("修正响应缺少 shots 数组");
+    if (!data || typeof data !== "object") throw new Error("修正响应根路径必须是对象或数组");
+    const rootRecord = Array.isArray(data) ? undefined : data as Record<string, unknown>;
+    const hasShots = Boolean(rootRecord && Object.prototype.hasOwnProperty.call(rootRecord, "shots"));
+    if (hasShots && !Array.isArray(rootRecord?.shots)) throw new Error("修正响应 shots 必须是数组");
+    const shots = Array.isArray(data) ? data : hasShots ? rootRecord?.shots as unknown[] : [data];
     if (shots.length !== 1) throw new Error(`修正响应 shots 必须且只能包含1项（当前${shots.length}项）`);
     const item = shots[0];
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("修正响应 shots[0] 必须是对象");
     const record = item as Record<string, unknown>;
-    if (!Array.isArray(record.row)) throw new Error("修正响应 shots[0].row 必须是数组");
-    if (record.row.length < 9) throw new Error(`修正响应 shots[0].row 必须包含9列（当前${record.row.length}列）`);
-    const row = record.row.slice(0, 9).map(text);
+    const rowSource = record.row;
+    const rowRecord = rowSource && typeof rowSource === "object" && !Array.isArray(rowSource) ? rowSource as Record<string, unknown> : record;
+    const markdownRow = typeof rowSource === "string" ? rowSource.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.includes("|") && !/^\|?\s*:?-+/.test(line)).map((line) => line.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim())).find((cells) => cells.length >= 3 && !/镜号|时长|画面描述/.test(cells.join(""))) : undefined;
+    const arrayRow = Array.isArray(rowSource) ? rowSource : markdownRow;
+    const rowKeys = [["shotNumber", "镜号"], ["duration", "时长"], ["visual", "画面描述", "画面"], ["shotSize", "景别"], ["lighting", "光线"], ["dialogue", "对白旁白", "对白"], ["sound", "声音"], ["camera", "运镜"], ["imagePrompt", "首帧提示词"]];
+    const row = rowKeys.map((keys, index) => {
+        const objectKey = [String(index), ...keys].find((key) => Object.prototype.hasOwnProperty.call(rowRecord, key));
+        const supplied = arrayRow ? index < arrayRow.length : Boolean(objectKey);
+        const value = arrayRow ? text(arrayRow[index]) : objectKey ? text(rowRecord[objectKey]) : "";
+        return index < 2 && current ? current.row[index] || "" : supplied ? value : current?.row[index] || "";
+    });
     if (!row[2]) throw new Error("修正响应 shots[0].row[2] 缺少画面描述");
-    if (!record.plan || typeof record.plan !== "object" || Array.isArray(record.plan)) throw new Error("修正响应 shots[0].plan 必须是对象");
-    const rawPlan = record.plan as Record<string, unknown>;
-    const requiredText = (field: string) => {
-        const value = text(rawPlan[field]);
+    if (record.plan !== undefined && (!record.plan || typeof record.plan !== "object" || Array.isArray(record.plan))) throw new Error("修正响应 shots[0].plan 必须是对象");
+    const rawPlan = record.plan && typeof record.plan === "object" ? record.plan as Record<string, unknown> : record;
+    const has = (field: string) => Object.prototype.hasOwnProperty.call(rawPlan, field);
+    const mergedText = (field: keyof StoryboardShotPlan) => {
+        if (has(String(field)) && typeof rawPlan[String(field)] !== "string") throw new Error(`修正响应 shots[0].plan.${String(field)} 必须是字符串`);
+        const value = has(String(field)) ? text(rawPlan[String(field)]) : text(current?.plan[field]);
         if (!value) throw new Error(`修正响应 shots[0].plan.${field} 缺失或为空`);
         return value;
     };
-    const sourceBeatIds = stringList(rawPlan.sourceBeatIds);
+    const immutableList = (field: "sourceBeatIds" | "visualBeatIds" | "voiceoverBeatIds") => current ? [...(current.plan[field] || [])] : stringList(rawPlan[field]);
+    const sourceBeatIds = immutableList("sourceBeatIds");
     if (!sourceBeatIds.length) throw new Error("修正响应 shots[0].plan.sourceBeatIds 必须是非空列表");
-    const visualBeatIds = stringList(rawPlan.visualBeatIds);
+    const visualBeatIds = immutableList("visualBeatIds");
     if (visualBeatIds.length !== 1) throw new Error("修正响应 shots[0].plan.visualBeatIds 必须且只能包含1项");
-    const actionBeats = stringList(rawPlan.actionBeats);
+    if (has("actionBeats") && !Array.isArray(rawPlan.actionBeats)) throw new Error("修正响应 shots[0].plan.actionBeats 必须是数组");
+    const actionBeats = has("actionBeats") ? stringList(rawPlan.actionBeats) : [...(current?.plan.actionBeats || [])];
     if (actionBeats.length < 2 || actionBeats.length > 3) throw new Error("修正响应 shots[0].plan.actionBeats 必须包含2-3项");
-    if (!Array.isArray(rawPlan.participants)) throw new Error("修正响应 shots[0].plan.participants 必须是数组");
-    rawPlan.participants.forEach((value, index) => {
+    if (has("participants") && !Array.isArray(rawPlan.participants)) throw new Error("修正响应 shots[0].plan.participants 必须是数组");
+    const rawParticipants = has("participants") ? rawPlan.participants as unknown[] : current?.plan.participants || [];
+    rawParticipants.forEach((value, index) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`修正响应 shots[0].plan.participants[${index}] 必须是对象`);
         const participant = value as Record<string, unknown>;
         if (!text(participant.name)) throw new Error(`修正响应 shots[0].plan.participants[${index}].name 缺失或为空`);
         if (!["actor", "patient"].includes(text(participant.role))) throw new Error(`修正响应 shots[0].plan.participants[${index}].role 必须是 actor 或 patient`);
-        if (!stringList(participant.sourceBeatIds).length) throw new Error(`修正响应 shots[0].plan.participants[${index}].sourceBeatIds 必须是非空列表`);
+        if (participant.lifeStage !== undefined && typeof participant.lifeStage !== "string") throw new Error(`修正响应 shots[0].plan.participants[${index}].lifeStage 必须是字符串`);
+        if (participant.sourceBeatIds !== undefined && !Array.isArray(participant.sourceBeatIds)) throw new Error(`修正响应 shots[0].plan.participants[${index}].sourceBeatIds 必须是数组`);
     });
-    const participants = parseShotParticipants(rawPlan.participants);
+    const currentParticipantByName = new Map((current?.plan.participants || []).map((participant) => [participant.name, participant]));
+    const participants = parseShotParticipants(rawParticipants).map((participant) => {
+        const previous = currentParticipantByName.get(participant.name);
+        return { ...participant, lifeStage: participant.lifeStage || previous?.lifeStage, sourceBeatIds: participant.sourceBeatIds.length ? participant.sourceBeatIds : [...(previous?.sourceBeatIds || [])] };
+    });
     if (!participants.length) throw new Error("修正响应 shots[0].plan.participants 缺少合法参与者");
-    if (!Array.isArray(rawPlan.typedActionBeats)) throw new Error("修正响应 shots[0].plan.typedActionBeats 必须是数组");
-    rawPlan.typedActionBeats.forEach((value, index) => {
+    const participantWithoutFacts = participants.find((participant) => !participant.sourceBeatIds.length);
+    if (participantWithoutFacts) throw new Error(`修正响应新增参与者“${participantWithoutFacts.name}”缺少 sourceBeatIds，不能从原镜头继承`);
+    if (has("typedActionBeats") && !Array.isArray(rawPlan.typedActionBeats)) throw new Error("修正响应 shots[0].plan.typedActionBeats 必须是数组");
+    const rawTypedActionBeats = has("typedActionBeats") ? rawPlan.typedActionBeats as unknown[] : current?.plan.typedActionBeats || [];
+    rawTypedActionBeats.forEach((value, index) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`修正响应 shots[0].plan.typedActionBeats[${index}] 必须是对象`);
         const beat = value as Record<string, unknown>;
         ["actor", "action", "patient", "result"].forEach((field) => {
             if (!text(beat[field])) throw new Error(`修正响应 shots[0].plan.typedActionBeats[${index}].${field} 缺失或为空`);
         });
     });
-    const typedActionBeats = parseTypedActionBeats(rawPlan.typedActionBeats);
+    const typedActionBeats = parseTypedActionBeats(rawTypedActionBeats);
     if (typedActionBeats.length !== actionBeats.length) throw new Error("修正响应 shots[0].plan.typedActionBeats 必须与 actionBeats 逐项对应");
     const transition = text(rawPlan.transition) as StoryboardShotTransition;
     return {
         row,
         plan: {
+            ...current?.plan,
             ...(rawPlan as unknown as StoryboardShotPlan),
-            shotId: requiredText("shotId"),
+            shotId: current?.plan.shotId || text(rawPlan.shotId),
             sourceBeatIds,
             visualBeatIds,
-            voiceoverBeatIds: stringList(rawPlan.voiceoverBeatIds),
-            continuityGroupId: requiredText("continuityGroupId"),
-            timeStage: text(rawPlan.timeStage),
-            startState: requiredText("startState"),
-            endState: requiredText("endState"),
-            transition: ["continue", "cut", "montage", "time-jump"].includes(transition) ? transition : "cut",
-            usePreviousTailFrame: rawPlan.usePreviousTailFrame === true,
-            motionPriority: Math.max(1, Math.min(5, Number(rawPlan.motionPriority) || 3)),
-            dramaticFunction: normalizeDramaturgyPhase(rawPlan.dramaticFunction),
-            goal: requiredText("goal"),
-            obstacle: requiredText("obstacle"),
-            stakes: requiredText("stakes"),
-            tactic: requiredText("tactic"),
+            voiceoverBeatIds: immutableList("voiceoverBeatIds"),
+            continuityGroupId: current?.plan.continuityGroupId || text(rawPlan.continuityGroupId),
+            timeStage: current?.plan.timeStage || text(rawPlan.timeStage),
+            chapterId: current?.plan.chapterId,
+            chapterTitle: current?.plan.chapterTitle,
+            startState: mergedText("startState"),
+            endState: mergedText("endState"),
+            transition: current?.plan.transition || (["continue", "cut", "montage", "time-jump"].includes(transition) ? transition : "cut"),
+            usePreviousTailFrame: current?.plan.usePreviousTailFrame ?? rawPlan.usePreviousTailFrame === true,
+            motionPriority: current?.plan.motionPriority || Math.max(1, Math.min(5, Number(rawPlan.motionPriority) || 3)),
+            dramaticFunction: current?.plan.dramaticFunction || normalizeDramaturgyPhase(rawPlan.dramaticFunction),
+            goal: mergedText("goal"),
+            obstacle: mergedText("obstacle"),
+            stakes: mergedText("stakes"),
+            tactic: mergedText("tactic"),
             actionBeats,
             participants,
             typedActionBeats,
-            obstacleReaction: requiredText("obstacleReaction"),
-            turningAction: requiredText("turningAction"),
-            result: requiredText("result"),
-            plotRhythm: normalizePlotRhythm(rawPlan.plotRhythm),
-            emotionRhythm: normalizeEmotionRhythm(rawPlan.emotionRhythm),
-            valueShift: requiredText("valueShift"),
+            obstacleReaction: mergedText("obstacleReaction"),
+            turningAction: mergedText("turningAction"),
+            result: mergedText("result"),
+            plotRhythm: current?.plan.plotRhythm || normalizePlotRhythm(rawPlan.plotRhythm),
+            emotionRhythm: current?.plan.emotionRhythm || normalizeEmotionRhythm(rawPlan.emotionRhythm),
+            valueShift: mergedText("valueShift"),
         },
     };
 }
@@ -274,11 +300,17 @@ export function storyboardActionBeatSegmentIndex(beatCount: number, beatIndex: n
 }
 
 export function storyboardActionHasEvidence(content: string, beat: StoryboardTypedActionBeat) {
-    return content.split(/[，,。；;！!？?]/).map((clause) => clause.trim()).filter(Boolean).some((clause) => {
+    const compact = (value: string) => value.replace(/[\s，,。；;！!？?、：:]/g, "");
+    const normalizedContent = compact(content);
+    const resultBodyPart = (beat.result || "").match(BODY_PART_PATTERN)?.[0];
+    const actorBound = normalizedContent.includes(compact(beat.actor));
+    const targetBound = beat.prop ? normalizedContent.includes(compact(beat.prop)) : normalizedContent.includes(compact(beat.patient)) || Boolean(resultBodyPart && normalizedContent.includes(compact(resultBodyPart)));
+    const actionTracked = normalizedContent.includes(compact(beat.action));
+    const executableClause = content.split(/[，,。；;！!？?]/).map((clause) => clause.trim()).filter(Boolean).some((clause) => {
         const actionText = clause.replace(CAMERA_PHRASE_PATTERN, "").replace(ABSTRACT_PHRASE_PATTERN, "").replace(STATIC_PHRASE_PATTERN, "").trim();
-        const subject = BODY_PART_PATTERN.test(actionText) || Boolean(beat.prop && actionText.includes(beat.prop));
-        return subject && !storyboardIsPureNonExecutableState(beat.action, beat) && !storyboardIsPureNonExecutableState(beat.result || "", beat) && !storyboardIsPureNonExecutableState(actionText, beat);
+        return Boolean(actionText) && !storyboardIsPureNonExecutableState(actionText, beat);
     });
+    return actorBound && targetBound && actionTracked && executableClause && !storyboardIsPureNonExecutableState(beat.action, beat) && !storyboardIsPureNonExecutableState(beat.result || "", beat);
 }
 
 function storyboardVisualTimelineSegments(value: string) {
@@ -302,7 +334,7 @@ function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) 
 }
 
 export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): PlannedStoryboardShot {
-    if (storyboardVisualTimelineHasExpectedStructure(shot.row[2] || "")) return shot;
+    if (!storyboardVisualTimelineIssue(shot.row[2] || "", shot.plan)) return shot;
     const beats = shot.plan.typedActionBeats || [];
     if (beats.length < 2 || beats.length > 3 || beats.length !== shot.plan.actionBeats?.length) return shot;
     if (beats.some((beat) => !beat.actor.trim() || !beat.action.trim() || !beat.patient.trim() || !beat.result?.trim())) return shot;
@@ -311,9 +343,9 @@ export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): Pl
     if (!finalResult || !endState) return shot;
     const bridge = shot.plan.obstacleReaction?.trim() || "";
     if (beats.length === 2 && !bridge) return shot;
-    const describeBeat = (beat: StoryboardTypedActionBeat) => `${beat.actor}${beat.action}${beat.patient}${beat.prop ? `，使用${beat.prop}` : ""}`;
+    const describeBeat = (beat: StoryboardTypedActionBeat) => beat.prop ? `${beat.actor}使用${beat.prop}${beat.action}${beat.patient}` : `${beat.actor}${beat.action}${beat.patient}`;
     const lastBeat = beats.at(-1)!;
-    const visual = [
+    const rebuilt = [
         `0-3秒：同一场景内确认既有站位，同时${describeBeat(beats[0])}，形成物理结果：${beats[0].result}。`,
         beats[2]
             ? `3-9秒：承接上一拍结果，${describeBeat(beats[1])}，形成物理结果：${beats[1].result}。`
@@ -322,7 +354,21 @@ export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): Pl
             ? `9-12秒：承接已有反作用完成动作转折，${describeBeat(beats[2])}；可见结果：${finalResult}。`
             : `9-12秒：${describeBeat(lastBeat)}，形成物理结果：${lastBeat.result}；可见结果：${finalResult}。`,
         `12-15秒：保持${finalResult}与${endState}，人物姿态和场景结构稳定不变，停在当前结果落点，画面不再增加新动作。`,
-    ].join("\n");
+    ];
+    const originalVisual = shot.row[2] || "";
+    const originalSegments = storyboardVisualTimelineSegments(originalVisual);
+    const expectedStructure = storyboardVisualTimelineHasExpectedStructure(originalVisual);
+    const segmentLines = expectedStructure
+        ? originalSegments.map((segment, index) => `${segment.start}-${segment.end}秒：${segment.content}`)
+        : [...rebuilt];
+    if (expectedStructure) {
+        beats.forEach((beat, index) => {
+            const segmentIndex = storyboardActionBeatSegmentIndex(beats.length, index);
+            if (!storyboardActionHasEvidence(originalSegments[segmentIndex]?.content || "", beat)) segmentLines[segmentIndex] = rebuilt[segmentIndex];
+        });
+        if (!/稳定|保持|停住|静止|落点|不再|维持/.test(originalSegments[3]?.content || "")) segmentLines[3] = rebuilt[3];
+    }
+    const visual = segmentLines.join("\n");
     const candidate = { row: shot.row.map((cell, index) => index === 2 ? visual : cell), plan: { ...shot.plan } };
     return storyboardVisualTimelineIssue(visual, shot.plan) ? shot : candidate;
 }

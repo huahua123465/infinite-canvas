@@ -2544,8 +2544,8 @@ function InfiniteCanvasPage() {
                 nextItemIndex += 1;
                 if (itemIndex >= rowIndexes.length) return;
                 const rowIndex = rowIndexes[itemIndex];
-                const row = rows[rowIndex];
-                const plan = plans[String(rowIndex)];
+                const originalRow = rows[rowIndex];
+                const originalPlan = plans[String(rowIndex)];
                 const shotController = createLinkedAbortController(controller);
                 let timedOut = false;
                 const timeoutId = setTimeout(() => {
@@ -2553,18 +2553,27 @@ function InfiniteCanvasPage() {
                     shotController.abort();
                 }, STORYBOARD_SHOT_REPAIR_TIMEOUT_MS);
                 try {
-                    const narrationLocked = Boolean(plan.chapterId && scriptNode.metadata?.storyboardLockedNarrationChapterIds?.includes(plan.chapterId));
-                    const outcome = await requestStoryboardShotQualityRepair(generationConfig, scriptNode, row, plan, shotController.signal, narrationLocked);
-                    applyStoryboardShotRepairResult(scriptNode.id, rowIndex, outcome);
-                    if (outcome.shot.plan.qualityError) failed.push(`镜${row[0] || rowIndex + 1}：${outcome.shot.plan.qualityError}`);
-                    else repairedCount += 1;
+                    const normalized = normalizeStoryboardShotTimeline({ row: [...originalRow], plan: { ...originalPlan } });
+                    const normalizedIssues = storyboardShotQualityIssuesForShot(normalized);
+                    const localShot: PlannedStoryboardShot = { row: normalized.row, plan: { ...normalized.plan, qualityError: normalizedIssues.length ? normalizedIssues.join("、") : undefined, renderMode: normalizedIssues.length ? "still" : "video", usePreviousTailFrame: normalizedIssues.length ? false : normalized.plan.usePreviousTailFrame } };
+                    const locallyChanged = JSON.stringify(localShot.row) !== JSON.stringify(originalRow) || localShot.plan.qualityError !== originalPlan.qualityError || localShot.plan.renderMode !== originalPlan.renderMode;
+                    if (locallyChanged) applyStoryboardShotRepairResult(scriptNode.id, rowIndex, { shot: localShot });
+                    if (!normalizedIssues.length) {
+                        repairedCount += 1;
+                    } else {
+                        const narrationLocked = Boolean(localShot.plan.chapterId && scriptNode.metadata?.storyboardLockedNarrationChapterIds?.includes(localShot.plan.chapterId));
+                        const outcome = await requestStoryboardShotQualityRepair(generationConfig, scriptNode, localShot.row, localShot.plan, shotController.signal, narrationLocked);
+                        applyStoryboardShotRepairResult(scriptNode.id, rowIndex, outcome);
+                        if (outcome.shot.plan.qualityError) failed.push(`镜${originalRow[0] || rowIndex + 1}：${outcome.shot.plan.qualityError}`);
+                        else repairedCount += 1;
+                    }
                 } catch (error) {
                     if (!timedOut && isGenerationCanceled(error)) throw error;
                     const repairError = storyboardShotRepairErrorFromUnknown(error, timedOut);
                     saveStoryboardShotRepairError(scriptNode.id, rowIndex, repairError);
                     if (timedOut) {
-                        failed.push(`镜${row[0] || rowIndex + 1}：模型请求超过${STORYBOARD_SHOT_REPAIR_TIMEOUT_MS / 1000}秒，已跳过`);
-                    } else failed.push(`镜${row[0] || rowIndex + 1}：${repairError.message}`);
+                        failed.push(`镜${originalRow[0] || rowIndex + 1}：模型请求超过${STORYBOARD_SHOT_REPAIR_TIMEOUT_MS / 1000}秒，已跳过`);
+                    } else failed.push(`镜${originalRow[0] || rowIndex + 1}：${repairError.message}`);
                 } finally {
                     clearTimeout(timeoutId);
                     finishedCount += 1;
@@ -2975,12 +2984,12 @@ function InfiniteCanvasPage() {
                         qualityAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: qualitySource }], () => {}, { signal: controller.signal });
                         let repaired: PlannedStoryboardShot;
                         try {
-                            repaired = parseStoryboardShotQualityRepair(qualityAnswer);
+                            repaired = parseStoryboardShotQualityRepair(qualityAnswer, original);
                         } catch (error) {
                             if (!(error instanceof SyntaxError)) throw error;
                             const repairedJson = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(qualityAnswer) }], () => {}, { signal: controller.signal });
                             qualityAnswer = repairedJson;
-                            repaired = parseStoryboardShotQualityRepair(repairedJson);
+                            repaired = parseStoryboardShotQualityRepair(repairedJson, original);
                         }
                         const candidate = repaired;
                         candidate.plan = {
@@ -9130,7 +9139,7 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
     ].join("\n\n") }], () => {}, { signal });
     let candidate: PlannedStoryboardShot;
     try {
-        candidate = parseStoryboardShotQualityRepair(answer);
+        candidate = parseStoryboardShotQualityRepair(answer, { row: currentRow, plan: currentPlan });
     } catch (error) {
         if (!(error instanceof SyntaxError)) throw new StoryboardShotRepairFailure(storyboardShotRepairError("contract", error instanceof Error ? error.message : "修正响应结构不符合要求", answer));
         const invalidJson = answer;
@@ -9141,7 +9150,7 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
             throw new StoryboardShotRepairFailure(storyboardShotRepairError("transport", transportError instanceof Error ? transportError.message : "JSON 语法修复请求失败", invalidJson));
         }
         try {
-            candidate = parseStoryboardShotQualityRepair(answer);
+            candidate = parseStoryboardShotQualityRepair(answer, { row: currentRow, plan: currentPlan });
         } catch (repairError) {
             throw new StoryboardShotRepairFailure(storyboardShotRepairError(repairError instanceof SyntaxError ? "json" : "contract", repairError instanceof Error ? repairError.message : "JSON 语法修复后仍无法解析", answer));
         }
