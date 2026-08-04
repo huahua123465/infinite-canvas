@@ -308,6 +308,15 @@ export type StoryboardAssetBatchProgress = {
     failed: number;
 };
 
+export type StoryboardProducerProgress = {
+    status: "idle" | "running" | "paused" | "attention" | "ready" | "completed";
+    stage: "story" | "shots" | "asset-plan" | "asset-images" | "export-assets" | "prompts" | "video-ready";
+    current: number;
+    total: number;
+    text: string;
+    attentionCount?: number;
+};
+
 export type VideoGenerationProgress = {
     percent: number;
     text: string;
@@ -350,6 +359,7 @@ export type CanvasNodeMetadata = {
     storyboardAssetError?: string;
     storyboardAssetProgress?: StoryboardAssetProgress;
     storyboardAssetBatchProgress?: StoryboardAssetBatchProgress;
+    storyboardProducerProgress?: StoryboardProducerProgress;
     storyboardAssets?: StoryboardAsset[];
     storyboardPreparedChapterIds?: string[];
     storyboardAssetNodeIds?: Record<string, string>;

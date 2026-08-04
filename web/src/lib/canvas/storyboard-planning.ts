@@ -1,4 +1,5 @@
 import type { StoryboardChapter, StoryboardDramaturgyPhase, StoryboardDramaturgyPlan, StoryboardProductionScope, StoryboardShotParticipant, StoryboardShotPlan, StoryboardShotTransition, StoryboardSourceBeat, StoryboardTypedActionBeat } from "@/types/canvas";
+import { jsonrepair } from "jsonrepair";
 
 export const STORYBOARD_BEAT_BATCH_SIZE = 20;
 const STORYBOARD_SOURCE_CHUNK_SIZE = 1800;
@@ -305,12 +306,13 @@ export function storyboardActionHasEvidence(content: string, beat: StoryboardTyp
     const resultBodyPart = (beat.result || "").match(BODY_PART_PATTERN)?.[0];
     const actorBound = normalizedContent.includes(compact(beat.actor));
     const targetBound = beat.prop ? normalizedContent.includes(compact(beat.prop)) : normalizedContent.includes(compact(beat.patient)) || Boolean(resultBodyPart && normalizedContent.includes(compact(resultBodyPart)));
-    const actionTracked = normalizedContent.includes(compact(beat.action));
     const executableClause = content.split(/[，,。；;！!？?]/).map((clause) => clause.trim()).filter(Boolean).some((clause) => {
+        const normalizedClause = compact(clause);
+        const clauseTracksBeat = normalizedClause.includes(compact(beat.actor)) || normalizedClause.includes(compact(beat.patient)) || Boolean(beat.prop && normalizedClause.includes(compact(beat.prop)));
         const actionText = clause.replace(CAMERA_PHRASE_PATTERN, "").replace(ABSTRACT_PHRASE_PATTERN, "").replace(STATIC_PHRASE_PATTERN, "").trim();
-        return Boolean(actionText) && !storyboardIsPureNonExecutableState(actionText, beat);
+        return clauseTracksBeat && Boolean(actionText) && !storyboardIsPureNonExecutableState(actionText, beat);
     });
-    return actorBound && targetBound && actionTracked && executableClause && !storyboardIsPureNonExecutableState(beat.action, beat);
+    return actorBound && targetBound && executableClause && !storyboardIsPureNonExecutableState(beat.action, beat);
 }
 
 function storyboardVisualTimelineSegments(value: string) {
@@ -373,7 +375,7 @@ export function normalizeStoryboardShotTimeline(shot: PlannedStoryboardShot): Pl
     return storyboardVisualTimelineIssue(visual, shot.plan) ? shot : candidate;
 }
 
-export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) {
+export function storyboardShotQualityAssessmentForShot(shot: PlannedStoryboardShot) {
     const plan = shot.plan;
     const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
     const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
@@ -388,31 +390,44 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
     const visualTimelineIssue = storyboardVisualTimelineIssue(shot.row[2] || "", plan);
     const actionCountMismatch = (plan.actionBeats?.length || 0) !== (plan.typedActionBeats?.length || 0);
     const typedActionMissingResult = (plan.typedActionBeats || []).some((item) => !item.result?.trim());
-    return [
+    const blockers = [
         plan.visualBeatIds?.length !== 1 ? "主要可见事实不是1个" : "",
         !plan.goal ? "缺少当前可见目标" : "",
         !plan.obstacle ? "缺少可见阻力或压力" : "",
         !plan.stakes ? "缺少失败代价" : "",
         !plan.tactic ? "缺少人物采取的具体策略" : "",
         (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
-        (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
         humanRoleRequired && !actors.size ? "缺少明确动作执行者 actor" : "",
         (plan.typedActionBeats?.length || 0) < 2 ? "类型化动作节拍少于2个" : "",
-        (plan.typedActionBeats?.length || 0) > 3 ? "类型化动作节拍超过3个" : "",
         actionCountMismatch ? "动作节拍与类型化动作节拍没有逐项对应" : "",
         typedActionMissingResult ? "类型化动作节拍缺少具体物理结果" : "",
-        humanRoleRequired && (unboundActor || ungroundedActor) ? "类型化动作节拍的执行者未作为 actor 绑定当前事实" : "",
+        humanRoleRequired && ungroundedActor ? "类型化动作节拍的执行者未绑定当前事实" : "",
+        humanRoleRequired && unboundActor ? "类型化动作节拍的执行者未标记 actor 职责" : "",
         humanRoleRequired && unboundHumanPatient ? "类型化动作节拍命中的人物承受者未绑定 patient 职责" : "",
         humanRoleRequired && infantCareAction ? "婴儿/幼儿不能作为成人照护动作的执行者" : "",
         narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
-        !plan.obstacleReaction ? "缺少阻力反作用" : "",
-        !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
         !plan.result ? "缺少可见结果" : "",
         !plan.valueShift ? "缺少价值变化" : "",
         !plan.startState || !plan.endState ? "缺少明确起止状态" : "",
-        abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
         visualTimelineIssue,
     ].filter(Boolean);
+    const warnings = [
+        (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
+        (plan.typedActionBeats?.length || 0) > 3 ? "类型化动作节拍超过3个" : "",
+        !plan.obstacleReaction ? "缺少阻力反作用" : "",
+        !plan.turningAction ? "缺少改变场面方向的动作转折" : "",
+        abstractAction ? "动作仍使用不可拍摄的心理或概括表达" : "",
+    ].filter(Boolean);
+    return { blockers, warnings };
+}
+
+/** Only deterministic factual blockers belong in the persisted qualityError field. */
+export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) {
+    return storyboardShotQualityAssessmentForShot(shot).blockers;
+}
+
+export function storyboardShotQualityWarningsForShot(shot: PlannedStoryboardShot) {
+    return storyboardShotQualityAssessmentForShot(shot).warnings;
 }
 
 function parseShotParticipants(value: unknown): StoryboardShotParticipant[] {
@@ -605,7 +620,12 @@ function parseJson(content: string): unknown {
     const start = content.search(/[\[{]/);
     const end = Math.max(content.lastIndexOf("]"), content.lastIndexOf("}"));
     if (start < 0 || end <= start) throw new Error("模型没有返回可解析的故事规划 JSON");
-    return JSON.parse(content.slice(start, end + 1));
+    const source = content.slice(start, end + 1);
+    try {
+        return JSON.parse(source);
+    } catch {
+        return JSON.parse(jsonrepair(source));
+    }
 }
 
 function text(value: unknown) {

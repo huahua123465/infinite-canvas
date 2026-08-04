@@ -7,6 +7,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getNodeDefinition, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
+import { generationErrorDisplayText } from "@/lib/canvas/generation-error";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { storyboardPlanningConfigKey } from "@/lib/canvas/storyboard-planning";
 import { formatBytes } from "@/lib/image-utils";
@@ -569,7 +570,7 @@ function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" |
 function ErrorContent({ node, theme, onRetry, onEditPrompt }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry" | "onEditPrompt">) {
     return (
         <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
-            <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "生成失败"}</div>
+            <div className="text-xs leading-5 text-red-300">{generationErrorDisplayText(node.metadata?.errorDetails)}</div>
             <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
                     type="button"

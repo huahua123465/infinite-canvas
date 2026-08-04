@@ -47,6 +47,17 @@ Read `references/automatic-story-planning.md` when generating the dramaturgy JSO
 - A result-first opening is allowed only when the source and production plan explicitly permit a flash-forward. Otherwise build the hook from the earliest available facts.
 - Use one dominant audiovisual method per production clip. Complex montage or split-screen logic belongs at sequence level unless the clip explicitly requires it.
 
+## Scene Writing Layer
+
+Before a production clip is accepted, treat it as a playable scene rather than a visual summary:
+
+- State why the scene must exist and what changes because it exists.
+- Give the visible subject a current goal, visible resistance, a concrete tactic, and a consequence.
+- Make each action beat causal: the previous physical result creates the next pressure or choice; do not disguise “and then” as “therefore”.
+- Give dialogue a playable strategy such as seeking, evading, testing, pressuring, bargaining, or redefining the relationship. Avoid dialogue that only explains facts already visible or narrated.
+- Preserve the writer's specific language during revision. Repair only the failed scene field or action segment and leave unrelated accepted material unchanged.
+- Keep craft judgments such as originality, elegance, intensity, and preferred beat shape in review warnings. Only factual, continuity, production, or explicit contract failures may block the three-step workflow.
+
 ## Boundaries
 
 - Do not alter or reorder source facts without explicit evidence IDs and transition semantics.

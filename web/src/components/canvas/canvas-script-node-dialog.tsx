@@ -7,7 +7,7 @@ import { VoiceboxProfileSelect } from "@/components/voicebox-profile-select";
 import { resolveAudioProvider } from "@/lib/audio-provider";
 import { storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { storyboardFinalReviewContextKey } from "@/lib/canvas/storyboard-final-review";
-import { storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
+import { storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardShotQualityWarningsForShot, storyboardSpeechParts } from "@/lib/canvas/storyboard-planning";
 import type { AiConfig } from "@/stores/use-config-store";
 import { STORYBOARD_PROMPT_SOURCE_TEXT, type CanvasNodeData, type StoryboardAsset, type StoryboardAssetBatchProgress, type StoryboardAssetKind, type StoryboardAssetMentionLink, type StoryboardAssetProgress, type StoryboardProductionScope, type StoryboardPromptDetail, type StoryboardShotParticipant, type StoryboardShotPlan, type StoryboardTypedActionBeat } from "@/types/canvas";
 
@@ -62,6 +62,9 @@ type CanvasScriptNodeDialogProps = {
     onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void;
     onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void;
     onBatchGenerateVideos: (node: CanvasNodeData) => void;
+    onRunProducer: (node: CanvasNodeData) => void;
+    onPauseProducer: (node: CanvasNodeData) => void;
+    onCreateVideoWorkspace: (node: CanvasNodeData) => void;
     onActiveEpisodeChange: (nodeId: string, episodeId: string) => void;
     onCreateChapterNodes: (node: CanvasNodeData) => void;
     onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void;
@@ -72,7 +75,7 @@ type CanvasScriptNodeDialogProps = {
     promptProgress?: { current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" };
 };
 
-export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairAllProductionProblems, onOptimizeFinalReview, onStopFinalReviewOptimization, onRepairShot, onRepairAllShots, onStopShotRepair, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
+export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsChange, onPrepareAssets, onUpdateAsset, onDeleteAsset, onUploadAssetImage, onGenerateAssetImage, onGenerateSceneSheet, onStopSceneSheet, onBatchGenerateSceneSheets, onStopSceneSheets, onGenerateAssetVoice, onSelectAssetVoice, onBatchGenerateAssets, onStopAssetGeneration, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairAllProductionProblems, onOptimizeFinalReview, onStopFinalReviewOptimization, onRepairShot, onRepairAllShots, onStopShotRepair, onComposeFinalPrompt, onStopPromptGeneration, onPromptDetailChange, onModelChange, onGenerateImage, onGenerateVideo, onBatchGenerateVideos, onRunProducer, onPauseProducer, onCreateVideoWorkspace, onActiveEpisodeChange, onCreateChapterNodes, onNarrationLockChange, onShotPlanChange, videoDraftCount, videoResultCount, config, promptProgress }: CanvasScriptNodeDialogProps) {
     const { modal } = App.useApp();
     const rows = normalizeRows(node?.metadata?.storyboardRows);
     const style = node?.metadata?.storyboardAssetStyle || "";
@@ -80,6 +83,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const assetError = node?.metadata?.storyboardAssetError || "";
     const promptDetails = node?.metadata?.storyboardPromptDetails || {};
     const promptErrors = node?.metadata?.storyboardPromptErrors || {};
+    const producerProgress = node?.metadata?.storyboardProducerProgress;
     const planningProgress = node?.metadata?.storyboardPlanningProgress;
     const coverage = node?.metadata?.storyboardCoverage;
     const filledCount = rows.filter((row) => row.some((cell, index) => index > 1 && cell.trim())).length;
@@ -93,6 +97,10 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     const assets = allAssets.filter((asset) => !activeEpisodeId || asset.chapterIds === undefined || asset.chapterIds.includes(activeEpisodeId));
     const activeEpisodePrepared = activeEpisodeId ? Boolean(node?.metadata?.storyboardPreparedChapterIds?.includes(activeEpisodeId)) : assets.length > 0;
     const activeRowIndexes = rows.map((_, index) => index).filter((index) => !activeEpisodeId || shotPlans[String(index)]?.chapterId === activeEpisodeId);
+    const qualityWarningCount = activeRowIndexes.reduce((total, index) => {
+        const plan = shotPlans[String(index)];
+        return total + (plan ? storyboardShotQualityWarningsForShot({ row: rows[index], plan }).length : 0);
+    }, 0);
     const dynamicIndexes = activeRowIndexes.filter((index) => shotPlans[String(index)]?.renderMode !== "still");
     const allDynamicCount = Object.values(shotPlans).filter((plan) => plan.renderMode !== "still").length;
     const dynamicPromptCount = dynamicIndexes.filter((index) => hasVideoPrompt(promptDetails[String(index)]) && !promptErrors[String(index)]).length;
@@ -251,6 +259,17 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
         });
     };
 
+    const confirmCreateVideoWorkspace = () => {
+        if (!node) return;
+        modal.confirm({
+            title: `创建当前章 ${dynamicIndexes.length} 条视频工作区？`,
+            content: "此操作只创建待审核视频草稿，不会提交付费视频生成任务。请进入视频工作区检查后，再由你明确发起生成。",
+            okText: "确认创建",
+            cancelText: "取消",
+            onOk: () => onCreateVideoWorkspace(node),
+        });
+    };
+
     return (
         <Modal
             className="canvas-script-node-dialog"
@@ -306,6 +325,29 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         ) : null}
                         {view === "videos" ? <Button type="primary" icon={<Video className="size-4" />} disabled={!dynamicIndexes.length || dynamicPromptCount !== dynamicIndexes.length || Boolean(actionKey)} onClick={() => onBatchGenerateVideos(node)}>{videoDraftCount ? "更新" : "创建"}当前章 {dynamicIndexes.length} 条 × 15 秒视频工作区</Button> : null}
                         <Button type="text" className="!size-10 !shrink-0 !rounded-md !text-[#d8d8d8] hover:!bg-white/10" title="关闭" icon={<X className="size-5" />} onClick={onClose} />
+                    </div>
+                    <div className="flex min-h-14 shrink-0 items-center gap-4 border-b border-[#303030] bg-[#111412] px-8 py-2.5">
+                        <div className="grid size-8 shrink-0 place-items-center text-emerald-200"><Sparkles className="size-4" /></div>
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                                <span>AI 制片</span>
+                                {producerProgress?.attentionCount ? <button className="text-xs font-normal text-amber-200 hover:text-amber-100" onClick={() => setView("shots")}>需关注 {producerProgress.attentionCount} 项</button> : null}
+                                {qualityWarningCount ? <button className="text-xs font-normal text-[#98a39c] hover:text-white" onClick={() => setView("shots")}>创作建议 {qualityWarningCount} 项</button> : null}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-3 text-xs text-[#98a39c]">
+                                <span className="truncate">{producerProgress?.text || "从故事理解到资产与提示词，AI 将按阶段连续完成"}</span>
+                                {producerProgress && producerProgress.total > 0 ? <span className="shrink-0">{producerProgress.current}/{producerProgress.total}</span> : null}
+                            </div>
+                        </div>
+                        {producerProgress?.status === "running" ? (
+                            <Button icon={<Square className="size-3.5" />} onClick={() => onPauseProducer(node)}>暂停 AI 制片</Button>
+                        ) : producerProgress?.stage === "video-ready" && producerProgress.status !== "completed" ? (
+                            <Button type="primary" icon={<Video className="size-4" />} disabled={!dynamicIndexes.length || Boolean(actionKey)} onClick={confirmCreateVideoWorkspace}>确认创建视频工作区</Button>
+                        ) : producerProgress?.status === "completed" ? (
+                            <span className="text-xs font-semibold text-emerald-200">视频工作区已就绪</span>
+                        ) : (
+                            <Button type="primary" icon={<Sparkles className="size-4" />} disabled={Boolean(actionKey)} onClick={() => onRunProducer(node)}>{producerProgress?.status === "paused" || producerProgress?.status === "attention" ? "继续 AI 制片" : "开始 AI 制片"}</Button>
+                        )}
                     </div>
                     {view === "assets" ? (
                         <div className={`flex min-h-0 flex-1 flex-col ${editingAsset ? "mr-[490px]" : ""}`}>

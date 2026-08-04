@@ -67,6 +67,8 @@ Each 10-15 second clip should additionally define:
 }
 ```
 
+The fields form one causal scene sentence: because the subject wants `goal`, the `obstacle` forces a concrete tactic; that action produces `result`, changes `valueShift`, and creates pressure for the following clip. A list of unrelated actions is not a valid substitute. Dialogue, when present, must perform a playable strategy instead of restating the narration.
+
 The fields guide action, pacing, assets, and final prompts. They never authorize a new event.
 
 For a 15-second production clip, the `visual` handoff must contain an executable four-line timeline:

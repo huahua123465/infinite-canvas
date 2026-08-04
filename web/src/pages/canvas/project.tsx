@@ -24,6 +24,7 @@ import { MULTI_VIEW_NODE_SPECS, prepareMultiViewPrompt, type MultiViewNodeType }
 import { buildMangaCharacterPromptNodes } from "@/lib/canvas/manga-character-card-import";
 import { buildScene360PromptNodes } from "@/lib/canvas/manga-scene-360-import";
 import { buildMangaScenePromptNodes } from "@/lib/canvas/manga-storyboard-scene-import";
+import { generationErrorDisplayText } from "@/lib/canvas/generation-error";
 import { buildCinemaDnaPromptInstruction, buildPromptAssistantInstruction, buildStoryboardProjectSettingsInstruction } from "@/lib/canvas/prompt-assistant";
 import { inferStoryboardCharacterLifeStage, storyboardAssetImagePrompt } from "@/lib/canvas/storyboard-asset-prompt";
 import { normalizeStoryboardShotTimeline, parsePlannedStoryboardShots, parseStoryboardDramaturgyPlan, parseStoryboardShotQualityRepair, parseStoryboardSourceBeats, plannedShotsForBeats, planStoryboardProduction, storyboardActionBeatSegmentIndex, storyboardActionHasEvidence, storyboardBatchClipTargets, storyboardBeatBatches, storyboardClipPlanInstruction, storyboardCoverage, storyboardDramaturgyQualityIssues, storyboardJsonRepairPrompt, storyboardPlanningConfigKey, storyboardShotQualityIssuesForShot, storyboardSingleEpisodeBeatTarget, storyboardSourceChunks, storyboardSpeechParts, storyboardTotalClipTarget, type PlannedStoryboardShot } from "@/lib/canvas/storyboard-planning";
@@ -82,6 +83,7 @@ import {
     type StoryboardAudioReference,
     type StoryboardDramaturgyPlan,
     type StoryboardPromptDetail,
+    type StoryboardProducerProgress,
     type StoryboardShotPlan,
     type StoryboardSourceBeat,
     type StoryboardTypedActionBeat,
@@ -153,7 +155,6 @@ const CHARACTER_REFERENCE_VARIANTS: CharacterReferenceVariant[] = [
     { id: "clothing-detail", title: "服装细节", target: "服装细节参考图，聚焦上衣、领口、袖口、腰部配饰、鞋子或纹理材质，保持与主视图完全同一套服装。" },
 ];
 const STORYBOARD_ASSET_BATCH_CONCURRENCY = 3;
-const STORYBOARD_SHOT_QUALITY_CONCURRENCY = 2;
 const STORYBOARD_ASSET_LIMIT = 60;
 const STORYBOARD_ASSET_GRID_COLUMNS = 3;
 const STORYBOARD_ROW_LIMIT = 300;
@@ -756,6 +757,7 @@ function InfiniteCanvasPage() {
     const [promptAssistantModel, setPromptAssistantModel] = useState("");
     const [storyboardActionKey, setStoryboardActionKey] = useState<string | null>(null);
     const [storyboardPromptProgress, setStoryboardPromptProgress] = useState<{ current: number; total: number; phase: string; attempt?: number; status: "running" | "completed" | "paused" | "error" } | undefined>();
+    const storyboardProducerPausedRef = useRef(new Set<string>());
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
@@ -2470,7 +2472,7 @@ function InfiniteCanvasPage() {
             const currentWasFailed = Boolean(current.qualityError);
             const qualityChecked = Object.prototype.hasOwnProperty.call(patch, "qualityError");
             const qualityError = qualityChecked ? patch.qualityError : current.qualityError;
-            const plans = { ...(node.metadata?.storyboardShotPlans || {}), [String(rowIndex)]: { ...current, ...patch, qualityError, renderMode: qualityError ? "still" as const : patch.renderMode ?? current.renderMode, usePreviousTailFrame: qualityError ? false : patch.usePreviousTailFrame ?? current.usePreviousTailFrame } };
+            const plans = { ...(node.metadata?.storyboardShotPlans || {}), [String(rowIndex)]: { ...current, ...patch, qualityError, renderMode: patch.renderMode ?? current.renderMode, usePreviousTailFrame: patch.usePreviousTailFrame ?? current.usePreviousTailFrame } };
             const validityChanged = currentWasFailed !== Boolean(qualityError) || current.renderMode !== plans[String(rowIndex)].renderMode;
             if (validityChanged) {
                 const previous = plans[String(rowIndex - 1)];
@@ -2518,92 +2520,33 @@ function InfiniteCanvasPage() {
         }));
     }, []);
 
-    const saveStoryboardShotRepairError = useCallback((nodeId: string, rowIndex: number, error: StoryboardShotRepairError) => {
-        setNodes((prev) => prev.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, storyboardShotRepairErrors: { ...(node.metadata?.storyboardShotRepairErrors || {}), [String(rowIndex)]: error } } } : node));
-    }, []);
-
     const repairStoryboardShots = useCallback(async (node: CanvasNodeData, requestedIndexes?: number[], autoReview = false) => {
         const scriptNode = nodesRef.current.find((item) => item.id === node.id) || node;
         const rows = parseStoryboardRows(scriptNode.metadata?.storyboardRows);
         const plans = scriptNode.metadata?.storyboardShotPlans || {};
         const rowIndexes = (requestedIndexes?.length ? requestedIndexes : rows.map((_, index) => index)).filter((index) => Boolean(rows[index] && plans[String(index)]?.qualityError));
         if (!rowIndexes.length) return;
-        const generationConfig = { ...buildGenerationConfig(effectiveConfig, scriptNode, "text"), model: scriptNode.metadata?.model || effectiveConfig.textModel || effectiveConfig.model };
-        if (!isAiConfigReady(generationConfig, generationConfig.model)) {
-            openConfigDialog(true);
-            return;
-        }
-        const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
         let repairedCount = 0;
-        let finishedCount = 0;
-        let nextItemIndex = 0;
         const failed: string[] = [];
-        try {
-            const repairNext = async (): Promise<void> => {
-                const itemIndex = nextItemIndex;
-                nextItemIndex += 1;
-                if (itemIndex >= rowIndexes.length) return;
-                const rowIndex = rowIndexes[itemIndex];
-                const originalRow = rows[rowIndex];
-                const originalPlan = plans[String(rowIndex)];
-                const shotController = createLinkedAbortController(controller);
-                let timedOut = false;
-                const timeoutId = setTimeout(() => {
-                    timedOut = true;
-                    shotController.abort();
-                }, STORYBOARD_SHOT_REPAIR_TIMEOUT_MS);
-                try {
-                    const normalized = normalizeStoryboardShotTimeline({ row: [...originalRow], plan: { ...originalPlan } });
-                    const normalizedIssues = storyboardShotQualityIssuesForShot(normalized);
-                    const localShot: PlannedStoryboardShot = { row: normalized.row, plan: { ...normalized.plan, qualityError: normalizedIssues.length ? normalizedIssues.join("、") : undefined, renderMode: normalizedIssues.length ? "still" : "video", usePreviousTailFrame: normalizedIssues.length ? false : normalized.plan.usePreviousTailFrame } };
-                    const locallyChanged = JSON.stringify(localShot.row) !== JSON.stringify(originalRow) || localShot.plan.qualityError !== originalPlan.qualityError || localShot.plan.renderMode !== originalPlan.renderMode;
-                    if (locallyChanged) applyStoryboardShotRepairResult(scriptNode.id, rowIndex, { shot: localShot });
-                    if (!normalizedIssues.length) {
-                        repairedCount += 1;
-                    } else {
-                        const narrationLocked = Boolean(localShot.plan.chapterId && scriptNode.metadata?.storyboardLockedNarrationChapterIds?.includes(localShot.plan.chapterId));
-                        const outcome = await requestStoryboardShotQualityRepair(generationConfig, scriptNode, localShot.row, localShot.plan, shotController.signal, narrationLocked);
-                        applyStoryboardShotRepairResult(scriptNode.id, rowIndex, outcome);
-                        if (outcome.shot.plan.qualityError) failed.push(`镜${originalRow[0] || rowIndex + 1}：${outcome.shot.plan.qualityError}`);
-                        else repairedCount += 1;
-                    }
-                } catch (error) {
-                    if (!timedOut && isGenerationCanceled(error)) throw error;
-                    const repairError = storyboardShotRepairErrorFromUnknown(error, timedOut);
-                    saveStoryboardShotRepairError(scriptNode.id, rowIndex, repairError);
-                    if (timedOut) {
-                        failed.push(`镜${originalRow[0] || rowIndex + 1}：模型请求超过${STORYBOARD_SHOT_REPAIR_TIMEOUT_MS / 1000}秒，已跳过`);
-                    } else failed.push(`镜${originalRow[0] || rowIndex + 1}：${repairError.message}`);
-                } finally {
-                    clearTimeout(timeoutId);
-                    finishedCount += 1;
-                    if (!controller.signal.aborted) setStoryboardActionKey(rowIndexes.length > 1 ? `shot-fix:all:${finishedCount}:${rowIndexes.length}` : `shot-fix:${rowIndex}`);
-                }
-                await repairNext();
-            };
-            setStoryboardActionKey(rowIndexes.length > 1 ? `shot-fix:all:0:${rowIndexes.length}` : `shot-fix:${rowIndexes[0]}`);
-            const workerResults = await Promise.allSettled(Array.from({ length: Math.min(STORYBOARD_SHOT_REPAIR_CONCURRENCY, rowIndexes.length) }, () => repairNext()));
-            const rejected = workerResults.find((result) => result.status === "rejected");
-            if (rejected?.status === "rejected") throw rejected.reason;
-            if (failed.length) {
-                const summary = failed.slice(0, 3).join("；");
-                message.warning(`自动修正完成：成功 ${repairedCount} 项，失败 ${failed.length} 项。${summary}${failed.length > 3 ? `；另有 ${failed.length - 3} 项` : ""}`, 10);
-            }
-            else if (autoReview) {
-                message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频，正在自动发起全片终审`);
-                setTimeout(() => {
-                    const latestNode = nodesRef.current.find((item) => item.id === scriptNode.id);
-                    if (latestNode) void storyboardFinalReviewRunnerRef.current?.(latestNode);
-                }, 0);
-            } else message.success(`已自动修正 ${repairedCount} 项并恢复为动态视频`);
-        } catch (error) {
-            if (isGenerationCanceled(error)) message.info(`自动修正已暂停，已保留成功的 ${repairedCount} 项`);
-            else message.error(error instanceof Error ? `自动修正失败：${error.message}` : "自动修正失败");
-        } finally {
-            finishGenerationRequest(scriptNode.id, controller);
-            setStoryboardActionKey(null);
+        for (const rowIndex of rowIndexes) {
+            const originalRow = rows[rowIndex];
+            const originalPlan = plans[String(rowIndex)];
+            const normalized = normalizeStoryboardShotTimeline({ row: [...originalRow], plan: { ...originalPlan } });
+            const blockers = storyboardShotQualityIssuesForShot(normalized);
+            const localShot: PlannedStoryboardShot = { row: normalized.row, plan: { ...normalized.plan, qualityError: blockers.join("、") || undefined } };
+            applyStoryboardShotRepairResult(scriptNode.id, rowIndex, { shot: localShot });
+            if (blockers.length) failed.push(`镜${originalRow[0] || rowIndex + 1}：${blockers.join("、")}`);
+            else repairedCount += 1;
         }
-    }, [applyStoryboardShotRepairResult, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, saveStoryboardShotRepairError, startGenerationRequest]);
+        if (failed.length) message.warning(`本地校正完成：解决 ${repairedCount} 项，仍有 ${failed.length} 项确定性事实错误需要重新规划。${failed.slice(0, 3).join("；")}`, 10);
+        else if (autoReview) {
+            message.success(`已本地校正 ${repairedCount} 项，正在自动发起全片终审`);
+            setTimeout(() => {
+                const latestNode = nodesRef.current.find((item) => item.id === scriptNode.id);
+                if (latestNode) void storyboardFinalReviewRunnerRef.current?.(latestNode);
+            }, 0);
+        } else message.success(`已本地校正 ${repairedCount} 项`);
+    }, [applyStoryboardShotRepairResult, message]);
 
     const stopStoryboardShotRepair = useCallback((node: CanvasNodeData) => {
         if (!storyboardActionKey?.startsWith("shot-fix:")) return;
@@ -2925,8 +2868,8 @@ function InfiniteCanvasPage() {
                 }
             })();
             const restoredShotQualityErrors: ShotQualityError[] = checkpoint?.shots.flatMap((shot, index) => {
-                if (shot.plan.renderMode !== "still") return [];
-                const error = shot.plan.qualityError || "该场景卡仍标记为静态待修正";
+                if (!shot.plan.qualityError) return [];
+                const error = shot.plan.qualityError;
                 return [storedShotQualityErrors.find((item) => item.error === error) || { stage: "断点恢复", item: index + 1, error, rawResponse: "" }];
             }) || [];
             const restoredBatchQualityErrors = checkpoint ? storedShotQualityErrors.filter((item) => item.item === 0 && Number(item.stage.match(/镜头批次 (\d+)\//)?.[1] || 0) <= (checkpoint.completedShotBatches || 0)) : [];
@@ -2937,19 +2880,11 @@ function InfiniteCanvasPage() {
             const parsePlanningAnswer = async <T,>(answer: string, stage: string, parser: (content: string) => T) => {
                 try {
                     return parser(answer);
-                } catch {
-                    updatePlanningProgress(5, `${stage}返回格式异常，正在自动修复 JSON`);
-                    let repaired = "";
-                    try {
-                        repaired = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(answer) }], () => {}, { signal: controller.signal });
-                        return parser(repaired);
-                    } catch (error) {
-                        if (isGenerationCanceled(error)) throw error;
-                        failedStage = stage;
-                        failedRawResponse = repaired || answer;
-                        const reason = error instanceof Error ? error.message : "未知 JSON 错误";
-                        throw new Error(`${stage}解析失败，已自动修复一次但仍不是合法 JSON：${reason}`);
-                    }
+                } catch (error) {
+                    failedStage = stage;
+                    failedRawResponse = answer;
+                    const reason = error instanceof Error ? error.message : "未知 JSON 错误";
+                    throw new Error(`${stage}解析失败，本地 JSON 修复仍无法归一：${reason}`);
                 }
             };
             const locallyRepairShots = (parsedInput: PlannedStoryboardShot[], batchBeats: StoryboardSourceBeat[]) => {
@@ -2962,67 +2897,12 @@ function InfiniteCanvasPage() {
                 }
                 return parsed;
             };
-            const parseShotsWithQualityRetry = async (answer: string, parsedInput: PlannedStoryboardShot[], repairContext: string, stage: string, progress: number, batchBeats: StoryboardSourceBeat[]) => {
+            const parseShotsWithQualityRetry = async (_answer: string, parsedInput: PlannedStoryboardShot[], _repairContext: string, _stage: string, _progress: number, batchBeats: StoryboardSourceBeat[]) => {
                 const parsed = locallyRepairShots(parsedInput, batchBeats);
-                const invalidIndexes = parsed.map((shot, index) => storyboardShotQualityIssuesForShot(shot).length ? index : -1).filter((index) => index >= 0);
-                if (!invalidIndexes.length) return parsed;
-                updatePlanningProgress(progress, `${stage}正在逐镜质量修正（0/${invalidIndexes.length}）`);
-                const repairedShots: Array<PlannedStoryboardShot | undefined> = [];
-                const repairErrors: Array<ShotQualityError | undefined> = [];
-                let completedRepairs = 0;
-                await runLimited(invalidIndexes, STORYBOARD_SHOT_QUALITY_CONCURRENCY, async (index) => {
-                    const original = parsed[index];
-                    const issues = storyboardShotQualityIssuesForShot(original);
-                    const qualitySource = [
-                        repairContext,
-                        `【首次模型返回JSON】\n${answer}`,
-                        `【解析后的当前shots】\n${JSON.stringify({ shots: parsed })}`,
-                        `【只修正第${index + 1}项】\n当前问题：${issues.join("、")}\n只就地修正这一项，其他项、事实ID、顺序、主要可见事实、人物时期、连续性组和转场不得改变。participants 必须明确当前事实支持的 actor/patient；画外成年人双手也要作为 actor，婴儿/幼儿只能作为 patient。actionBeats 是唯一可执行动作链，只写2-3拍；typedActionBeats 与其逐项对应并明确 actor、action、patient、可选 prop 和必填 result，action 写清身体部位或物体、运动方式、作用对象，result 写清物理状态变化。visual 必须逐行重写为0-3、3-9、9-12、12-15秒四段，每段1-2句；0-3秒建场同时执行第一拍，3-9秒承接推进，9-12秒表现反作用/转折和可见结果，12-15秒只保持结果与稳定落点，禁止短动作标签；逐段复用对应 typedActionBeats 的参与者名、道具名、核心物理动词和结果关键词，不做失去追踪关系的同义改写。第一步只使用语义人物/场景/道具名，不生成 @资产名。obstacleReaction 与 turningAction 只是功能说明，不得扩成额外动作。只输出 {"shots":[修正后的这一项]}。`,
-                    ].join("\n\n");
-                    let qualityAnswer = "";
-                    try {
-                        qualityAnswer = await requestImageQuestion(generationConfig, [{ role: "user", content: qualitySource }], () => {}, { signal: controller.signal });
-                        let repaired: PlannedStoryboardShot;
-                        try {
-                            repaired = parseStoryboardShotQualityRepair(qualityAnswer, original);
-                        } catch (error) {
-                            if (!(error instanceof SyntaxError)) throw error;
-                            const repairedJson = await requestImageQuestion(generationConfig, [{ role: "user", content: storyboardJsonRepairPrompt(qualityAnswer) }], () => {}, { signal: controller.signal });
-                            qualityAnswer = repairedJson;
-                            repaired = parseStoryboardShotQualityRepair(repairedJson, original);
-                        }
-                        const candidate = repaired;
-                        candidate.plan = {
-                            ...candidate.plan,
-                            sourceBeatIds: [...original.plan.sourceBeatIds],
-                            visualBeatIds: original.plan.visualBeatIds ? [...original.plan.visualBeatIds] : undefined,
-                            voiceoverBeatIds: original.plan.voiceoverBeatIds ? [...original.plan.voiceoverBeatIds] : undefined,
-                            continuityGroupId: original.plan.continuityGroupId,
-                            timeStage: original.plan.timeStage,
-                            transition: original.plan.transition,
-                            usePreviousTailFrame: original.plan.usePreviousTailFrame,
-                        };
-                        const repairedIssues = storyboardShotQualityIssuesForShot(candidate);
-                        if (repairedIssues.length) throw new Error(repairedIssues.join("、"));
-                        repairedShots[index] = candidate;
-                    } catch (error) {
-                        if (isGenerationCanceled(error)) throw error;
-                        const errorText = error instanceof Error ? error.message : issues.join("、");
-                        repairedShots[index] = { row: [...original.row], plan: { ...original.plan, renderMode: "still", usePreviousTailFrame: false, qualityError: errorText } };
-                        repairErrors[index] = { stage, item: index + 1, error: errorText, rawResponse: qualityAnswer || answer };
-                    } finally {
-                        completedRepairs += 1;
-                        updatePlanningProgress(progress, `${stage}正在逐镜质量修正（${completedRepairs}/${invalidIndexes.length}）`);
-                    }
+                return parsed.map((shot) => {
+                    const blockers = storyboardShotQualityIssuesForShot(shot);
+                    return { row: shot.row, plan: { ...shot.plan, qualityError: blockers.join("、") || undefined } };
                 });
-                invalidIndexes.forEach((index) => {
-                    const repairedShot = repairedShots[index];
-                    const repairError = repairErrors[index];
-                    if (repairedShot) parsed[index] = repairedShot;
-                    if (repairError) shotQualityErrors.push(repairError);
-                });
-                if (repairErrors.some(Boolean)) syncShotQualityErrors();
-                return parsed;
             };
             try {
                 const sourceChunks = storyboardSourceChunks(storyText);
@@ -3249,7 +3129,7 @@ function InfiniteCanvasPage() {
                     setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined, storyboardPlanningProgress: undefined } } : item)));
                     return;
                 }
-                const errorDetails = error instanceof Error ? error.message : "生成镜头失败";
+                const errorDetails = friendlyGenerationError(error, "生成镜头失败");
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, storyboardPlanningProgress: undefined, storyboardPlanningErrorStage: failedStage || (shotQualityErrors.length ? `部分场景卡待人工修正（${shotQualityErrors.length}项）` : undefined), storyboardPlanningRawResponse: failedRawResponse || (shotQualityErrors.length ? JSON.stringify(shotQualityErrors) : undefined) } } : item)));
             } finally {
@@ -3278,6 +3158,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             setStoryboardActionKey("asset:prepare");
+            const controller = startGenerationRequest(scriptNode.id, scriptNode.id, scriptNode.id);
             const updateProgress = (percent: number, text: string) => {
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardStep: "assets", storyboardAssetError: undefined, storyboardAssetProgress: { percent, text } } } : item)));
             };
@@ -3296,13 +3177,14 @@ function InfiniteCanvasPage() {
                         if (hasDelta) return;
                         hasDelta = true;
                         updateProgress(70, "模型返回中，整理角色与场景");
-                    });
+                    }, { signal: controller.signal });
                 };
                 let answer: string;
                 try {
                     answer = await requestAssets(source);
                 } catch (error) {
                     if (!isSafetyGenerationError(error)) throw error;
+                    if (controller.signal.aborted) throw error;
                     updateProgress(48, "内容审核拦截，使用严格安全摘要重试");
                     source = storyboardAssetPlanningSource(scriptNode, activeEpisodeTitle, activeBeats, episodeRows, activeIndexes, true);
                     answer = await requestAssets(source);
@@ -3332,14 +3214,19 @@ function InfiniteCanvasPage() {
                 );
                 message.success(`当前集资产已识别，项目资产库共 ${mergedAssets.length} 个`);
             } catch (error) {
+                if (isGenerationCanceled(error)) {
+                    setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, storyboardAssetProgress: undefined } } : item)));
+                    return;
+                }
                 const errorMessage = friendlyGenerationError(error, "识别资产失败");
                 setNodes((prev) => prev.map((item) => (item.id === scriptNode.id ? { ...item, metadata: { ...item.metadata, ...scriptNode.metadata, storyboardStep: "assets", storyboardAssetError: errorMessage, storyboardAssetProgress: undefined } } : item)));
                 message.error(errorMessage);
             } finally {
+                finishGenerationRequest(scriptNode.id, controller);
                 setStoryboardActionKey(null);
             }
         },
-        [effectiveConfig, isAiConfigReady, message, openConfigDialog],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest],
     );
 
     const uploadStoryboardAssetImage = useCallback(
@@ -4221,6 +4108,117 @@ function InfiniteCanvasPage() {
         },
         [effectiveConfig, message],
     );
+
+    const updateStoryboardProducerProgress = useCallback((nodeId: string, progress: StoryboardProducerProgress) => {
+        setNodes((prev) => prev.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, storyboardProducerProgress: progress } } : item));
+    }, []);
+
+    const runStoryboardProducer = useCallback(async (node: CanvasNodeData) => {
+        const nodeId = node.id;
+        let producerStage: StoryboardProducerProgress["stage"] = "story";
+        storyboardProducerPausedRef.current.delete(nodeId);
+        const paused = () => storyboardProducerPausedRef.current.has(nodeId);
+        const latest = async () => {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            return nodesRef.current.find((item) => item.id === nodeId) || node;
+        };
+        try {
+            let current = await latest();
+            const rowsBefore = parseStoryboardRows(current.metadata?.storyboardRows);
+            if (!rowsBefore.length || !current.metadata?.storyboardSourceBeats?.length || current.metadata?.storyboardPlanningConfigKey !== storyboardPlanningConfigKey(current.metadata?.storyboardProductionScope || "series")) {
+                producerStage = "story";
+                updateStoryboardProducerProgress(nodeId, { status: "running", stage: producerStage, current: 0, total: 5, text: "正在理解故事并规划生产片段" });
+                await generateStoryboardShotsFromInputs(current);
+                current = await latest();
+                if (paused()) return;
+                if (!parseStoryboardRows(current.metadata?.storyboardRows).length) throw new Error(current.metadata?.storyboardPlanningErrorStage || "故事规划没有生成可用片段");
+                if (!current.metadata?.storyboardSourceBeats?.length || current.metadata?.storyboardPlanningConfigKey !== storyboardPlanningConfigKey(current.metadata?.storyboardProductionScope || "series")) {
+                    throw new Error(current.metadata?.storyboardPlanningErrorStage || "故事规划未完成，请查看第一步错误");
+                }
+            }
+
+            const activeChapterId = current.metadata?.storyboardActiveChapterId || current.metadata?.storyboardChapters?.[0]?.id;
+            if (activeChapterId && !current.metadata?.storyboardLockedNarrationChapterIds?.includes(activeChapterId)) {
+                current = { ...current, metadata: { ...current.metadata, storyboardLockedNarrationChapterIds: [...(current.metadata?.storyboardLockedNarrationChapterIds || []), activeChapterId] } };
+                setNodes((prev) => prev.map((item) => item.id === nodeId ? current : item));
+                await latest();
+            }
+
+            const prepared = activeChapterId ? current.metadata?.storyboardPreparedChapterIds?.includes(activeChapterId) : Boolean(current.metadata?.storyboardAssets?.length);
+            if (!prepared) {
+                producerStage = "asset-plan";
+                updateStoryboardProducerProgress(nodeId, { status: "running", stage: producerStage, current: 1, total: 5, text: "正在规划角色、场景和道具资产" });
+                await prepareStoryboardAssets(current);
+                current = await latest();
+                if (paused()) return;
+            }
+            const episodeAssets = storyboardAssetsForEpisode(current, activeChapterId);
+            if (!episodeAssets.length) throw new Error(current.metadata?.storyboardAssetError || "没有生成可用资产计划");
+            const missingAssets = episodeAssets.filter((asset) => !storyboardAssetReady(asset));
+            if (missingAssets.length) {
+                producerStage = "asset-images";
+                updateStoryboardProducerProgress(nodeId, { status: "running", stage: producerStage, current: episodeAssets.length - missingAssets.length, total: episodeAssets.length, text: `正在生成资产 ${episodeAssets.length - missingAssets.length}/${episodeAssets.length}` });
+                await batchGenerateStoryboardAssets(current);
+                current = await latest();
+                if (paused()) return;
+            }
+            const remainingAssets = storyboardAssetsForEpisode(current, activeChapterId).filter((asset) => !storyboardAssetReady(asset));
+            if (remainingAssets.length) {
+                updateStoryboardProducerProgress(nodeId, { status: "attention", stage: "asset-images", current: episodeAssets.length - remainingAssets.length, total: episodeAssets.length, text: `有 ${remainingAssets.length} 个资产需要处理`, attentionCount: remainingAssets.length });
+                return;
+            }
+
+            producerStage = "export-assets";
+            updateStoryboardProducerProgress(nodeId, { status: "running", stage: producerStage, current: 3, total: 5, text: "正在绑定资产与镜头" });
+            await exportStoryboardAssetsToCanvas(current);
+            current = await latest();
+            if (paused()) return;
+
+            const rows = parseStoryboardRows(current.metadata?.storyboardRows);
+            const dynamicIndexes = storyboardActiveRowIndexes(current, rows).filter((index) => current.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
+            const promptDetails = current.metadata?.storyboardPromptDetails || {};
+            const promptErrors = current.metadata?.storyboardPromptErrors || {};
+            const missingPrompts = dynamicIndexes.filter((index) => !promptDetails[String(index)] || promptErrors[String(index)]);
+            if (missingPrompts.length) {
+                producerStage = "prompts";
+                updateStoryboardProducerProgress(nodeId, { status: "running", stage: producerStage, current: dynamicIndexes.length - missingPrompts.length, total: dynamicIndexes.length, text: `正在合成提示词 ${dynamicIndexes.length - missingPrompts.length}/${dynamicIndexes.length}` });
+                await composeStoryboardFinalPrompt(current);
+                current = await latest();
+                if (paused()) return;
+            }
+            const finalRows = parseStoryboardRows(current.metadata?.storyboardRows);
+            const finalIndexes = storyboardActiveRowIndexes(current, finalRows).filter((index) => current.metadata?.storyboardShotPlans?.[String(index)]?.renderMode !== "still");
+            const failedPrompts = finalIndexes.filter((index) => !current.metadata?.storyboardPromptDetails?.[String(index)] || current.metadata?.storyboardPromptErrors?.[String(index)]);
+            updateStoryboardProducerProgress(nodeId, failedPrompts.length
+                ? { status: "attention", stage: "prompts", current: finalIndexes.length - failedPrompts.length, total: finalIndexes.length, text: `已完成其他片段，${failedPrompts.length} 条提示词需要处理`, attentionCount: failedPrompts.length }
+                : { status: "ready", stage: "video-ready", current: finalIndexes.length, total: finalIndexes.length, text: "资产和提示词已准备完成，可创建待审核视频工作区" });
+        } catch (error) {
+            if (paused()) return;
+            updateStoryboardProducerProgress(nodeId, { status: "attention", stage: producerStage, current: 0, total: 5, text: error instanceof Error ? error.message : "AI 制片中断", attentionCount: 1 });
+        }
+    }, [batchGenerateStoryboardAssets, composeStoryboardFinalPrompt, exportStoryboardAssetsToCanvas, generateStoryboardShotsFromInputs, prepareStoryboardAssets, updateStoryboardProducerProgress]);
+
+    const pauseStoryboardProducer = useCallback((node: CanvasNodeData) => {
+        storyboardProducerPausedRef.current.add(node.id);
+        stopGenerationByRunningId(node.id);
+        const current = node.metadata?.storyboardProducerProgress;
+        updateStoryboardProducerProgress(node.id, { status: "paused", stage: current?.stage || "story", current: current?.current || 0, total: current?.total || 5, text: "已暂停，已完成结果会保留", attentionCount: current?.attentionCount });
+    }, [stopGenerationByRunningId, updateStoryboardProducerProgress]);
+
+    const createStoryboardProducerVideoWorkspace = useCallback(async (node: CanvasNodeData) => {
+        await batchGenerateStoryboardVideos(node);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const current = nodesRef.current.find((item) => item.id === node.id) || node;
+        const activeChapterId = current.metadata?.storyboardActiveChapterId || current.metadata?.storyboardChapters?.[0]?.id;
+        const rows = parseStoryboardRows(current.metadata?.storyboardRows);
+        const expectedIndexes = storyboardVideoDraftCandidateRowIndexes(current, rows);
+        const draftIndexes = new Set(nodesRef.current.filter((item) => isStoryboardVideoDraftNode(item) && item.metadata?.storyboardSourceNodeId === node.id && item.metadata.storyboardChapterId === activeChapterId).map((item) => item.metadata?.storyboardRowIndex));
+        const missingDraftCount = expectedIndexes.filter((index) => !draftIndexes.has(index)).length;
+        const total = current.metadata?.storyboardProducerProgress?.total || 0;
+        updateStoryboardProducerProgress(node.id, expectedIndexes.length > 0 && missingDraftCount === 0
+            ? { status: "completed", stage: "video-ready", current: total, total, text: `已创建 ${expectedIndexes.length} 条待审核视频草稿；尚未提交付费视频任务` }
+            : { status: "attention", stage: "prompts", current: expectedIndexes.length - missingDraftCount, total: expectedIndexes.length || total, text: missingDraftCount ? `有 ${missingDraftCount} 条视频草稿未创建，请查看第三步错误` : "视频草稿未创建，请查看第三步的具体错误", attentionCount: missingDraftCount || 1 });
+    }, [batchGenerateStoryboardVideos, updateStoryboardProducerProgress]);
 
     const storyboardVideoWorkspaceSyncKey = useMemo(() => {
         const workspaceSourceIds = new Set(nodes.filter((item) => item.metadata?.workspaceKind === "storyboard-videos").map((item) => item.metadata?.workspaceSourceNodeId).filter(Boolean));
@@ -6459,6 +6457,9 @@ function InfiniteCanvasPage() {
                     onSelectAssetVoice={selectStoryboardAssetVoice}
                     onBatchGenerateAssets={(node) => void batchGenerateStoryboardAssets(node)}
                     onStopAssetGeneration={stopStoryboardAssetGeneration}
+                    onRunProducer={(node) => void runStoryboardProducer(node)}
+                    onPauseProducer={pauseStoryboardProducer}
+                    onCreateVideoWorkspace={(node) => void createStoryboardProducerVideoWorkspace(node)}
                     onGenerateShotsFromInputs={(node) => void generateStoryboardShotsFromInputs(node)}
                     onRunFinalReview={(node) => void runStoryboardFinalReview(node)}
                     onStopFinalReview={stopStoryboardFinalReview}
@@ -8006,7 +8007,7 @@ function storyboardSafetyComposeText(text: string, strict = false) {
 
 function friendlyGenerationError(error: unknown, fallback: string) {
     const raw = error instanceof Error ? error.message : fallback;
-    if (!isSafetyGenerationError(error)) return raw;
+    if (!isSafetyGenerationError(error)) return generationErrorDisplayText(raw, fallback);
     const requestId = raw.match(/request id[:：]\s*([^)。；;\s]+)/i)?.[1];
     return `请求被安全系统拦截，请检查提示词或参考图是否包含未成年人、伤残、血腥、受害或极端困境等敏感描述${requestId ? `（request id: ${requestId}）` : ""}`;
 }
@@ -9085,7 +9086,7 @@ function repairStoryboardStableLanding(row: string[], plan: StoryboardShotPlan, 
         return null;
     }
     nextRow[2] = lines.join("\n");
-    return { row: nextRow, plan: { ...plan, qualityError: undefined, renderMode: "video" } };
+    return { row: nextRow, plan: { ...plan, qualityError: undefined } };
 }
 
 async function requestStoryboardShotQualityRepair(config: AiConfig, node: CanvasNodeData, row: string[], plan: StoryboardShotPlan, signal: AbortSignal, narrationLocked = false): Promise<StoryboardShotRepairOutcome> {
@@ -9129,8 +9130,9 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
         return { shot: repaired };
     }
     const immutableRules = `保持 sourceBeatIds、visualBeatIds、voiceoverBeatIds、镜头顺序、人物时期、连续性组、章节、转场和时长不变；只修正【当前问题】列出的剩余字段，已经合格的字段原样保留，不增加人物、关系、对白、地点、道具、冲突或结局。participants 必须把动作执行人物标为 actor；typedActionBeats.patient 表示动作对象，可以是已绑定人物、身体部位、道具或场景物体，只有人物对象才标为 patient。actionBeats 只写2-3拍，typedActionBeats 与其逐项对应并包含物理结果。visual 必须逐行写0-3、3-9、9-12、12-15秒四段详细动作；前三段写清执行者、身体部位或道具、动作对象和物理变化，12-15秒只保持已形成结果与稳定落点。对白旁白不得带秒数或导演说明，旁白不超过48字。${narrationLocked ? "本章旁白已人工锁定，dialogue 列必须逐字原样返回。" : ""}`;
-    let answer = await requestImageQuestion(config, [{ role: "user", content: [
-        "你是写实传记短剧的分镜校对。根据当前事实和质量错误，只重写这一条生产片段。",
+    const answer = await requestImageQuestion(config, [{ role: "user", content: [
+        "你是中文短剧的场景编剧与分镜校对。根据当前事实和质量错误，只修正这一条生产片段。",
+        "先守住场景因果：人物当前目标必须遭遇可见阻力，人物用具体策略行动，动作造成可见结果并形成下一步压力；对白只承担争取、回避、试探、逼迫或重新定义关系中的一种功能，不写解释剧情的套话。传记不得虚构事实，叙事与概念短片也不得新增输入中不存在的事件。",
         immutableRules,
         `【当前事实】\n${JSON.stringify(facts)}`,
         `【当前问题】\n${issues.join("、")}`,
@@ -9141,21 +9143,9 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
     try {
         candidate = parseStoryboardShotQualityRepair(answer, { row: currentRow, plan: currentPlan });
     } catch (error) {
-        if (!(error instanceof SyntaxError)) throw new StoryboardShotRepairFailure(storyboardShotRepairError("contract", error instanceof Error ? error.message : "修正响应结构不符合要求", answer));
-        const invalidJson = answer;
-        try {
-            answer = await requestImageQuestion(config, [{ role: "user", content: `这是一次 JSON 语法修复，不是内容重写。${storyboardJsonRepairPrompt(invalidJson)}` }], () => {}, { signal });
-        } catch (transportError) {
-            if (isGenerationCanceled(transportError)) throw transportError;
-            throw new StoryboardShotRepairFailure(storyboardShotRepairError("transport", transportError instanceof Error ? transportError.message : "JSON 语法修复请求失败", invalidJson));
-        }
-        try {
-            candidate = parseStoryboardShotQualityRepair(answer, { row: currentRow, plan: currentPlan });
-        } catch (repairError) {
-            throw new StoryboardShotRepairFailure(storyboardShotRepairError(repairError instanceof SyntaxError ? "json" : "contract", repairError instanceof Error ? repairError.message : "JSON 语法修复后仍无法解析", answer));
-        }
+        throw new StoryboardShotRepairFailure(storyboardShotRepairError(error instanceof SyntaxError ? "json" : "contract", error instanceof Error ? error.message : "修正响应无法在本地解析", answer));
     }
-    const repaired: PlannedStoryboardShot = {
+    const repaired = normalizeStoryboardShotTimeline({
         row: candidate.row.map((cell, index) => index === 0 ? currentRow[0] : index === 1 ? currentRow[1] : narrationLocked && index === 5 ? row[5] : cell),
         plan: {
             ...candidate.plan,
@@ -9176,7 +9166,7 @@ async function requestStoryboardShotQualityRepair(config: AiConfig, node: Canvas
             qualityError: undefined,
             renderMode: "video",
         },
-    };
+    });
     const repairedIssues = storyboardShotQualityIssuesForShot(repaired);
     if (!repairedIssues.length) return { shot: repaired };
     const message = repairedIssues.join("、");
