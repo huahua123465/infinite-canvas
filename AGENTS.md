@@ -133,3 +133,4 @@
 - Voicebox 的 `VOICEBOX_MODELS_DIR`、`HF_HOME`、Hugging Face Hub/Xet/Assets、Torch 和 XDG 模型缓存必须统一指向项目内 `voicebox/.runtime/models/`，Transformers 复用 `HF_HOME`，不得继续设置已弃用的 `TRANSFORMERS_CACHE` 或默认写入系统 C 盘用户缓存；迁移已有全局缓存前必须确认其内容和目标绝对路径，不得由启动脚本自动搬走其他项目共享的模型。
 - `voicebox/` 是自动拉取且被 Git 忽略的固定上游源码；项目级 Voicebox Web 定制必须作为 `voicebox-patches/*.patch` 提交，并由统一启动脚本幂等应用、在补丁哈希变化时重建 Web，不得只修改本机 `voicebox/` 后交付。
 - 画布中的 Voicebox 输入区必须等价于 Voicebox Web 的生成输入区：选择档案后只以真实档案 ID 调用 Voicebox，并由档案决定引擎、预设/克隆音色和默认效果；不得按档案名称重新映射音色，也不得用画布音频结果缓存跳过新的 Voicebox 任务。生成节点必须保留档案 ID 与 Voicebox 任务 ID，便于核对 Web 历史和画布返回音频来自同一次生成。
+- Agent 对话消息必须同时按 `threadId`、`turnId` 和 `itemId` 归属；实时事件只用于补充未物化的 turn，历史快照成为权威后不得重复合并同一条消息。

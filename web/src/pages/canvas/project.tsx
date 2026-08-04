@@ -679,7 +679,6 @@ function InfiniteCanvasPage() {
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);
     const toggleAgentPanel = useAgentStore((state) => state.togglePanel);
     const openAgentPanel = useAgentStore((state) => state.openPanel);
-    const setAgentState = useAgentStore((state) => state.setAgentState);
     const setAgentCanvasContext = useAgentStore((state) => state.setCanvasContext);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
@@ -778,6 +777,7 @@ function InfiniteCanvasPage() {
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
+    const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
 
     const openToonflow = useCallback(async () => {
@@ -930,11 +930,6 @@ function InfiniteCanvasPage() {
         };
         void restore();
     }, [hydrated, openProject, projectId, navigate]);
-
-    useEffect(() => {
-        if (!projectLoaded) return;
-        setAgentState({ activeThreadId: "", messages: [], tokenUsage: null, pendingTool: null, pendingApprovals: [] });
-    }, [projectId, projectLoaded, setAgentState]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "") || searchParams.has("agentUrl")) return;
@@ -2320,6 +2315,9 @@ function InfiniteCanvasPage() {
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
     }, []);
+
+    const handleNodeResizeStart = useCallback(() => setIsNodeResizing(true), []);
+    const handleNodeResizeEnd = useCallback(() => setIsNodeResizing(false), []);
 
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
         setNodes((prev) =>
@@ -6294,7 +6292,9 @@ function InfiniteCanvasPage() {
                                 setHoveredNodeId((current) => (current === nodeId ? null : current));
                             }}
                             onConnectStart={handleConnectStart}
+                            onResizeStart={handleNodeResizeStart}
                             onResize={handleNodeResize}
+                            onResizeEnd={handleNodeResizeEnd}
                             onMetadataChange={handleNodeMetadataChange}
                             onContentChange={handleNodeContentChange}
                             onTitleChange={handleNodeTitleChange}
@@ -6341,7 +6341,7 @@ function InfiniteCanvasPage() {
                 </InfiniteCanvas>
 
                 <CanvasNodeHoverToolbar
-                    node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
+                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     extraTools={pluginToolbarTools}
                     onKeep={keepNodeToolbar}

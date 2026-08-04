@@ -63,7 +63,9 @@ type CanvasNodeProps = {
     onHoverStart: (nodeId: string) => void;
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
+    onResizeStart: (nodeId: string) => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onResizeEnd: (nodeId: string) => void;
     onMetadataChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onContentChange: (nodeId: string, content: string, storyboardRows?: string[][]) => void;
     onTitleChange: (nodeId: string, title: string) => void;
@@ -138,7 +140,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverStart,
     onHoverEnd,
     onConnectStart,
+    onResizeStart,
     onResize,
+    onResizeEnd,
     onMetadataChange,
     onContentChange,
     onTitleChange,
@@ -298,11 +302,13 @@ export const CanvasNode = React.memo(function CanvasNode({
         resizeRef.current.isResizing = false;
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
-    }, [handleResizeMove]);
+        onResizeEnd(data.id);
+    }, [data.id, handleResizeMove, onResizeEnd]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
         event.preventDefault();
+        onResizeStart(data.id);
         resizeRef.current = {
             isResizing: true,
             corner,
@@ -323,8 +329,9 @@ export const CanvasNode = React.memo(function CanvasNode({
         return () => {
             window.removeEventListener("mousemove", handleResizeMove);
             window.removeEventListener("mouseup", handleResizeUp);
+            if (resizeRef.current.isResizing) onResizeEnd(data.id);
         };
-    }, [handleResizeMove, handleResizeUp]);
+    }, [data.id, handleResizeMove, handleResizeUp, onResizeEnd]);
 
     return (
         <div

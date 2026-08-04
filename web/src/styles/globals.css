@@ -471,3 +471,7 @@
     animation: none;
     mix-blend-mode: normal;
 }
+/* Streamdown 在关闭代码块行号后仍保持多行代码的原始换行。 */
+.agent-streamdown [data-streamdown="code-block-body"] code > span {
+    display: block;
+}
