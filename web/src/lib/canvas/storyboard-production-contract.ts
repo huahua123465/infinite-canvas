@@ -188,27 +188,38 @@ function validateSceneCard(contract: StoryboardProductionContract, block: (code:
     if (!contract.startState) block("scene_card_start_missing", "场景卡缺少起始状态", "startState");
     if (!contract.endState) block("scene_card_end_missing", "场景卡缺少结束状态", "endState");
     if (!contract.result) block("scene_card_result_missing", "场景卡缺少可见结果", "result");
-    if (contract.untypedActionBeats.length < 2 || contract.untypedActionBeats.length > 4) block("scene_card_action_count", "场景卡必须包含 2-4 个因果动作节拍", "actionBeats");
-    if (contract.actionBeats.length < 2 || contract.actionBeats.length > 4) block("typed_action_count", "生产契约必须包含 2-4 个类型化动作节拍", "typedActionBeats");
+    if (contract.untypedActionBeats.length < 2 || contract.untypedActionBeats.length > 3) block("scene_card_action_count", "场景卡必须包含 2-3 个因果动作节拍", "actionBeats");
+    if (contract.actionBeats.length < 2 || contract.actionBeats.length > 3) block("typed_action_count", "生产契约必须包含 2-3 个类型化动作节拍", "typedActionBeats");
 }
 
 function validateParticipants(contract: StoryboardProductionContract, block: (code: string, message: string, field?: string) => void) {
-    const actors = new Set(contract.participants.filter((item) => item.role === "actor").map((item) => item.name.trim()).filter(Boolean));
-    const patients = new Set(contract.participants.filter((item) => item.role === "patient").map((item) => item.name.trim()).filter(Boolean));
+    const actors = new Set(contract.participants.filter((item) => item.role === "actor").map((item) => storyboardCharacterBaseName(item.name)).filter(Boolean));
+    const participantNames = new Set(contract.participants.map((item) => storyboardCharacterBaseName(item.name)).filter(Boolean));
+    const patients = new Set(contract.participants.filter((item) => item.role === "patient").map((item) => storyboardCharacterBaseName(item.name)).filter(Boolean));
+    const factualCharacters = new Set(contract.sourceBeats.flatMap((beat) => beat.characters).map(storyboardCharacterBaseName).filter(Boolean));
     if (!actors.size) block("actor_missing", "动态镜头缺少明确的动作执行者", "participants");
-    if (!patients.size) block("patient_missing", "动态镜头缺少明确的动作承受者", "participants");
     contract.participants.forEach((participant, index) => {
         if (!participant.name.trim()) block("participant_name_missing", `参与者 ${index + 1} 缺少名称`, "participants");
         if (!participant.sourceBeatIds.length || participant.sourceBeatIds.some((id) => !contract.sourceBeatIds.includes(id))) block("participant_fact_ungrounded", `参与者“${participant.name || index + 1}”没有完整绑定当前镜头事实 ID`, "participants");
     });
     contract.actionBeats.forEach((beat, index) => {
-        if (!actors.has(beat.actor.trim())) block("action_actor_unbound", `动作节拍 ${index + 1} 的执行者“${beat.actor}”未绑定 actor 职责`, "typedActionBeats");
-        if (!patients.has(beat.patient.trim())) block("action_patient_unbound", `动作节拍 ${index + 1} 的承受者“${beat.patient}”未绑定 patient 职责`, "typedActionBeats");
+        const actorBaseName = storyboardCharacterBaseName(beat.actor);
+        if (!actors.has(actorBaseName)) block("action_actor_unbound", `动作节拍 ${index + 1} 的执行者“${beat.actor}”未绑定 actor 职责`, "typedActionBeats");
+        if (factualCharacters.size && !factualCharacters.has(actorBaseName)) block("action_actor_ungrounded", `动作节拍 ${index + 1} 的执行者“${beat.actor}”不是当前事实中的人物`, "typedActionBeats");
+        const patientBaseName = storyboardCharacterBaseName(beat.patient);
+        if ((participantNames.has(patientBaseName) || factualCharacters.has(patientBaseName)) && !patients.has(patientBaseName)) block("action_patient_unbound", `动作节拍 ${index + 1} 命中的人物承受者“${beat.patient}”未绑定 patient 职责`, "typedActionBeats");
         if (!beat.action.trim()) block("action_missing", `动作节拍 ${index + 1} 缺少可见物理动作`, "typedActionBeats");
         const actor = contract.participants.find((item) => item.name === beat.actor && item.role === "actor");
         const actorAssets = contract.assets.filter((item) => item.kind === "character" && (item.name === beat.actor || item.baseName === beat.actor));
         if (actor && (isInfant(`${actor.name} ${actor.lifeStage || ""}`) || actorAssets.some((item) => isInfant(`${item.name} ${item.lifeStage || ""}`))) && isAdultCareAction(beat.action)) block("infant_adult_care_action", `婴儿参与者“${actor.name}”不能执行成人照护动作：${beat.action}`, "typedActionBeats");
     });
+}
+
+function storyboardCharacterBaseName(value: string) {
+    return value.trim()
+        .replace(/^(?:新生儿|婴儿|幼儿|童年|少年|少女|青年|年轻|成年|中年|晚年|老年)[时期阶段的\s·：:-]*/u, "")
+        .replace(/[\s·：:-]*(?:新生儿|婴儿|幼儿|童年|少年|少女|青年|年轻|成年|中年|晚年|老年)(?:时期|阶段)?$/u, "")
+        .trim();
 }
 
 function validateAssets(contract: StoryboardProductionContract, block: (code: string, message: string, field?: string) => void) {

@@ -148,6 +148,91 @@ export function parsePlannedStoryboardShots(content: string): PlannedStoryboardS
     });
 }
 
+export function parseStoryboardShotQualityRepair(content: string): PlannedStoryboardShot {
+    let data: unknown;
+    try {
+        data = parseJson(content);
+    } catch (error) {
+        throw new SyntaxError(error instanceof Error ? error.message : "修正响应不是合法 JSON");
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("修正响应根路径必须是对象");
+    const shots = (data as Record<string, unknown>).shots;
+    if (!Array.isArray(shots)) throw new Error("修正响应缺少 shots 数组");
+    if (shots.length !== 1) throw new Error(`修正响应 shots 必须且只能包含1项（当前${shots.length}项）`);
+    const item = shots[0];
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("修正响应 shots[0] 必须是对象");
+    const record = item as Record<string, unknown>;
+    if (!Array.isArray(record.row)) throw new Error("修正响应 shots[0].row 必须是数组");
+    if (record.row.length < 9) throw new Error(`修正响应 shots[0].row 必须包含9列（当前${record.row.length}列）`);
+    const row = record.row.slice(0, 9).map(text);
+    if (!row[2]) throw new Error("修正响应 shots[0].row[2] 缺少画面描述");
+    if (!record.plan || typeof record.plan !== "object" || Array.isArray(record.plan)) throw new Error("修正响应 shots[0].plan 必须是对象");
+    const rawPlan = record.plan as Record<string, unknown>;
+    const requiredText = (field: string) => {
+        const value = text(rawPlan[field]);
+        if (!value) throw new Error(`修正响应 shots[0].plan.${field} 缺失或为空`);
+        return value;
+    };
+    const sourceBeatIds = stringList(rawPlan.sourceBeatIds);
+    if (!sourceBeatIds.length) throw new Error("修正响应 shots[0].plan.sourceBeatIds 必须是非空列表");
+    const visualBeatIds = stringList(rawPlan.visualBeatIds);
+    if (visualBeatIds.length !== 1) throw new Error("修正响应 shots[0].plan.visualBeatIds 必须且只能包含1项");
+    const actionBeats = stringList(rawPlan.actionBeats);
+    if (actionBeats.length < 2 || actionBeats.length > 3) throw new Error("修正响应 shots[0].plan.actionBeats 必须包含2-3项");
+    if (!Array.isArray(rawPlan.participants)) throw new Error("修正响应 shots[0].plan.participants 必须是数组");
+    rawPlan.participants.forEach((value, index) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`修正响应 shots[0].plan.participants[${index}] 必须是对象`);
+        const participant = value as Record<string, unknown>;
+        if (!text(participant.name)) throw new Error(`修正响应 shots[0].plan.participants[${index}].name 缺失或为空`);
+        if (!["actor", "patient"].includes(text(participant.role))) throw new Error(`修正响应 shots[0].plan.participants[${index}].role 必须是 actor 或 patient`);
+        if (!stringList(participant.sourceBeatIds).length) throw new Error(`修正响应 shots[0].plan.participants[${index}].sourceBeatIds 必须是非空列表`);
+    });
+    const participants = parseShotParticipants(rawPlan.participants);
+    if (!participants.length) throw new Error("修正响应 shots[0].plan.participants 缺少合法参与者");
+    if (!Array.isArray(rawPlan.typedActionBeats)) throw new Error("修正响应 shots[0].plan.typedActionBeats 必须是数组");
+    rawPlan.typedActionBeats.forEach((value, index) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`修正响应 shots[0].plan.typedActionBeats[${index}] 必须是对象`);
+        const beat = value as Record<string, unknown>;
+        ["actor", "action", "patient", "result"].forEach((field) => {
+            if (!text(beat[field])) throw new Error(`修正响应 shots[0].plan.typedActionBeats[${index}].${field} 缺失或为空`);
+        });
+    });
+    const typedActionBeats = parseTypedActionBeats(rawPlan.typedActionBeats);
+    if (typedActionBeats.length !== actionBeats.length) throw new Error("修正响应 shots[0].plan.typedActionBeats 必须与 actionBeats 逐项对应");
+    const transition = text(rawPlan.transition) as StoryboardShotTransition;
+    return {
+        row,
+        plan: {
+            ...(rawPlan as unknown as StoryboardShotPlan),
+            shotId: requiredText("shotId"),
+            sourceBeatIds,
+            visualBeatIds,
+            voiceoverBeatIds: stringList(rawPlan.voiceoverBeatIds),
+            continuityGroupId: requiredText("continuityGroupId"),
+            timeStage: text(rawPlan.timeStage),
+            startState: requiredText("startState"),
+            endState: requiredText("endState"),
+            transition: ["continue", "cut", "montage", "time-jump"].includes(transition) ? transition : "cut",
+            usePreviousTailFrame: rawPlan.usePreviousTailFrame === true,
+            motionPriority: Math.max(1, Math.min(5, Number(rawPlan.motionPriority) || 3)),
+            dramaticFunction: normalizeDramaturgyPhase(rawPlan.dramaticFunction),
+            goal: requiredText("goal"),
+            obstacle: requiredText("obstacle"),
+            stakes: requiredText("stakes"),
+            tactic: requiredText("tactic"),
+            actionBeats,
+            participants,
+            typedActionBeats,
+            obstacleReaction: requiredText("obstacleReaction"),
+            turningAction: requiredText("turningAction"),
+            result: requiredText("result"),
+            plotRhythm: normalizePlotRhythm(rawPlan.plotRhythm),
+            emotionRhythm: normalizeEmotionRhythm(rawPlan.emotionRhythm),
+            valueShift: requiredText("valueShift"),
+        },
+    };
+}
+
 export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     return shots.flatMap((shot, index) => {
         const issues = storyboardShotQualityIssuesForShot(shot);
@@ -155,9 +240,18 @@ export function storyboardShotQualityIssues(shots: PlannedStoryboardShot[]) {
     });
 }
 
-function storyboardActionFragments(value: string) {
-    const compact = value.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "");
-    return new Set(Array.from({ length: Math.max(0, compact.length - 1) }, (_, index) => compact.slice(index, index + 2)).filter((item) => !/^(动作|结果|人物|身体|物体|当前|场景|保持)$/.test(item)));
+const PHYSICAL_ACTION_PATTERN = /握|抓|拿|放|抬|举|推|拉|拖|拽|牵|扶|抱|托|按|压|点|敲|砸|劈|切|刺|挥|踢|蹬|踩|跨|越|迈|走|跑|冲|退|转|蹲|跪|坐|站|起身|俯身|弯腰|伸|收|递|接|掀|揭|开|关|倒|撒|扬|捡|拾|擦|洗|穿|脱|系|解|绑|包|卷|铺|移|翻|撞|落|滚|滑|摇|点燃|熄灭|撕|折|塞|拔|插/;
+const BODY_PART_PATTERN = /头|脸|眼|肩|臂|手|掌|指|腰|背|腿|膝|脚|足|身体|身躯|重心|步伐|脚步|转身|侧身|俯身|起身/;
+const CAMERA_PHRASE_PATTERN = /(?:镜头|运镜|摄影机|摄像机|机位|画面)\s*(?:向前|向后|向左|向右|上升|下降)?\s*(?:推近|拉远|摇摄|移动|平移|跟拍|跟随|升降)|(?:镜头|画面)中/g;
+const ABSTRACT_PHRASE_PATTERN = /(?:意识到|明白|感到|陷入沉思|内心|心理|情绪变化|做出决定)|(?:观察|注视|凝视|等待)(?:前方|四周|对方|远处)?(?:并|且|然后|随后)?/g;
+const STATIC_PHRASE_PATTERN = /(?:保持|维持|身体)(?:不动|静止)|站着(?=(?:观察|注视|凝视|等待|$))/g;
+
+function storyboardActionHasEvidence(content: string, beat: StoryboardTypedActionBeat) {
+    return content.split(/[，,。；;！!？?]/).map((clause) => clause.trim()).filter(Boolean).some((clause) => {
+        const actionText = clause.replace(CAMERA_PHRASE_PATTERN, "").replace(ABSTRACT_PHRASE_PATTERN, "").replace(STATIC_PHRASE_PATTERN, "").trim();
+        const subject = BODY_PART_PATTERN.test(actionText) || Boolean(beat.prop && actionText.includes(beat.prop));
+        return subject && PHYSICAL_ACTION_PATTERN.test(actionText);
+    });
 }
 
 function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) {
@@ -167,19 +261,9 @@ function storyboardVisualTimelineIssue(value: string, plan: StoryboardShotPlan) 
     const minimumLengths = [24, 32, 24, 18];
     const shallowIndex = segments.findIndex((segment, index) => Array.from(segment.content.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length < minimumLengths[index]);
     if (shallowIndex >= 0) return `画面描述${segments[shallowIndex].start}-${segments[shallowIndex].end}秒过于简略，必须写清执行者、身体部位或物体、动作对象和物理变化`;
-    const actionMismatchIndex = (plan.typedActionBeats || []).findIndex((beat, index) => {
-        const actual = storyboardActionFragments(segments[Math.min(index, 2)]?.content || "");
-        const actionRequired = storyboardActionFragments(beat.action);
-        const resultRequired = storyboardActionFragments(beat.result || "");
-        const actionOverlap = Array.from(actionRequired).filter((item) => actual.has(item)).length;
-        const resultOverlap = Array.from(resultRequired).filter((item) => actual.has(item)).length;
-        return actionOverlap < Math.min(2, actionRequired.size) || resultOverlap < Math.min(1, resultRequired.size);
-    });
+    const actionMismatchIndex = (plan.typedActionBeats || []).findIndex((beat, index) => !storyboardActionHasEvidence(segments[Math.min(index, 2)]?.content || "", beat));
     if (actionMismatchIndex >= 0) return `画面描述第${actionMismatchIndex + 1}段没有展开对应类型化动作节拍`;
     if (!/稳定|保持|停住|静止|落点|不再|维持/.test(segments[3].content)) return "画面描述12-15秒缺少结果保持和稳定落点";
-    const endingRequired = storyboardActionFragments(`${plan.result || ""}${plan.endState || ""}`);
-    const endingActual = storyboardActionFragments(segments[3].content);
-    if (Array.from(endingRequired).filter((item) => endingActual.has(item)).length < Math.min(2, endingRequired.size)) return "画面描述12-15秒没有保持场景卡结果与结束状态";
     return "";
 }
 
@@ -188,9 +272,11 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
     const narrationLength = Array.from(storyboardSpeechParts(shot.row[5] || "").narration.replace(/[^\u3400-\u9fffA-Za-z0-9]/g, "")).length;
     const abstractAction = [plan.tactic || "", ...(plan.actionBeats || []), plan.obstacleReaction || "", plan.turningAction || "", plan.result || ""].some((value) => /意识到|明白|感到|陷入沉思|局势(?:恶化|升级)|关系(?:缓和|恶化)|情绪变化|做出决定/.test(value));
     const actors = new Set((plan.participants || []).filter((item) => item.role === "actor").map((item) => item.name));
-    const patients = new Set((plan.participants || []).filter((item) => item.role === "patient").map((item) => item.name));
+    const participantByName = new Map((plan.participants || []).map((item) => [item.name, item]));
     const humanRoleRequired = Boolean(plan.participants?.length) || /人物|角色|婴儿|新生儿|宝宝|幼儿|少年|少女|青年|成年|老人|童年|出生时|年轻时期/.test(`${plan.timeStage} ${shot.row[2]} ${shot.row[5]}`);
-    const unboundTypedAction = (plan.typedActionBeats || []).some((item) => !actors.has(item.actor) || !patients.has(item.patient));
+    const unboundActor = (plan.typedActionBeats || []).some((item) => !actors.has(item.actor));
+    const ungroundedActor = (plan.participants || []).some((item) => item.role === "actor" && (!item.sourceBeatIds.length || item.sourceBeatIds.some((id) => !plan.sourceBeatIds.includes(id))));
+    const unboundHumanPatient = (plan.typedActionBeats || []).some((item) => participantByName.has(item.patient) && participantByName.get(item.patient)?.role !== "patient");
     const infantActor = (plan.participants || []).find((item) => item.role === "actor" && /出生|新生儿|婴儿|宝宝|襁褓|幼儿/.test(`${item.name} ${item.lifeStage || ""}`));
     const infantCareAction = Boolean(infantActor && (plan.typedActionBeats || []).some((item) => item.actor === infantActor.name && /抱起|抱住|托住|喂养|喂奶|换尿布|照料|照护|护理|包裹|拢紧|整理襁褓|调整包裹|安置|穿衣|擦洗/.test(item.action)));
     const visualTimelineIssue = storyboardVisualTimelineIssue(shot.row[2] || "", plan);
@@ -205,12 +291,12 @@ export function storyboardShotQualityIssuesForShot(shot: PlannedStoryboardShot) 
         (plan.actionBeats?.length || 0) < 2 ? "动作节拍少于2个" : "",
         (plan.actionBeats?.length || 0) > 3 ? "动作节拍超过3个" : "",
         humanRoleRequired && !actors.size ? "缺少明确动作执行者 actor" : "",
-        humanRoleRequired && !patients.size ? "缺少明确动作承受者 patient" : "",
         (plan.typedActionBeats?.length || 0) < 2 ? "类型化动作节拍少于2个" : "",
         (plan.typedActionBeats?.length || 0) > 3 ? "类型化动作节拍超过3个" : "",
         actionCountMismatch ? "动作节拍与类型化动作节拍没有逐项对应" : "",
         typedActionMissingResult ? "类型化动作节拍缺少具体物理结果" : "",
-        humanRoleRequired && unboundTypedAction ? "类型化动作节拍引用了未绑定的执行者或承受者" : "",
+        humanRoleRequired && (unboundActor || ungroundedActor) ? "类型化动作节拍的执行者未作为 actor 绑定当前事实" : "",
+        humanRoleRequired && unboundHumanPatient ? "类型化动作节拍命中的人物承受者未绑定 patient 职责" : "",
         humanRoleRequired && infantCareAction ? "婴儿/幼儿不能作为成人照护动作的执行者" : "",
         narrationLength > 48 ? `旁白超过48字（当前${narrationLength}字）` : "",
         !plan.obstacleReaction ? "缺少阻力反作用" : "",

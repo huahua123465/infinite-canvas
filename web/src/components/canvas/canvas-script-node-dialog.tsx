@@ -53,7 +53,7 @@ type CanvasScriptNodeDialogProps = {
     onOptimizeFinalReview: (node: CanvasNodeData, issueIds?: string[]) => void;
     onStopFinalReviewOptimization: (node: CanvasNodeData) => void;
     onRepairShot: (node: CanvasNodeData, rowIndex: number) => void;
-    onRepairAllShots: (node: CanvasNodeData) => void;
+    onRepairAllShots: (node: CanvasNodeData, rowIndexes: number[]) => void;
     onStopShotRepair: (node: CanvasNodeData) => void;
     onComposeFinalPrompt: (node: CanvasNodeData, rowIndex?: number, replaceExisting?: boolean) => void;
     onStopPromptGeneration: (node: CanvasNodeData) => void;
@@ -404,6 +404,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
                         <ShotPlanEditorModal
                             row={rows[shotPlanEditorRowIndex] || []}
                             plan={node.metadata.storyboardShotPlans[String(shotPlanEditorRowIndex)]}
+                            repairError={node.metadata.storyboardShotRepairErrors?.[String(shotPlanEditorRowIndex)]}
                             onClose={() => setShotPlanEditorRowIndex(null)}
                             onSave={(patch) => {
                                 revalidateShot(shotPlanEditorRowIndex, rows[shotPlanEditorRowIndex] || [], patch);
@@ -535,7 +536,7 @@ export function CanvasScriptNodeDialog({ node, open, actionKey, onClose, onRowsC
     );
 }
 
-function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairAllProductionProblems, onOptimizeFinalReview, onStopFinalReviewOptimization, onRepairShot, onRepairAllShots, onStopShotRepair, onActiveEpisodeChange, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRunFinalReview: (node: CanvasNodeData) => void; onStopFinalReview: (node: CanvasNodeData) => void; onRepairAllProductionProblems: (node: CanvasNodeData) => void; onOptimizeFinalReview: (node: CanvasNodeData, issueIds?: string[]) => void; onStopFinalReviewOptimization: (node: CanvasNodeData) => void; onRepairShot: (node: CanvasNodeData, rowIndex: number) => void; onRepairAllShots: (node: CanvasNodeData) => void; onStopShotRepair: (node: CanvasNodeData) => void; onActiveEpisodeChange: (nodeId: string, episodeId: string) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
+function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, productionScope, promptDetails, narrationLocked, narrationIssues, onNarrationLockChange, onCreateChapterNodes, onUpdateCell, onValidateCell, onDeleteRow, onAddRow, onOpenImport, onGenerateShotsFromInputs, onRunFinalReview, onStopFinalReview, onRepairAllProductionProblems, onOptimizeFinalReview, onStopFinalReviewOptimization, onRepairShot, onRepairAllShots, onStopShotRepair, onActiveEpisodeChange, onOpenPrompt, onOpenShotPlan, onGenerateImage, onGenerateVideo, onOpenAssets }: { node: CanvasNodeData; rows: string[][]; rowIndexes: number[]; actionKey?: string | null; planningStale: boolean; productionScope: StoryboardProductionScope; promptDetails: Record<string, StoryboardPromptDetail>; narrationLocked: boolean; narrationIssues: string[]; onNarrationLockChange: (nodeId: string, chapterId: string, locked: boolean) => void; onCreateChapterNodes: (node: CanvasNodeData) => void; onUpdateCell: (rowIndex: number, colIndex: number, value: string) => void; onValidateCell: (rowIndex: number, colIndex: number, value: string) => void; onDeleteRow: (rowIndex: number) => void; onAddRow: () => void; onOpenImport: () => void; onGenerateShotsFromInputs: (node: CanvasNodeData) => void; onRunFinalReview: (node: CanvasNodeData) => void; onStopFinalReview: (node: CanvasNodeData) => void; onRepairAllProductionProblems: (node: CanvasNodeData) => void; onOptimizeFinalReview: (node: CanvasNodeData, issueIds?: string[]) => void; onStopFinalReviewOptimization: (node: CanvasNodeData) => void; onRepairShot: (node: CanvasNodeData, rowIndex: number) => void; onRepairAllShots: (node: CanvasNodeData, rowIndexes: number[]) => void; onStopShotRepair: (node: CanvasNodeData) => void; onActiveEpisodeChange: (nodeId: string, episodeId: string) => void; onOpenPrompt: (rowIndex: number) => void; onOpenShotPlan: (rowIndex: number) => void; onGenerateImage: (node: CanvasNodeData, rowIndex: number) => void; onGenerateVideo: (node: CanvasNodeData, rowIndex: number) => void; onOpenAssets: () => void }) {
     const generatingShots = actionKey === "shots:generate";
     const plans = node.metadata?.storyboardShotPlans || {};
     const chapters = node.metadata?.storyboardChapters || [];
@@ -610,7 +611,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                     <span className="text-emerald-200">{videoCount} 个动态视频</span>
                     <span>约 {Math.floor(videoSeconds / 60)}分{Math.round(videoSeconds % 60)}秒</span>
                     {stillCount ? <span className="text-cyan-100">{stillCount} 个静态片段</span> : null}
-                    {qualityErrorIndexes.length ? <Button size="small" danger={Boolean(repairingShots)} type={repairingShots ? "default" : "primary"} icon={repairingShots ? <Square className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => repairingShots ? onStopShotRepair(node) : onRepairAllShots(node)}>{repairProgress ? `自动修正 ${repairProgress[1]}/${repairProgress[2]}` : repairingShots ? "暂停自动修正" : `一键自动修正全部 ${qualityErrorIndexes.length} 项`}</Button> : null}
+                    {qualityErrorIndexes.length ? <Button size="small" danger={Boolean(repairingShots)} type={repairingShots ? "default" : "primary"} icon={repairingShots ? <Square className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => repairingShots ? onStopShotRepair(node) : onRepairAllShots(node, qualityErrorIndexes)}>{repairProgress ? `自动修正 ${repairProgress[1]}/${repairProgress[2]}` : repairingShots ? "暂停自动修正" : `一键自动修正本章 ${qualityErrorIndexes.length} 项`}</Button> : null}
                     <span className="ml-auto text-[#8f8f8f]">{productionScope === "single" && node.metadata?.storyboardOriginalBeatCount ? `原文 ${node.metadata.storyboardOriginalBeatCount} 个事实已浓缩为 ${node.metadata?.storyboardCoverage?.total || 0} 个核心事实` : `完整故事共 ${chapters.length} 集；资产跨集复用`}</span>
                     {productionScope === "series" ? <Button size="small" icon={<PanelsTopLeft className="size-3.5" />} onClick={() => onCreateChapterNodes(node)}>同步章节节点</Button> : null}
                 </div>
@@ -624,6 +625,7 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                         const plan = plans[String(rowIndex)];
                         const detail = promptDetails[String(rowIndex)];
                         const qualityError = plan?.qualityError;
+                        const repairError = node.metadata?.storyboardShotRepairErrors?.[String(rowIndex)];
                         return (
                             <article key={rowIndex} data-storyboard-shot-index={rowIndex} tabIndex={-1} className={`overflow-hidden rounded-xl border bg-[#171a18] shadow-[0_14px_40px_rgba(0,0,0,.18)] outline-none transition-all duration-500 ${focusedShotIndex === rowIndex ? "border-emerald-300/70 ring-2 ring-emerald-300/25" : "border-white/10"}`}>
                                 <div className="flex items-center gap-3 border-b border-white/8 px-5 py-3">
@@ -673,10 +675,11 @@ function ShotsTable({ node, rows, rowIndexes, actionKey, planningStale, producti
                                                 {plan?.valueShift ? <p><span className="text-[#7f8a83]">变化：</span>{plan.valueShift}</p> : null}
                                             </div>
                                         </div>
-                                        {qualityError ? (
+                                        {qualityError || repairError ? (
                                             <div className="rounded-lg border border-amber-400/20 bg-amber-500/8 p-3 text-xs leading-5 text-amber-100">
-                                                <div className="font-semibold">生产契约未通过</div>
-                                                <div className="mt-1 text-amber-100/75">{qualityError}</div>
+                                                <div className="font-semibold">{repairError ? `最近修正失败 · ${storyboardShotRepairStageLabel(repairError.stage)}` : "生产契约未通过"}</div>
+                                                <div className="mt-1 text-amber-100/75">{repairError?.message || qualityError}</div>
+                                                {repairError && qualityError && repairError.stage !== "contract" ? <div className="mt-2 border-t border-amber-300/10 pt-2 text-amber-100/55">当前生产合同：{qualityError}</div> : null}
                                                 <Button size="small" className="!mt-3" disabled={Boolean(actionKey)} loading={actionKey === `shot-fix:${rowIndex}`} onClick={() => onRepairShot(node, rowIndex)}>自动修正本镜</Button>
                                             </div>
                                         ) : null}
@@ -1155,7 +1158,11 @@ function AssetPrepView({ node, actionKey, detailOpen, assets, groupedAssets, sty
     );
 }
 
-function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; plan: StoryboardShotPlan; onClose: () => void; onSave: (patch: Partial<StoryboardShotPlan>) => void }) {
+function storyboardShotRepairStageLabel(stage: "transport" | "json" | "contract") {
+    return stage === "transport" ? "上游请求" : stage === "json" ? "JSON 解析" : "生产合同";
+}
+
+function ShotPlanEditorModal({ row, plan, repairError, onClose, onSave }: { row: string[]; plan: StoryboardShotPlan; repairError?: { stage: "transport" | "json" | "contract"; message: string }; onClose: () => void; onSave: (patch: Partial<StoryboardShotPlan>) => void }) {
     const { message } = App.useApp();
     const [draft, setDraft] = useState<StoryboardShotPlan>(() => ({ ...plan, actionBeats: [...(plan.actionBeats || [])] }));
     const [participantsText, setParticipantsText] = useState(() => (plan.participants || []).map((item) => [item.name, item.role, item.lifeStage || ""].join("｜")).join("\n"));
@@ -1175,6 +1182,7 @@ function ShotPlanEditorModal({ row, plan, onClose, onSave }: { row: string[]; pl
     ];
     return <Modal open centered footer={null} width={860} closeIcon={<X className="size-5" />} onCancel={onClose} title={`第 ${row[0] || ""} 镜 · 编剧场景卡`}>
         <div className="grid max-h-[72vh] gap-3 overflow-y-auto pr-1">
+            {repairError ? <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100"><span className="font-semibold">最近修正失败 · {storyboardShotRepairStageLabel(repairError.stage)}：</span>{repairError.message}</div> : null}
             <div className="rounded-lg border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">{plan.qualityError ? `当前问题：${plan.qualityError}` : "当前片段必须保持一个主要可见事实、一个地点和一个人物时期。动作要写演员或物体实际做什么，不要只写心理变化。"}</div>
             {plan.sourceBeatIds.length ? <label className="grid gap-1 text-xs text-[#bdbdbd]"><span>主要可见事实</span><Select value={draft.visualBeatIds?.[0]} options={plan.sourceBeatIds.map((id) => ({ value: id, label: id }))} placeholder="选择当前画面唯一承载的事实" onChange={(value) => update("visualBeatIds", [value])} /></label> : null}
             {fields.map(([key, label, placeholder]) => <label key={String(key)} className="grid gap-1 text-xs text-[#bdbdbd]"><span>{label}</span><Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} value={String(draft[key] || "")} placeholder={placeholder} onChange={(event) => update(key, event.target.value)} /></label>)}

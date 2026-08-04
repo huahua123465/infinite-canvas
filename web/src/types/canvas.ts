@@ -357,6 +357,7 @@ export type CanvasNodeMetadata = {
     storyboardPromptDetails?: Record<string, StoryboardPromptDetail>;
     storyboardPromptErrors?: Record<string, string>;
     storyboardPromptRawResponses?: Record<string, { response: string; contextKey: string }>;
+    storyboardShotRepairErrors?: Record<string, { stage: "transport" | "json" | "contract"; message: string; rawResponse?: string; updatedAt: string }>;
     storyboardPromptSource?: StoryboardPromptSource;
     storyboardPromptSkillRoot?: string;
     storyboardSourceNodeId?: string;
