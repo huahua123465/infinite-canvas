@@ -39,5 +39,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "optionalDependencies": {
+    "@esbuild/win32-x64": "^0.28.1"
   }
 }
