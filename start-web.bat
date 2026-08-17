@@ -5,7 +5,6 @@ set "WEB_DIR=%~dp0web"
 set "AGENT_DIR=%~dp0canvas-agent"
 set "AUDIO_SEPARATOR_DIR=%~dp0audio-separator-service"
 set "VOICEBOX_START_SCRIPT=%~dp0start-voicebox.ps1"
-set "TOONFLOW_START_SCRIPT=%~dp0start-toonflow.ps1"
 set "WEB_PORT=3000"
 set "CANVAS_URL=http://127.0.0.1:%WEB_PORT%/"
 
@@ -15,7 +14,6 @@ echo   Web              http://127.0.0.1:3000
 echo   Canvas Agent     http://127.0.0.1:17371
 echo   Audio Separator  http://127.0.0.1:17372
 echo   Voicebox         http://127.0.0.1:17493
-echo   ToonFlow         Desktop application
 echo ============================================================
 echo.
 
@@ -85,17 +83,6 @@ if exist "%VOICEBOX_START_SCRIPT%" (
   echo Cannot find start-voicebox.ps1.
   pause
   exit /b 1
-)
-
-echo Checking local ToonFlow desktop...
-if exist "%TOONFLOW_START_SCRIPT%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%TOONFLOW_START_SCRIPT%"
-  if errorlevel 1 (
-    echo ToonFlow setup or startup failed.
-    echo Check %LOCALAPPDATA%\ToonFlow\logs\toonflow-error.log and the messages above.
-  )
-) else (
-  echo Cannot find start-toonflow.ps1.
 )
 
 echo.

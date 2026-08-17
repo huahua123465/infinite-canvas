@@ -780,26 +780,6 @@ function InfiniteCanvasPage() {
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
 
-    const openToonflow = useCallback(async () => {
-        const endpoint = (localStorage.getItem("canvas-agent-url") || "http://127.0.0.1:17371").trim().replace(/\/+$/, "");
-        const token = (localStorage.getItem("canvas-agent-token") || "").trim();
-        if (!token) {
-            message.error("请先连接本地 Canvas Agent，再打开 ToonFlow");
-            return;
-        }
-        const closeLoading = message.loading("正在打开 ToonFlow...", 0);
-        try {
-            const response = await fetch(`${endpoint}/api/apps/toonflow/open?token=${encodeURIComponent(token)}`, { method: "POST" });
-            const data = (await response.json()) as { ok?: boolean; message?: string; error?: string };
-            if (!response.ok || !data.ok) throw new Error(data.error || "ToonFlow 启动失败");
-            message.success(data.message || "正在打开 ToonFlow");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "ToonFlow 启动失败");
-        } finally {
-            closeLoading();
-        }
-    }, [message]);
-
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
@@ -6420,7 +6400,6 @@ function InfiniteCanvasPage() {
                         setLastDirectorDeskCanvasId(projectId);
                         navigate(`/director-desk?canvasId=${encodeURIComponent(projectId)}&returnTo=${encodeURIComponent(`/canvas/${projectId}`)}`);
                     }}
-                    onOpenToonflow={openToonflow}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={minimapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}

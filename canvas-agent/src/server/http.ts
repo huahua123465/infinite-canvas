@@ -10,7 +10,7 @@ import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { loadCinemaDnaContext, loadScreenwritingContext, loadSeedance20Context, openToonflow, proxyMeaiccPricing, proxyMediaDownload, proxyVoicebox, proxyVolcengineJson, proxyVolcengineSpeech } from "../http-server.js";
+import { loadCinemaDnaContext, loadScreenwritingContext, loadSeedance20Context, proxyMeaiccPricing, proxyMediaDownload, proxyVoicebox, proxyVolcengineJson, proxyVolcengineSpeech } from "../http-server.js";
 import { checkVersions } from "../version-check.js";
 
 /** 启动仅监听本机的 Canvas Agent HTTP 服务。 */
@@ -128,10 +128,6 @@ export function startHttpServer() {
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
     app.get("/api/skills/screenwriting/context", route(async (_req, res) => res.json({ ok: true, ...(await loadScreenwritingContext()) })));
     app.get("/api/skills/cinema-dna/context", route(async (_req, res) => res.json({ ok: true, ...(await loadCinemaDnaContext()) })));
-    app.post("/api/apps/toonflow/open", route(async (_req, res) => {
-        await openToonflow();
-        res.json({ ok: true });
-    }));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
     app.get("/api/proxy/meaicc/pricing", route(proxyMeaiccPricing));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));

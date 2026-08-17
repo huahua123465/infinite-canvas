@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -65,10 +64,6 @@ export function startHttpServer() {
     app.get("/api/skills/seedance-20/context", route(async (_req, res) => res.json({ ok: true, ...(await loadSeedance20Context()) })));
     app.get("/api/skills/screenwriting/context", route(async (_req, res) => res.json({ ok: true, ...(await loadScreenwritingContext()) })));
     app.get("/api/skills/cinema-dna/context", route(async (_req, res) => res.json({ ok: true, ...(await loadCinemaDnaContext()) })));
-    app.post("/api/apps/toonflow/open", route(async (_req, res) => {
-        await openToonflow();
-        res.status(202).json({ ok: true, message: "正在打开 ToonFlow" });
-    }));
     app.post("/api/proxy/media/download", route(proxyMediaDownload));
     app.get("/api/proxy/meaicc/pricing", route(proxyMeaiccPricing));
     app.post("/api/proxy/volcengine/tts", route(proxyVolcengineSpeech));
@@ -289,30 +284,6 @@ export async function proxyVoicebox(req: Request, res: Response) {
 
 function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
-}
-
-export async function openToonflow() {
-    if (process.platform !== "win32") throw new Error("ToonFlow 快捷启动当前仅支持 Windows");
-    const candidates = [process.env.TOONFLOW_LAUNCHER || "", path.resolve(process.cwd(), "start-toonflow.ps1"), path.resolve(process.cwd(), "..", "start-toonflow.ps1")].filter(Boolean);
-    let launcher = "";
-    for (const candidate of candidates) {
-        try {
-            await fs.access(candidate);
-            launcher = candidate;
-            break;
-        } catch {
-            // try next candidate
-        }
-    }
-    if (!launcher) throw new Error("未找到 start-toonflow.ps1，请从 Infinite Canvas 项目的一键启动入口运行");
-    await new Promise<void>((resolve, reject) => {
-        const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcher], { cwd: path.dirname(launcher), detached: true, windowsHide: true, stdio: "ignore" });
-        child.once("spawn", () => {
-            child.unref();
-            resolve();
-        });
-        child.once("error", reject);
-    });
 }
 
 function withAttachmentContext(prompt: string, attachments: Array<{ id: string; name: string }>) {
